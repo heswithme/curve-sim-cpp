@@ -1,0 +1,109 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+*.egg-info/
+dist/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# UV specific
+python/.venv/
+python/uv.lock
+
+# C++ / CMake
+cpp/build/
+cpp/cmake-build-*/
+cpp/CMakeCache.txt
+cpp/CMakeFiles/
+cpp/*.cmake
+cpp/compile_commands.json
+cpp/CTestTestfile.cmake
+cpp/_deps/
+# C++ / CMake
+cpp_modular/build/
+cpp_modular/cmake-build-*/
+cpp_modular/CMakeCache.txt
+cpp_modular/CMakeFiles/
+cpp_modular/*.cmake
+cpp_modular/compile_commands.json
+cpp_modular/CTestTestfile.cmake
+cpp_modular/_deps/
+    
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Vyper / Ape / Brownie
+.build/
+.history
+reports/
+apeenv/
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific
+results/
+data/
+*.csv
+todo.txt
+
+# Environment
+.env
+.env.local
+
+# Dependencies
+node_modules/
+
+# Documentation
+docs/_build/
+site/
+
+# Temporary files
+*.log
+*.tmp
+.cache/
+
+# OS specific
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Submodules (git handles these)
+# twocrypto-ng will be tracked as a submodule
+# Benchmark results (generated)
+python/benchmark_pool/data/results/
+python/arb_sim/run_data/
+python/arb_sim/param_search_results/
+# Trade data: ignore large/generated data, keep scripts
+# Ignore common data formats recursively
+python/arb_sim/trade_data/**/*.json
+python/arb_sim/trade_data/**/*.csv
+python/arb_sim/trade_data/**/*.ndjson
+python/arb_sim/trade_data/**/*.parquet
+cryptopool-simulator/
+AGENTS.md
+python/benchmark_math/test_cases.json
