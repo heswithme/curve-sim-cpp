@@ -2,7 +2,6 @@
 #include "events/loader.hpp"
 
 #include <boost/json.hpp>
-#include <boost/json/src.hpp>
 
 #include <algorithm>
 #include <cmath>

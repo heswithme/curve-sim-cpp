@@ -45,41 +45,7 @@ struct PoolInit {
     boost::json::object echo_costs{};
 };
 
-// JSON parsing helpers
-namespace detail {
-
-template <typename T>
-inline T parse_scaled_1e18(const boost::json::value& v) {
-    if (v.is_string()) {
-        return static_cast<T>(std::strtold(v.as_string().c_str(), nullptr) / 1e18L);
-    }
-    if (v.is_double()) return static_cast<T>(v.as_double() / 1e18);
-    if (v.is_int64())  return static_cast<T>(static_cast<long double>(v.as_int64()) / 1e18L);
-    if (v.is_uint64()) return static_cast<T>(static_cast<long double>(v.as_uint64()) / 1e18L);
-    return T(0);
-}
-
-template <typename T>
-inline T parse_fee_1e10(const boost::json::value& v) {
-    if (v.is_string()) {
-        return static_cast<T>(std::strtold(v.as_string().c_str(), nullptr) / 1e10L);
-    }
-    if (v.is_double()) return static_cast<T>(v.as_double() / 1e10);
-    if (v.is_int64())  return static_cast<T>(static_cast<long double>(v.as_int64()) / 1e10L);
-    if (v.is_uint64()) return static_cast<T>(static_cast<long double>(v.as_uint64()) / 1e10L);
-    return T(0);
-}
-
-template <typename T>
-inline T parse_plain_real(const boost::json::value& v) {
-    if (v.is_string()) return static_cast<T>(std::strtold(v.as_string().c_str(), nullptr));
-    if (v.is_double()) return static_cast<T>(v.as_double());
-    if (v.is_int64())  return static_cast<T>(v.as_int64());
-    if (v.is_uint64()) return static_cast<T>(v.as_uint64());
-    return T(0);
-}
-
-} // namespace detail
+// JSON parsing helpers live in core/json_utils.hpp
 
 // Parse a single pool entry from JSON object
 // Entry format: { "pool": {...}, "costs": {...}, "tag": "..." }
@@ -91,8 +57,7 @@ void parse_pool_entry(
     arb::trading::Costs<T>& out_costs
 ) {
     namespace json = boost::json;
-    using namespace detail;
-    
+
     // Extract pool object (may be nested under "pool" key or at top level)
     const json::object& pool = entry.contains("pool") 
         ? entry.at("pool").as_object() 

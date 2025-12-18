@@ -22,7 +22,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 1
+GRID_SIZE = 32
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -36,7 +36,7 @@ FEE_EQUALIZE = True
 
 Y_name = "A"  
 ymin = 1*10_000
-ymax =  200*10_000
+ymax =  100*10_000
 ylogspace = True
 
 
@@ -140,7 +140,7 @@ else:
 # X_vals = [int(x) for x in X_vals]
 # Y_vals = [int(x) for x in Y_vals]
 
-DEFAULT_DATAFILE = "python/arb_sim/trade_data/btcusd/binance-2025.json"
+DEFAULT_DATAFILE = "python/arb_sim/trade_data/gbpusd/gbpusd-2023-2025.json"
 
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
@@ -172,13 +172,13 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.10,
+    "donation_apy": 0.05,
     "donation_frequency": int(7*86400),
     "donation_coins_ratio": 0.5,
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 1.0,
+    "arb_fee_bps": 30.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,
