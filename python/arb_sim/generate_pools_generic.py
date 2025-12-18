@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 1
+GRID_SIZE = 32
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -143,7 +143,7 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btc-2023-2025.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "binance-2025.json")
 
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
