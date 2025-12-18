@@ -18,7 +18,7 @@ void print_usage(const char* prog_name) {
               << "       [--dustswapfreq S]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
               << "       [--apy-period-days D] [--apy-period-cap PCT]\n"
-              << "       [--detailed-log]\n";
+              << "       [--detailed-log] [--cowswap-trades PATH]\n";
 }
 
 CliArgs parse_cli(int argc, char* argv[]) {
@@ -65,6 +65,8 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.apy_period_cap_pct = std::stoi(argv[++i]);
             } else if (arg == "--detailed-log") {
                 args.detailed_log = true;
+            } else if (arg == "--cowswap-trades" && i + 1 < argc) {
+                args.cowswap_path = argv[++i];
             }
             // Unknown flags are silently ignored (matches original behavior)
         } catch (...) {

@@ -27,6 +27,12 @@ struct Metrics {
     T donation_coin0_total{0};
     std::array<T, 2> donation_amounts_total{T(0), T(0)};
     
+    // Cowswap organic trades
+    size_t cowswap_trades{0};
+    size_t cowswap_skipped{0};
+    T cowswap_notional_coin0{0};
+    T cowswap_lp_fee_coin0{0};
+    
     // Size-weighted average pool fee tracking
     T fee_wsum{0};   // sum(fee_fraction * notional_coin0)
     T fee_w{0};      // sum(notional_coin0)
@@ -47,6 +53,10 @@ struct Metrics {
         donation_coin0_total += other.donation_coin0_total;
         donation_amounts_total[0] += other.donation_amounts_total[0];
         donation_amounts_total[1] += other.donation_amounts_total[1];
+        cowswap_trades += other.cowswap_trades;
+        cowswap_skipped += other.cowswap_skipped;
+        cowswap_notional_coin0 += other.cowswap_notional_coin0;
+        cowswap_lp_fee_coin0 += other.cowswap_lp_fee_coin0;
         fee_wsum += other.fee_wsum;
         fee_w += other.fee_w;
     }

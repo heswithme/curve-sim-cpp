@@ -23,6 +23,7 @@
 #include "pools/twocrypto_fx/twocrypto.hpp"
 #include "pools/twocrypto_fx/helpers.hpp"
 #include "trading/costs.hpp"
+#include "trading/cowswap_trader.hpp"
 
 namespace arb {
 namespace harness {
@@ -113,6 +114,9 @@ struct RunConfig {
     
     // Detailed per-candle logging
     bool detailed_log{false};
+    
+    // Cowswap organic trades
+    std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
 };
 
 // Run a single pool configuration and return results
@@ -121,7 +125,8 @@ PoolResult<T> run_single_pool(
     const pools::PoolInit<T>& pool_init,
     const trading::Costs<T>& costs,
     const std::vector<Event>& events,
-    const RunConfig<T>& cfg
+    const RunConfig<T>& cfg,
+    const std::vector<trading::CowswapTrade>* cowswap_trades = nullptr
 ) {
     using Pool = pools::twocrypto_fx::TwoCryptoPool<T>;
     
@@ -204,11 +209,21 @@ PoolResult<T> run_single_pool(
         apy_cfg.period_s = cfg.apy_period_s;
         apy_cfg.cap_pct = cfg.apy_cap_pct;
         
+        // Cowswap trader: create from shared trades pointer, initialize at first event timestamp
+        trading::CowswapTrader<T> cowswap_trader;
+        trading::CowswapTrader<T>* cowswap_ptr = nullptr;
+        if (cowswap_trades && !cowswap_trades->empty() && !events.empty()) {
+            cowswap_trader = trading::CowswapTrader<T>(cowswap_trades);
+            cowswap_trader.init_at(events.front().ts);
+            cowswap_ptr = &cowswap_trader;
+        }
+        
         // Run event loop
         auto loop_result = run_event_loop(
             pool, events, costs, dcfg, icfg, ucfg,
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
-            apy_cfg, cfg.save_actions, cfg.detailed_log
+            apy_cfg, cfg.save_actions, cfg.detailed_log,
+            cowswap_ptr
         );
         
         // Copy metrics from event loop result
@@ -287,6 +302,21 @@ std::vector<PoolResult<T>> run_pools_parallel(
         return results;
     }
     
+    // Load cowswap trades if path specified
+    std::vector<trading::CowswapTrade> cowswap_trades;
+    const std::vector<trading::CowswapTrade>* cs_ptr = nullptr;
+    if (!cfg.cowswap_path.empty()) {
+        cowswap_trades = trading::load_cowswap_csv(cfg.cowswap_path);
+        if (!cowswap_trades.empty()) {
+            cs_ptr = &cowswap_trades;
+            if (verbose) {
+                std::lock_guard<std::mutex> lock(io_mu);
+                std::cout << "loaded " << cowswap_trades.size() 
+                          << " cowswap trades from " << cfg.cowswap_path << "\n";
+            }
+        }
+    }
+    
     // For single pool or single thread, run sequentially
     if (n_pools == 1 || n_threads == 1) {
         for (size_t i = 0; i < n_pools; ++i) {
@@ -296,7 +326,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
             }
             
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg);
+            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
             
             if (verbose) {
                 std::lock_guard<std::mutex> lock(io_mu);
@@ -323,7 +353,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
             }
             
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg);
+            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
             
             completed.fetch_add(1);
             

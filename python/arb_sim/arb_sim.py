@@ -80,6 +80,7 @@ class ArbHarnessRunner:
         apy_period_days: float | None = None,
         apy_period_cap: int | None = None,
         detailed_log: bool = False,
+        cowswap_trades: str | None = None,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
         cmd = [
@@ -114,6 +115,8 @@ class ArbHarnessRunner:
             cmd += ["--apy-period-cap", str(int(apy_period_cap))]
         if detailed_log:
             cmd += ["--detailed-log"]
+        if cowswap_trades:
+            cmd += ["--cowswap-trades", str(cowswap_trades)]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
@@ -226,6 +229,12 @@ def main() -> int:
         action="store_true",
         help="Write per-candle detailed_log.json next to output file",
     )
+    parser.add_argument(
+        "--cowswap-trades",
+        type=str,
+        default=None,
+        help="Path to cowswap trades CSV for organic trade replay",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -287,6 +296,7 @@ def main() -> int:
         apy_period_days=args.apy_period_days,
         apy_period_cap=args.apy_period_cap,
         detailed_log=args.detailed_log,
+        cowswap_trades=args.cowswap_trades,
     )
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])

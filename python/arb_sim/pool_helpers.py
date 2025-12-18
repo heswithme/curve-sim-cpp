@@ -1,5 +1,4 @@
 from typing import Any, List
-from time import time
 import json
 
 
@@ -12,7 +11,7 @@ def _first_candle_ts(path: str) -> int:
     - Object roots with 'data' or 'events' arrays
     - Dict rows with 'ts' or ISO8601 'time'
 
-    On failure, returns current UTC seconds.
+    Raises ValueError if file cannot be read or parsed.
     """
 
     def to_ts(v: Any) -> int | None:
@@ -40,8 +39,10 @@ def _first_candle_ts(path: str) -> int:
     try:
         with open(path, "r") as f:
             root = json.load(f)
-    except Exception:
-        return int(time())
+    except FileNotFoundError:
+        raise ValueError(f"Data file not found: {path}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in {path}: {e}")
 
     arr: List[Any] | None = None
     if isinstance(root, list):
@@ -52,32 +53,39 @@ def _first_candle_ts(path: str) -> int:
                 arr = root[k]
                 break
     if not arr or not isinstance(arr, list):
-        return int(time())
+        raise ValueError(f"No data array found in {path}")
 
     first = arr[0]
     if isinstance(first, list) and first:
         tsv = first[0]
         ts = to_ts(tsv)
-        return ts if ts is not None else int(time())
+        if ts is not None:
+            return ts
+        raise ValueError(f"Cannot parse timestamp from first element in {path}: {tsv}")
     if isinstance(first, dict):
         ts = to_ts(first.get("ts") or first.get("timestamp") or first.get("time"))
-        return ts if ts is not None else int(time())
-    return int(time())
+        if ts is not None:
+            return ts
+        raise ValueError(f"Cannot parse timestamp from first dict in {path}: {first}")
+    raise ValueError(f"Unsupported data format in {path}")
 
 
 def _initial_price_from_file(path: str) -> float:
-    """Best-effort initial price from candles/events file.
+    """Extract initial price from candles/events file.
 
     - Candles: use close (index 4) of first candle.
     - Events:  use price (index 1) of first event.
     - Object roots with 'data'/'events' arrays handled.
-    Returns 1.0 on failure.
+
+    Raises ValueError if file cannot be read or price cannot be extracted.
     """
     try:
         with open(path, "r") as f:
             root = json.load(f)
-    except Exception:
-        return 1.0
+    except FileNotFoundError:
+        raise ValueError(f"Data file not found: {path}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in {path}: {e}")
 
     arr: List[Any] | None = None
     if isinstance(root, list):
@@ -88,7 +96,7 @@ def _initial_price_from_file(path: str) -> float:
                 arr = root[k]
                 break
     if not arr or not isinstance(arr, list) or not arr:
-        return 1.0
+        raise ValueError(f"No data array found in {path}")
 
     first = arr[0]
     try:
@@ -103,9 +111,10 @@ def _initial_price_from_file(path: str) -> float:
             for k in ("close", "c", "price", "p"):
                 if k in first:
                     return float(first[k])
-    except Exception:
-        pass
-    return 1.0
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"Cannot convert price to float in {path}: {e}")
+
+    raise ValueError(f"Cannot extract price from first element in {path}: {first}")
 
 
 # -------------------- Helpers --------------------

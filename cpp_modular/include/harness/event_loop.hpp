@@ -16,6 +16,7 @@
 #include "trading/costs.hpp"
 #include "trading/decision.hpp"
 #include "trading/arbitrageur.hpp"
+#include "trading/cowswap_trader.hpp"
 #include "pools/twocrypto_fx/helpers.hpp"
 
 namespace arb {
@@ -43,7 +44,8 @@ EventLoopResult<T> run_event_loop(
     size_t max_events = 0,  // 0 = all events
     const ApyConfig<T>& apy_cfg = ApyConfig<T>{},
     bool save_actions = false,
-    bool detailed_log = false
+    bool detailed_log = false,
+    trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
 ) {
     EventLoopResult<T> result{};
     Metrics<T>& m = result.metrics;
@@ -344,6 +346,17 @@ EventLoopResult<T> run_event_loop(
             
         } catch (...) {
             // Trade failed; ignore and continue
+        }
+        
+        // Process cowswap organic trades (after arb)
+        if (cowswap && cowswap->has_pending()) {
+            trading::CowswapMetrics<T> cs_metrics{};
+            cowswap->apply_due_trades(pool, cs_metrics);
+            // Accumulate cowswap metrics into main metrics
+            m.cowswap_trades += cs_metrics.trades_executed;
+            m.cowswap_skipped += cs_metrics.trades_skipped;
+            m.cowswap_notional_coin0 += cs_metrics.notional_coin0;
+            m.cowswap_lp_fee_coin0 += cs_metrics.lp_fee_coin0;
         }
         
         // Detailed logging: log at candle boundary (when candle.ts changes or last event)

@@ -176,6 +176,9 @@ int main(int argc, char* argv[]) {
         // Wire detailed_log flag
         run_cfg.detailed_log = args.detailed_log;
         
+        // Wire cowswap trades path
+        run_cfg.cowswap_path = args.cowswap_path;
+        
         auto t_exec0 = std::chrono::high_resolution_clock::now();
         
         // Run all pools in parallel

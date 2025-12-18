@@ -36,6 +36,9 @@ struct CliArgs {
     // Detailed logging
     bool detailed_log{false};  // write detailed_log.json next to output
     
+    // Cowswap organic trades
+    std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
+    
     // Validation
     bool valid{false};
     std::string error_msg;

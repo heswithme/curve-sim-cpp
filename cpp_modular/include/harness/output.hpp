@@ -155,6 +155,10 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
         static_cast<double>(m.donation_amounts_total[0]),
         static_cast<double>(m.donation_amounts_total[1])
     };
+    summary["cowswap_trades"] = static_cast<uint64_t>(m.cowswap_trades);
+    summary["cowswap_skipped"] = static_cast<uint64_t>(m.cowswap_skipped);
+    summary["cowswap_notional_coin0"] = static_cast<double>(m.cowswap_notional_coin0);
+    summary["cowswap_lp_fee_coin0"] = static_cast<double>(m.cowswap_lp_fee_coin0);
     summary["pool_exec_ms"] = r.elapsed_ms;
     
     // Time-weighted latent slippage/liquidity density (normalized vs xy=k)
