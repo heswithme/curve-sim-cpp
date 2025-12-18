@@ -1,40 +1,67 @@
+# ------------------------------------------------------------
+# OS / Editor
+# ------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------
 # Python
+# ------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
+
 .venv/
 venv/
-env/
 ENV/
-pip-log.txt
-pip-delete-this-directory.txt
+env/
+
 .pytest_cache/
 .coverage
 .coverage.*
 htmlcov/
 .hypothesis/
-*.egg-info/
-dist/
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# UV specific
-python/.venv/
-python/uv.lock
+*.egg-info/
+dist/
+build/
 
+# uv
+python/.venv/
+
+# ------------------------------------------------------------
 # C++ / CMake
-cpp/build/
-cpp/cmake-build-*/
-cpp/CMakeCache.txt
-cpp/CMakeFiles/
-cpp/*.cmake
-cpp/compile_commands.json
-cpp/CTestTestfile.cmake
-cpp/_deps/
-# C++ / CMake
+# ------------------------------------------------------------
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# generic build dirs
+build/
+cmake-build-*/
+
+# local CMake outputs
+CMakeCache.txt
+CMakeFiles/
+*.cmake
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# project subdirs
 cpp_modular/build/
 cpp_modular/cmake-build-*/
 cpp_modular/CMakeCache.txt
@@ -43,67 +70,74 @@ cpp_modular/*.cmake
 cpp_modular/compile_commands.json
 cpp_modular/CTestTestfile.cmake
 cpp_modular/_deps/
-    
-*.o
-*.a
-*.so
-*.dylib
-*.dll
-*.exe
 
+# ------------------------------------------------------------
 # Vyper / Ape / Brownie
+# ------------------------------------------------------------
 .build/
 .history
 reports/
 apeenv/
 
-# IDE
-.DS_Store
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
+# ------------------------------------------------------------
+# Project-specific generated outputs
+# ------------------------------------------------------------
+# Benchmarks / runs
+python/benchmark_pool/data/results/
+python/benchmark_pool/data/sequences.json
+python/arb_sim/run_data/
+python/arb_sim/param_search_results/
 
-# Project specific
-results/
-data/
-*.csv
-todo.txt
+# Local scratch directory used by scripts
+python/git
 
-# Environment
-.env
-.env.local
+# Trade data (very large). Keep code/docs inside.
+python/arb_sim/trade_data/**
+!python/arb_sim/trade_data/**/
+!python/arb_sim/trade_data/**/README.md
+!python/arb_sim/trade_data/**/*.py
+!python/arb_sim/trade_data/**/*.md
 
-# Dependencies
-node_modules/
+# Generated benchmark/test fixtures (if created locally)
+python/benchmark_math/test_cases.json
 
-# Documentation
-docs/_build/
-site/
+# ------------------------------------------------------------
+# Large data / binary artifacts (common)
+# ------------------------------------------------------------
+*.parquet
+*.feather
+*.arrow
+*.orc
+*.h5
+*.hdf5
+*.npz
+*.npy
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.onnx
+*.sqlite
+*.db
+*.bin
 
-# Temporary files
+*.gz
+*.bz2
+*.xz
+*.zip
+*.7z
+*.tar
+
+# ------------------------------------------------------------
+# Misc
+# ------------------------------------------------------------
 *.log
 *.tmp
 .cache/
 
-# OS specific
-Thumbs.db
-.DS_Store
-desktop.ini
+# Optional local environment files
+.env
+.env.local
 
-# Submodules (git handles these)
-# twocrypto-ng will be tracked as a submodule
-# Benchmark results (generated)
-python/benchmark_pool/data/results/
-python/arb_sim/run_data/
-python/arb_sim/param_search_results/
-# Trade data: ignore large/generated data, keep scripts
-# Ignore common data formats recursively
-python/arb_sim/trade_data/**/*.json
-python/arb_sim/trade_data/**/*.csv
-python/arb_sim/trade_data/**/*.ndjson
-python/arb_sim/trade_data/**/*.parquet
-cryptopool-simulator/
-AGENTS.md
-python/benchmark_math/test_cases.json
+# Personal notes
+todo.txt
