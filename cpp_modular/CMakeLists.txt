@@ -16,7 +16,7 @@ set(COMMON_SOURCES
 
 # Compiler flags
 set(COMMON_FLAGS -Wall -Wextra)
-set(RELEASE_FLAGS -O3 -march=native)
+set(RELEASE_FLAGS -O3 -march=native -flto -funroll-loops -DNDEBUG)
 
 function(arb_target_defaults TARGET_NAME)
     target_include_directories(${TARGET_NAME} PRIVATE

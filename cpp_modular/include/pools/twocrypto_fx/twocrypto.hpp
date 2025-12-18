@@ -2,6 +2,7 @@
 // Duplicated from cpp/include/twocrypto.hpp with namespace arb::pools::twocrypto_fx
 #pragma once
 
+#include <string>
 #include <array>
 #include <stdexcept>
 #include <algorithm>
@@ -503,7 +504,12 @@ public:
         const std::array<T, 2>& xp,
         T _D
     ) {
-        const bool trace = (std::getenv("TRACE") && std::string(std::getenv("TRACE")) == "1");
+        static const bool trace = []() {
+            if (const char* env = std::getenv("TRACE")) {
+                return std::string(env) == "1";
+            }
+            return false;
+        }();
         T price_oracle = cached_price_oracle;
         T price_scale  = cached_price_scale;
 

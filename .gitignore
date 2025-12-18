@@ -63,6 +63,7 @@ _deps/
 
 # project subdirs
 cpp_modular/build/
+cpp_modular/build_pgo/
 cpp_modular/cmake-build-*/
 cpp_modular/CMakeCache.txt
 cpp_modular/CMakeFiles/
