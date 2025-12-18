@@ -84,7 +84,7 @@ apeenv/
 # ------------------------------------------------------------
 # Benchmarks / runs
 python/benchmark_pool/data/results/
-python/benchmark_pool/data/sequences.json
+python/benchmark_pool/data/**.json
 python/arb_sim/run_data/
 python/arb_sim/param_search_results/
 
@@ -99,7 +99,7 @@ python/arb_sim/trade_data/**
 !python/arb_sim/trade_data/**/*.md
 
 # Generated benchmark/test fixtures (if created locally)
-python/benchmark_math/test_cases.json
+python/benchmark_math/**.json
 
 # ------------------------------------------------------------
 # Large data / binary artifacts (common)
