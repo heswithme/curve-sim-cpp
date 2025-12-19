@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 8
+GRID_SIZE = 16
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -143,8 +143,8 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btc-2023-2025.json")
-DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-cow.csv")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2023-2025.json")
+DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
 DEFAULT_COWSWAP_FEE_BPS = 10.0  # Fee in basis points to beat historical execution
 
 
