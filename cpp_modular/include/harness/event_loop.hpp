@@ -214,8 +214,133 @@ EventLoopResult<T> run_event_loop(
             min_swap_frac, max_swap_frac
         );
         
-        if (!dec.do_trade) {
-            // No profitable trade - try idle tick for EMA update
+        // Track whether any trade happened this event (for idle tick decision)
+        bool did_any_trade = false;
+        
+        // ---- Execute arb trade if profitable ----
+        if (dec.do_trade) {
+            try {
+                // Capture pre-trade state for action recording
+                const T ps_before = pool.cached_price_scale;
+                const T oracle_before = pool.cached_price_oracle;
+                const T xcp_profit_before = pool.xcp_profit;
+                const T vp_before = pool.get_vp_boosted();
+                const T p_pool_before = pool.get_p();
+                const uint64_t last_ts_before = pool.last_timestamp;
+                // Note: "lp" in old harness means last_prices (instantaneous price), not LP tokens
+                const T lp_before = pool.last_prices;
+                
+                auto res = pool.exchange(
+                    static_cast<T>(dec.i),
+                    static_cast<T>(dec.j),
+                    dec.dx,
+                    T(0)  // min_dy
+                );
+                
+                // res[0] = dy_after_fee, res[1] = fee_tokens
+                const T dy_after_fee = res[0];
+                const T fee_tokens = res[1];
+                const T ps_after = pool.cached_price_scale;
+                
+                // Update metrics
+                m.trades += 1;
+                m.notional += dec.notional_coin0;
+                m.lp_fee_coin0 += (dec.j == 1 ? fee_tokens * cex_price : fee_tokens);
+                m.arb_pnl_coin0 += dec.profit;
+                did_any_trade = true;
+                
+                // Track effective dynamic pool fee (fraction), size-weighted
+                const T gross_dy_tokens = dy_after_fee + fee_tokens;
+                if (gross_dy_tokens > T(0) && dec.notional_coin0 > T(0)) {
+                    const T fee_frac = fee_tokens / gross_dy_tokens;
+                    m.fee_wsum += fee_frac * dec.notional_coin0;
+                    m.fee_w += dec.notional_coin0;
+                }
+                
+                // Count rebalance if price_scale changed
+                if (differs_rel(ps_after, ps_before)) {
+                    m.n_rebalances += 1;
+                }
+                
+                // Sample after trade
+                sample_latent(ev.ts);
+                sample_slippage_probes(ev.ts, cex_price);
+                
+                // Record exchange action
+                if (save_actions) {
+                    ExchangeAction<T> act;
+                    act.ts = ev.ts;
+                    act.i = dec.i;
+                    act.j = dec.j;
+                    act.dx = dec.dx;
+                    act.dy_after_fee = dy_after_fee;
+                    act.fee_tokens = fee_tokens;
+                    act.profit_coin0 = dec.profit;
+                    act.p_cex = cex_price;
+                    act.p_pool_before = p_pool_before;
+                    act.p_pool_after = pool.get_p();
+                    act.oracle_before = oracle_before;
+                    act.oracle_after = pool.cached_price_oracle;
+                    act.ps_before = ps_before;
+                    act.ps_after = ps_after;
+                    act.last_ts_before = last_ts_before;
+                    act.last_ts_after = pool.last_timestamp;
+                    act.lp_before = lp_before;
+                    act.lp_after = pool.last_prices;  // Note: "lp" means last_prices in old harness
+                    act.xcp_profit_before = xcp_profit_before;
+                    act.xcp_profit_after = pool.xcp_profit;
+                    act.vp_before = vp_before;
+                    act.vp_after = pool.get_vp_boosted();
+                    act.slippage = tw.last_r_inst;
+                    act.liq_density = tw.last_d_inst;
+                    act.balance_indicator = pools::twocrypto_fx::balance_indicator(pool);
+                    result.actions.push_back(std::move(act));
+                }
+                
+            } catch (...) {
+                // Trade failed; ignore and continue
+            }
+        }
+        
+        // ---- Process cowswap organic trades (always, after arb) ----
+        if (cowswap && cowswap->has_pending()) {
+            trading::CowswapMetrics<T> cs_metrics{};
+            std::vector<trading::CowswapExecDetail<T>> cs_exec_details;
+            std::vector<trading::CowswapExecDetail<T>>* cs_details_ptr = save_actions ? &cs_exec_details : nullptr;
+            
+            cowswap->apply_due_trades(pool, cs_metrics, cs_details_ptr);
+            
+            // Accumulate cowswap metrics into main metrics
+            m.cowswap_trades += cs_metrics.trades_executed;
+            m.cowswap_skipped += cs_metrics.trades_skipped;
+            m.cowswap_notional_coin0 += cs_metrics.notional_coin0;
+            m.cowswap_lp_fee_coin0 += cs_metrics.lp_fee_coin0;
+            
+            if (cs_metrics.trades_executed > 0) {
+                did_any_trade = true;
+            }
+            
+            // Record cowswap actions if logging enabled
+            if (save_actions && !cs_exec_details.empty()) {
+                for (const auto& detail : cs_exec_details) {
+                    CowswapAction<T> act;
+                    act.ts = detail.ts;
+                    act.is_buy = detail.is_buy;
+                    act.dx = detail.dx;
+                    act.dy_after_fee = detail.dy_after_fee;
+                    act.fee_tokens = detail.fee_tokens;
+                    act.hist_dy = detail.hist_dy;
+                    act.advantage_bps = detail.advantage_bps;
+                    act.threshold_bps = detail.threshold_bps;
+                    act.ps_before = detail.ps_before;
+                    act.ps_after = detail.ps_after;
+                    result.actions.push_back(std::move(act));
+                }
+            }
+        }
+        
+        // ---- Idle tick: only if no arb AND no cowswap trades happened ----
+        if (!did_any_trade) {
             // Capture pre-tick state for action recording
             const T ps_before = pool.cached_price_scale;
             const T oracle_before = pool.cached_price_oracle;
@@ -242,122 +367,6 @@ EventLoopResult<T> run_event_loop(
                     act.xcp_profit_after = pool.xcp_profit;
                     act.vp_before = vp_before;
                     act.vp_after = pool.get_vp_boosted();
-                    result.actions.push_back(std::move(act));
-                }
-            }
-            continue;
-        }
-        
-        // Execute trade
-        try {
-            // Capture pre-trade state for action recording
-            const T ps_before = pool.cached_price_scale;
-            const T oracle_before = pool.cached_price_oracle;
-            const T xcp_profit_before = pool.xcp_profit;
-            const T vp_before = pool.get_vp_boosted();
-            const T p_pool_before = pool.get_p();
-            const uint64_t last_ts_before = pool.last_timestamp;
-            // Note: "lp" in old harness means last_prices (instantaneous price), not LP tokens
-            const T lp_before = pool.last_prices;
-            
-            auto res = pool.exchange(
-                static_cast<T>(dec.i),
-                static_cast<T>(dec.j),
-                dec.dx,
-                T(0)  // min_dy
-            );
-            
-            // res[0] = dy_after_fee, res[1] = fee_tokens
-            const T dy_after_fee = res[0];
-            const T fee_tokens = res[1];
-            const T ps_after = pool.cached_price_scale;
-            
-            // Update metrics
-            m.trades += 1;
-            m.notional += dec.notional_coin0;
-            m.lp_fee_coin0 += (dec.j == 1 ? fee_tokens * cex_price : fee_tokens);
-            m.arb_pnl_coin0 += dec.profit;
-            
-            // Track effective dynamic pool fee (fraction), size-weighted
-            const T gross_dy_tokens = dy_after_fee + fee_tokens;
-            if (gross_dy_tokens > T(0) && dec.notional_coin0 > T(0)) {
-                const T fee_frac = fee_tokens / gross_dy_tokens;
-                m.fee_wsum += fee_frac * dec.notional_coin0;
-                m.fee_w += dec.notional_coin0;
-            }
-            
-            // Count rebalance if price_scale changed
-            if (differs_rel(ps_after, ps_before)) {
-                m.n_rebalances += 1;
-            }
-            
-            // Sample after trade
-            sample_latent(ev.ts);
-            sample_slippage_probes(ev.ts, cex_price);
-            
-            // Record exchange action
-            if (save_actions) {
-                ExchangeAction<T> act;
-                act.ts = ev.ts;
-                act.i = dec.i;
-                act.j = dec.j;
-                act.dx = dec.dx;
-                act.dy_after_fee = dy_after_fee;
-                act.fee_tokens = fee_tokens;
-                act.profit_coin0 = dec.profit;
-                act.p_cex = cex_price;
-                act.p_pool_before = p_pool_before;
-                act.p_pool_after = pool.get_p();
-                act.oracle_before = oracle_before;
-                act.oracle_after = pool.cached_price_oracle;
-                act.ps_before = ps_before;
-                act.ps_after = ps_after;
-                act.last_ts_before = last_ts_before;
-                act.last_ts_after = pool.last_timestamp;
-                act.lp_before = lp_before;
-                act.lp_after = pool.last_prices;  // Note: "lp" means last_prices in old harness
-                act.xcp_profit_before = xcp_profit_before;
-                act.xcp_profit_after = pool.xcp_profit;
-                act.vp_before = vp_before;
-                act.vp_after = pool.get_vp_boosted();
-                act.slippage = tw.last_r_inst;
-                act.liq_density = tw.last_d_inst;
-                act.balance_indicator = pools::twocrypto_fx::balance_indicator(pool);
-                result.actions.push_back(std::move(act));
-            }
-            
-        } catch (...) {
-            // Trade failed; ignore and continue
-        }
-        
-        // Process cowswap organic trades (after arb)
-        if (cowswap && cowswap->has_pending()) {
-            trading::CowswapMetrics<T> cs_metrics{};
-            std::vector<trading::CowswapExecDetail<T>> cs_exec_details;
-            std::vector<trading::CowswapExecDetail<T>>* cs_details_ptr = save_actions ? &cs_exec_details : nullptr;
-            
-            cowswap->apply_due_trades(pool, cs_metrics, cs_details_ptr);
-            
-            // Accumulate cowswap metrics into main metrics
-            m.cowswap_trades += cs_metrics.trades_executed;
-            m.cowswap_skipped += cs_metrics.trades_skipped;
-            m.cowswap_notional_coin0 += cs_metrics.notional_coin0;
-            m.cowswap_lp_fee_coin0 += cs_metrics.lp_fee_coin0;
-            
-            // Record cowswap actions if logging enabled
-            if (save_actions && !cs_exec_details.empty()) {
-                for (const auto& detail : cs_exec_details) {
-                    CowswapAction<T> act;
-                    act.ts = detail.ts;
-                    act.is_buy = detail.is_buy;
-                    act.dx = detail.dx;
-                    act.dy_after_fee = detail.dy_after_fee;
-                    act.fee_tokens = detail.fee_tokens;
-                    act.hist_dy = detail.hist_dy;
-                    act.advantage_bps = detail.advantage_bps;
-                    act.threshold_bps = detail.threshold_bps;
-                    act.ps_before = detail.ps_before;
-                    act.ps_after = detail.ps_after;
                     result.actions.push_back(std::move(act));
                 }
             }

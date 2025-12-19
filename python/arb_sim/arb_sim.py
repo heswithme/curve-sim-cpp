@@ -69,7 +69,6 @@ class ArbHarnessRunner:
         out_json_path: Path,
         n_candles: int = 0,
         save_actions: bool = False,
-        events: bool = False,
         min_swap: float = 1e-10,
         max_swap: float = 1.0,
         threads: int = 1,
@@ -82,6 +81,7 @@ class ArbHarnessRunner:
         detailed_log: bool = False,
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
+        candle_filter: float | None = None,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
         cmd = [
@@ -94,8 +94,7 @@ class ArbHarnessRunner:
             cmd += ["--n-candles", str(n_candles)]
         if save_actions:
             cmd += ["--save-actions"]
-        if events:
-            cmd += ["--events"]
+
         if min_swap is not None:
             cmd += ["--min-swap", str(min_swap)]
         if max_swap is not None:
@@ -120,6 +119,8 @@ class ArbHarnessRunner:
             cmd += ["--cowswap-trades", str(cowswap_trades)]
         if cowswap_fee_bps is not None:
             cmd += ["--cowswap-fee-bps", str(cowswap_fee_bps)]
+        if candle_filter is not None:
+            cmd += ["--candle-filter", str(candle_filter)]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
@@ -131,7 +132,7 @@ class ArbHarnessRunner:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run C++ multi-pool arbitrage harness over candle data or events"
+        description="Run C++ multi-pool arbitrage harness over candle data"
     )
     parser.add_argument(
         "candles",
@@ -186,11 +187,7 @@ def main() -> int:
         default=None,
         help="Seconds between dust swaps when no arb trade (cooldown)",
     )
-    parser.add_argument(
-        "--events",
-        action="store_true",
-        help="Treat input file as events [[ts,price,volume]] and skip candle conversion",
-    )
+
     parser.add_argument(
         "--candle-filter",
         type=float,
@@ -309,7 +306,6 @@ def main() -> int:
         out_json_path,
         n_candles=args.n_candles,
         save_actions=args.save_actions,
-        events=args.events,
         min_swap=args.min_swap,
         max_swap=args.max_swap,
         threads=max(1, args.threads),
@@ -322,6 +318,7 @@ def main() -> int:
         detailed_log=args.detailed_log,
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,
+        candle_filter=args.candle_filter,
     )
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])
@@ -399,7 +396,6 @@ def main() -> int:
     agg = {
         "metadata": {
             "candles_file": str(candles_path),
-            "input_is_events": bool(args.events),
             "threads": max(1, args.threads),
             "base_pool": base_pool,
             "grid": cfg.get("meta", {}).get("grid") if isinstance(cfg, dict) else None,

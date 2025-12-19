@@ -78,6 +78,33 @@ CliArgs parse_cli(int argc, char* argv[]) {
     if (args.user_swap_size_frac < 0) args.user_swap_size_frac = 0;
     if (args.user_swap_thresh < 0) args.user_swap_thresh = 0;
     if (args.n_threads == 0) args.n_threads = 1;
+    
+    // Validate parameters
+    if (args.min_swap_frac < 0) {
+        args.valid = false;
+        args.error_msg = "--min-swap must be >= 0";
+        return args;
+    }
+    if (args.max_swap_frac < 0) {
+        args.valid = false;
+        args.error_msg = "--max-swap must be >= 0";
+        return args;
+    }
+    if (args.max_swap_frac < args.min_swap_frac) {
+        args.valid = false;
+        args.error_msg = "--max-swap must be >= --min-swap";
+        return args;
+    }
+    if (args.cowswap_fee_bps < 0) {
+        args.valid = false;
+        args.error_msg = "--cowswap-fee-bps must be >= 0";
+        return args;
+    }
+    if (args.candle_filter_pct < 0) {
+        args.valid = false;
+        args.error_msg = "--candle-filter must be >= 0";
+        return args;
+    }
 
     args.valid = true;
     return args;
