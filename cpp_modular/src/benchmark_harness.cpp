@@ -13,6 +13,7 @@
 
 #include <boost/json.hpp>
 
+#include "core/json_utils.hpp"
 #include "pools/twocrypto_fx/twocrypto.hpp"
 
 namespace json = boost::json;
@@ -24,64 +25,18 @@ using arb::pools::twocrypto_fx::PoolTraits;
 using arb::pools::twocrypto_fx::TwoCryptoPool;
 using arb::pools::twocrypto_fx::uint256;
 
-constexpr long double WAD = 1e18L;
-constexpr long double FEE_SCALE = 1e10L;
+// Import common utilities from json_utils.hpp
+using arb::WAD;
+using arb::FEE_SCALE;
+using arb::read_file;
+using arb::env_u64;
+using arb::env_flag;
+using arb::get_str;
+using arb::get_u64_opt;
 
-std::string read_file(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        throw std::runtime_error("Cannot open file: " + path);
-    }
-    std::ostringstream oss;
-    oss << in.rdbuf();
-    return oss.str();
-}
-
-uint64_t env_u64(const char* key, uint64_t default_value) {
-    if (const char* v = std::getenv(key)) {
-        try {
-            return static_cast<uint64_t>(std::stoull(v));
-        } catch (...) {
-            return default_value;
-        }
-    }
-    return default_value;
-}
-
-bool env_flag(const char* key) {
-    if (const char* v = std::getenv(key)) {
-        return std::string(v) == "1";
-    }
-    return false;
-}
-
-// JSON helpers
-std::string get_str(const json::object& obj, const char* key) {
-    auto it = obj.find(key);
-    if (it == obj.end()) {
-        throw std::runtime_error(std::string("missing key: ") + key);
-    }
-    if (!it->value().is_string()) {
-        throw std::runtime_error(std::string("expected string for key: ") + key);
-    }
-    return std::string(it->value().as_string().c_str());
-}
-
-uint64_t get_u64_opt(const json::object& obj, const char* key, uint64_t default_value) {
-    auto it = obj.find(key);
-    if (it == obj.end()) return default_value;
-    const auto& v = it->value();
-    if (v.is_uint64()) return v.as_uint64();
-    if (v.is_int64()) return static_cast<uint64_t>(v.as_int64());
-    if (v.is_string()) {
-        try {
-            return static_cast<uint64_t>(std::stoull(std::string(v.as_string().c_str())));
-        } catch (...) {
-            return default_value;
-        }
-    }
-    return default_value;
-}
+// ============================================================================
+// uint256-aware parsing/serialization (not in json_utils.hpp)
+// ============================================================================
 
 template <typename T>
 T parse_raw(const std::string& s) {
@@ -115,15 +70,7 @@ std::string to_int_string(const T& v) {
     if constexpr (std::is_same_v<T, uint256>) {
         return v.template convert_to<std::string>();
     } else {
-        long double x = static_cast<long double>(v);
-        if (!std::isfinite(x)) x = 0;
-        if (x < 0) x = 0;
-        const auto rounded = std::floor(x + 0.5L);
-        std::ostringstream oss;
-        oss.setf(std::ios::fixed);
-        oss.precision(0);
-        oss << rounded;
-        return oss.str();
+        return arb::to_int_string(v);
     }
 }
 
@@ -132,15 +79,7 @@ std::string to_wei_string(const T& v) {
     if constexpr (std::is_same_v<T, uint256>) {
         return v.template convert_to<std::string>();
     } else {
-        long double x = static_cast<long double>(v);
-        if (!std::isfinite(x)) x = 0;
-        if (x < 0) x = 0;
-        const auto scaled = std::floor(x * WAD + 0.5L);
-        std::ostringstream oss;
-        oss.setf(std::ios::fixed);
-        oss.precision(0);
-        oss << scaled;
-        return oss.str();
+        return arb::to_str_1e18(v);
     }
 }
 

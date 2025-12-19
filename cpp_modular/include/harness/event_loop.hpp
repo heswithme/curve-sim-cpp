@@ -81,30 +81,9 @@ EventLoopResult<T> run_event_loop(
                          apy_cfg.period_s, apy_cfg.cap_pct);
     }
     
-    // Detailed logging: track last candle timestamp to detect boundaries
-    uint64_t last_candle_ts = 0;
-    Candle last_candle{};
-    
-    // Helper to log detailed entry at candle boundary
-    auto log_detailed_entry = [&](const Candle& candle) {
-        if (!detailed_log) return;
-        DetailedEntry<T> entry;
-        entry.t = candle.ts;
-        entry.token0 = pool.balances[0];
-        entry.token1 = pool.balances[1];
-        entry.price_oracle = pool.cached_price_oracle;
-        entry.price_scale = pool.cached_price_scale;
-        entry.profit = pool.get_virtual_price() - T(1);
-        entry.xcp = pool.xcp_profit;
-        entry.open = static_cast<T>(candle.open);
-        entry.high = static_cast<T>(candle.high);
-        entry.low = static_cast<T>(candle.low);
-        entry.close = static_cast<T>(candle.close);
-        // Compute dynamic fee at current pool state
-        const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
-        result.detailed_entries.push_back(entry);
-    };
+    // Initialize loggers
+    ActionLogger<T> action_logger(save_actions);
+    DetailedLogger<T> detailed_logger(detailed_log);
     
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
@@ -145,13 +124,10 @@ EventLoopResult<T> run_event_loop(
     
     for (size_t ev_idx = 0; ev_idx < n_events; ++ev_idx) {
         const auto& ev = events[ev_idx];
+        const bool is_last_event = (ev_idx == n_events - 1);
         
-        // Detailed logging: log previous candle when candle changes
-        if (detailed_log && last_candle_ts > 0 && ev.candle.ts != last_candle_ts) {
-            log_detailed_entry(last_candle);
-        }
-        last_candle_ts = ev.candle.ts;
-        last_candle = ev.candle;
+        // Detailed logging: log previous candle when candle changes (or final candle at end)
+        detailed_logger.maybe_log_candle_boundary(pool, ev.candle, is_last_event);
         
         // Update pool timestamp
         pool.set_block_timestamp(ev.ts);
@@ -183,16 +159,8 @@ EventLoopResult<T> run_event_loop(
         
         // Try donation before trading
         auto don_res = make_donation_ex(pool, dcfg, ev.ts, m);
-        if (save_actions && don_res.success) {
-            DonationAction<T> act;
-            act.ts = ev.ts;
-            act.ts_due = don_res.ts_due;
-            act.amounts = don_res.amounts;
-            act.price_scale = don_res.price_scale;
-            act.donation_ratio1 = dcfg.ratio1;
-            act.apy_per_year = dcfg.apy;
-            act.freq_s = dcfg.freq_s;
-            result.actions.push_back(std::move(act));
+        if (don_res.success) {
+            action_logger.log_donation(ev.ts, don_res, dcfg);
         }
         
         if (!(cex_price > T(0))) {
@@ -267,35 +235,10 @@ EventLoopResult<T> run_event_loop(
                 sample_slippage_probes(ev.ts, cex_price);
                 
                 // Record exchange action
-                if (save_actions) {
-                    ExchangeAction<T> act;
-                    act.ts = ev.ts;
-                    act.i = dec.i;
-                    act.j = dec.j;
-                    act.dx = dec.dx;
-                    act.dy_after_fee = dy_after_fee;
-                    act.fee_tokens = fee_tokens;
-                    act.profit_coin0 = dec.profit;
-                    act.p_cex = cex_price;
-                    act.p_pool_before = p_pool_before;
-                    act.p_pool_after = pool.get_p();
-                    act.oracle_before = oracle_before;
-                    act.oracle_after = pool.cached_price_oracle;
-                    act.ps_before = ps_before;
-                    act.ps_after = ps_after;
-                    act.last_ts_before = last_ts_before;
-                    act.last_ts_after = pool.last_timestamp;
-                    act.lp_before = lp_before;
-                    act.lp_after = pool.last_prices;  // Note: "lp" means last_prices in old harness
-                    act.xcp_profit_before = xcp_profit_before;
-                    act.xcp_profit_after = pool.xcp_profit;
-                    act.vp_before = vp_before;
-                    act.vp_after = pool.get_vp_boosted();
-                    act.slippage = tw.last_r_inst;
-                    act.liq_density = tw.last_d_inst;
-                    act.balance_indicator = pools::twocrypto_fx::balance_indicator(pool);
-                    result.actions.push_back(std::move(act));
-                }
+                action_logger.log_exchange(ev.ts, dec.i, dec.j, dec.dx, dy_after_fee, fee_tokens,
+                                           dec.profit, cex_price, p_pool_before,
+                                           oracle_before, ps_before, last_ts_before, lp_before,
+                                           xcp_profit_before, vp_before, pool, tw);
                 
             } catch (...) {
                 // Trade failed; ignore and continue
@@ -306,7 +249,8 @@ EventLoopResult<T> run_event_loop(
         if (cowswap && cowswap->has_pending()) {
             trading::CowswapMetrics<T> cs_metrics{};
             std::vector<trading::CowswapExecDetail<T>> cs_exec_details;
-            std::vector<trading::CowswapExecDetail<T>>* cs_details_ptr = save_actions ? &cs_exec_details : nullptr;
+            std::vector<trading::CowswapExecDetail<T>>* cs_details_ptr = 
+                action_logger.enabled() ? &cs_exec_details : nullptr;
             
             cowswap->apply_due_trades(pool, cs_metrics, cs_details_ptr);
             
@@ -321,20 +265,12 @@ EventLoopResult<T> run_event_loop(
             }
             
             // Record cowswap actions if logging enabled
-            if (save_actions && !cs_exec_details.empty()) {
+            if (action_logger.enabled() && !cs_exec_details.empty()) {
                 for (const auto& detail : cs_exec_details) {
-                    CowswapAction<T> act;
-                    act.ts = detail.ts;
-                    act.is_buy = detail.is_buy;
-                    act.dx = detail.dx;
-                    act.dy_after_fee = detail.dy_after_fee;
-                    act.fee_tokens = detail.fee_tokens;
-                    act.hist_dy = detail.hist_dy;
-                    act.advantage_bps = detail.advantage_bps;
-                    act.threshold_bps = detail.threshold_bps;
-                    act.ps_before = detail.ps_before;
-                    act.ps_after = detail.ps_after;
-                    result.actions.push_back(std::move(act));
+                    action_logger.log_cowswap(detail.ts, detail.is_buy, detail.dx,
+                                              detail.dy_after_fee, detail.fee_tokens,
+                                              detail.hist_dy, detail.advantage_bps, detail.threshold_bps,
+                                              detail.ps_before, detail.ps_after);
                 }
             }
         }
@@ -355,28 +291,15 @@ EventLoopResult<T> run_event_loop(
                 sample_slippage_probes(ev.ts, cex_price);
                 
                 // Record tick action
-                if (save_actions) {
-                    TickAction<T> act;
-                    act.ts = ev.ts;
-                    act.p_cex = cex_price;
-                    act.ps_before = ps_before;
-                    act.ps_after = pool.cached_price_scale;
-                    act.oracle_before = oracle_before;
-                    act.oracle_after = pool.cached_price_oracle;
-                    act.xcp_profit_before = xcp_profit_before;
-                    act.xcp_profit_after = pool.xcp_profit;
-                    act.vp_before = vp_before;
-                    act.vp_after = pool.get_vp_boosted();
-                    result.actions.push_back(std::move(act));
-                }
+                action_logger.log_tick(ev.ts, cex_price, ps_before, oracle_before,
+                                       xcp_profit_before, vp_before, pool);
             }
         }
     }
     
-    // Log final candle after loop ends
-    if (detailed_log && last_candle_ts > 0) {
-        log_detailed_entry(last_candle);
-    }
+    // Move logged data into result
+    result.actions = action_logger.take_actions();
+    result.detailed_entries = detailed_logger.take_entries();
     
     // Copy out APY tracker results
     result.tw_capped_apy = apy_tracker.tw_capped_apy();
