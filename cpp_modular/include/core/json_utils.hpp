@@ -10,9 +10,9 @@
 
 namespace arb {
 
-// Convert a value to a string representation scaled by 1e18
+// Convert a value to a string representation scaled by 1e18 (for wei format)
 template <typename T>
-static std::string to_str_1e18(T v) {
+inline std::string to_str_1e18(T v) {
     long double scaled = static_cast<long double>(v) * 1e18L;
     if (scaled < 0) scaled = 0;
     std::ostringstream oss;

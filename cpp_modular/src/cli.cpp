@@ -11,8 +11,8 @@ namespace harness {
 
 void print_usage(const char* prog_name) {
     std::cerr << "Usage: " << prog_name
-              << " <pools.json> <candles_or_events.json> <output.json>\n"
-              << "       [--n-candles N] [--save-actions] [--events]\n"
+              << " <pools.json> <candles.json> <output.json>\n"
+              << "       [--n-candles N] [--save-actions]\n"
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
               << "       [--dustswapfreq S]\n"
@@ -41,8 +41,6 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.max_candles = static_cast<size_t>(std::stoll(argv[++i]));
             } else if (arg == "--save-actions") {
                 args.save_actions = true;
-            } else if (arg == "--events") {
-                args.use_events = true;
             } else if (arg == "--min-swap" && i + 1 < argc) {
                 args.min_swap_frac = std::stod(argv[++i]);
             } else if (arg == "--max-swap" && i + 1 < argc) {

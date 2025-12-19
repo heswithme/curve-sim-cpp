@@ -9,14 +9,12 @@
 
 #include <boost/json.hpp>
 
+#include "core/json_utils.hpp"
+
 namespace json = boost::json;
 
 namespace arb {
 namespace harness {
-
-// Forward: to_str_1e18 for wei conversion
-template <typename T>
-std::string to_str_1e18(T val);
 
 // Donation action (matches old harness schema exactly)
 template <typename T>

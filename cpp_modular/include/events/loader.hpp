@@ -17,11 +17,4 @@ std::vector<Candle> load_candles(const std::string& path,
 // Generate two price events per candle (low-first or high-first path).
 std::vector<Event> gen_events(const std::vector<Candle>& candles);
 
-// Load events directly from JSON file.
-// Accepts either:
-//   - events: [[ts, price, volume], ...]
-//   - candles: [[ts, o, h, l, c, v], ...] (uses close + volume)
-//   - object with "data" or "events" array
-std::vector<Event> load_events(const std::string& path, size_t max_events = 0);
-
 } // namespace arb

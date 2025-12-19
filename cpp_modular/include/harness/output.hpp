@@ -10,6 +10,7 @@
 
 #include <boost/json.hpp>
 
+#include "core/json_utils.hpp"
 #include "harness/runner.hpp"
 #include "pools/twocrypto_fx/helpers.hpp"
 
@@ -17,18 +18,6 @@ namespace json = boost::json;
 
 namespace arb {
 namespace harness {
-
-// Convert a floating-point value to a string scaled by 1e18 (matching Vyper's uint256 format)
-template <typename T>
-std::string to_str_1e18(T val) {
-    auto scaled = static_cast<long double>(val) * 1e18L;
-    if (scaled < 0) scaled = 0;
-    std::ostringstream oss;
-    oss.setf(std::ios::fixed);
-    oss.precision(0);
-    oss << scaled;
-    return oss.str();
-}
 
 // Convert pool result's final state to JSON object
 template <typename T>
@@ -230,18 +219,13 @@ json::object build_output_json(
     const std::vector<PoolResult<T>>& results,
     size_t n_events,
     const std::string& data_path,
-    bool use_events,   // true => events_file key, false => candles_file key
     size_t n_threads,
     double candles_read_ms,
     double exec_ms
 ) {
     // Metadata
     json::object meta;
-    if (use_events) {
-        meta["events_file"] = data_path;
-    } else {
-        meta["candles_file"] = data_path;
-    }
+    meta["candles_file"] = data_path;
     meta["events"] = static_cast<uint64_t>(n_events);
     meta["threads"] = static_cast<uint64_t>(n_threads);
     meta["candles_read_ms"] = candles_read_ms;
@@ -299,13 +283,12 @@ bool write_results_json(
     const std::vector<PoolResult<T>>& results,
     size_t n_events,
     const std::string& data_path,
-    bool use_events,   // true => events_file key, false => candles_file key
     size_t n_threads,
     double candles_read_ms,
     double exec_ms
 ) {
     auto O = build_output_json(
-        results, n_events, data_path, use_events, n_threads,
+        results, n_events, data_path, n_threads,
         candles_read_ms, exec_ms
     );
     

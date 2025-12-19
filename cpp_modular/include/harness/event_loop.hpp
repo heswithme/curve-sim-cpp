@@ -58,7 +58,7 @@ EventLoopResult<T> run_event_loop(
     
     // Record timestamps
     result.t_start = events.front().ts;
-    result.t_end = events.back().ts;
+    result.t_end = events[n_events - 1].ts;
     
     // Record initial state
     result.tvl_start = pool.balances[0] + pool.balances[1] * pool.cached_price_scale;
@@ -146,6 +146,13 @@ EventLoopResult<T> run_event_loop(
     for (size_t ev_idx = 0; ev_idx < n_events; ++ev_idx) {
         const auto& ev = events[ev_idx];
         
+        // Detailed logging: log previous candle when candle changes
+        if (detailed_log && last_candle_ts > 0 && ev.candle.ts != last_candle_ts) {
+            log_detailed_entry(last_candle);
+        }
+        last_candle_ts = ev.candle.ts;
+        last_candle = ev.candle;
+        
         // Update pool timestamp
         pool.set_block_timestamp(ev.ts);
         
@@ -189,19 +196,6 @@ EventLoopResult<T> run_event_loop(
         }
         
         if (!(cex_price > T(0))) {
-            // Detailed logging: log at candle boundary even when skipping
-            if (detailed_log) {
-                const bool is_last = (ev_idx == n_events - 1);
-                const bool candle_changed = (last_candle_ts > 0 && ev.candle.ts != last_candle_ts);
-                if (candle_changed) {
-                    log_detailed_entry(last_candle);
-                }
-                last_candle_ts = ev.candle.ts;
-                last_candle = ev.candle;
-                if (is_last) {
-                    log_detailed_entry(last_candle);
-                }
-            }
             continue;
         }
         
@@ -249,19 +243,6 @@ EventLoopResult<T> run_event_loop(
                     act.vp_before = vp_before;
                     act.vp_after = pool.get_vp_boosted();
                     result.actions.push_back(std::move(act));
-                }
-            }
-            // Detailed logging: log at candle boundary even when no trade
-            if (detailed_log) {
-                const bool is_last = (ev_idx == n_events - 1);
-                const bool candle_changed = (last_candle_ts > 0 && ev.candle.ts != last_candle_ts);
-                if (candle_changed) {
-                    log_detailed_entry(last_candle);
-                }
-                last_candle_ts = ev.candle.ts;
-                last_candle = ev.candle;
-                if (is_last) {
-                    log_detailed_entry(last_candle);
                 }
             }
             continue;
@@ -381,26 +362,11 @@ EventLoopResult<T> run_event_loop(
                 }
             }
         }
-        
-        // Detailed logging: log at candle boundary (when candle.ts changes or last event)
-        if (detailed_log) {
-            const bool is_last = (ev_idx == n_events - 1);
-            const bool candle_changed = (last_candle_ts > 0 && ev.candle.ts != last_candle_ts);
-            
-            // Log the *previous* candle when we see a new one
-            if (candle_changed) {
-                log_detailed_entry(last_candle);
-            }
-            
-            // Track current candle
-            last_candle_ts = ev.candle.ts;
-            last_candle = ev.candle;
-            
-            // Log final candle at end of simulation
-            if (is_last) {
-                log_detailed_entry(last_candle);
-            }
-        }
+    }
+    
+    // Log final candle after loop ends
+    if (detailed_log && last_candle_ts > 0) {
+        log_detailed_entry(last_candle);
     }
     
     // Copy out APY tracker results

@@ -17,7 +17,6 @@ struct CliArgs {
     // Options
     size_t max_candles{0};           // 0 = all
     bool save_actions{false};
-    bool use_events{false};          // --events: load events directly instead of candles
     double min_swap_frac{1e-6};
     double max_swap_frac{1.0};
     size_t n_threads{std::thread::hardware_concurrency()};

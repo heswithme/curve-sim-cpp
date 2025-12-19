@@ -136,17 +136,11 @@ int main(int argc, char* argv[]) {
     try {
         auto t_read0 = std::chrono::high_resolution_clock::now();
         
-        // Load candles+generate events, or load events directly if --events flag
-        std::vector<arb::Event> events;
-        if (args.use_events) {
-            events = arb::load_events(args.candles_path, args.max_candles);
-            std::cout << "loaded " << events.size() << " events from " << args.candles_path << "\n";
-        } else {
-            auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
-            events = arb::gen_events(candles);
-            std::cout << "loaded " << candles.size() << " candles -> "
-                      << events.size() << " events from " << args.candles_path << "\n";
-        }
+        // Load candles and generate events
+        auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
+        auto events = arb::gen_events(candles);
+        std::cout << "loaded " << candles.size() << " candles -> "
+                  << events.size() << " events from " << args.candles_path << "\n";
         
         auto t_read1 = std::chrono::high_resolution_clock::now();
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
@@ -199,7 +193,6 @@ int main(int argc, char* argv[]) {
                 results,
                 events.size(),
                 args.candles_path,
-                args.use_events,
                 args.n_threads,
                 candles_read_ms,
                 exec_ms

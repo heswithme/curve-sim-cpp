@@ -1,8 +1,9 @@
 // Donation scheduler for arbitrage harness
 #pragma once
 
-#include <cstdint>
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <optional>
 
 #include "core/common.hpp"
