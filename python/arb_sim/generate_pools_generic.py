@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 32
+GRID_SIZE = 8
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -143,12 +143,14 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "binance-2025.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btc-2023-2025.json")
+DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-cow.csv")
+DEFAULT_COWSWAP_FEE_BPS = 10.0  # Fee in basis points to beat historical execution
 
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
 init_price = _initial_price_from_file(DEFAULT_DATAFILE)
-init_liq = 1_000_000  # in coin0
+init_liq = 100_000_000  # in coin0
 
 
 INVERT_LIQ = False
@@ -177,13 +179,13 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.05,
+    "donation_apy": 0.10,
     "donation_frequency": int(7 * 86400),
     "donation_coins_ratio": 0.5,
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 30.0,
+    "arb_fee_bps": 10.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,
@@ -234,6 +236,8 @@ def main():
                 },
             },
             "datafile": DEFAULT_DATAFILE,
+            "cowswap_file": DEFAULT_COWSWAP_FILE,
+            "cowswap_fee_bps": DEFAULT_COWSWAP_FEE_BPS,
             "base_pool": strify_pool(BASE_POOL),
         },
         "pools": pools,

@@ -110,6 +110,21 @@ struct CowswapMetrics {
     T lp_fee_coin0{0};        // LP fees paid in coin0 terms
 };
 
+// Details of a single executed cowswap trade (for action logging)
+template <typename T>
+struct CowswapExecDetail {
+    uint64_t ts{0};
+    bool is_buy{false};        // true = BUY (coin0->coin1), false = SELL (coin1->coin0)
+    T dx{0};                   // input amount
+    T dy_after_fee{0};         // output amount after fee
+    T fee_tokens{0};           // fee in output tokens
+    T hist_dy{0};              // historical output amount
+    T advantage_bps{0};        // pool advantage in bps
+    T threshold_bps{0};        // required threshold in bps
+    T ps_before{0};            // price_scale before trade
+    T ps_after{0};             // price_scale after trade
+};
+
 // Self-contained cowswap trader that manages its own cursor
 // Can own trades data or reference shared data
 template <typename T>
@@ -118,20 +133,34 @@ public:
     CowswapTrader() = default;
     
     // Construct from loaded trades (takes ownership via move)
-    explicit CowswapTrader(std::vector<CowswapTrade>&& trades)
+    explicit CowswapTrader(std::vector<CowswapTrade>&& trades, T fee_bps = T(0))
         : owned_trades_(std::move(trades))
         , trades_(&owned_trades_)
-        , idx_(0) {}
+        , idx_(0)
+        , fee_bps_(fee_bps) {}
     
     // Construct from shared trades pointer (non-owning reference)
     // Each instance has independent cursor but shares trade data
-    explicit CowswapTrader(const std::vector<CowswapTrade>* trades)
+    explicit CowswapTrader(const std::vector<CowswapTrade>* trades, T fee_bps = T(0))
         : trades_(trades)
-        , idx_(0) {}
+        , idx_(0)
+        , fee_bps_(fee_bps) {}
     
     // Load from CSV file directly (owning)
-    static CowswapTrader from_csv(const std::string& path) {
-        return CowswapTrader(load_cowswap_csv(path));
+    static CowswapTrader from_csv(const std::string& path, T fee_bps = T(0)) {
+        auto trader = CowswapTrader(load_cowswap_csv(path));
+        trader.fee_bps_ = fee_bps;
+        return trader;
+    }
+    
+    // Set fee in basis points
+    void set_fee_bps(T fee_bps) {
+        fee_bps_ = fee_bps;
+    }
+    
+    // Get fee in basis points
+    T fee_bps() const {
+        return fee_bps_;
     }
     
     // Initialize cursor to start at or after given timestamp
@@ -170,8 +199,10 @@ public:
     // Apply any trades whose timestamp <= pool timestamp
     // Advances internal cursor automatically
     // Returns number of trades executed
+    // If exec_details is provided, appends details of executed trades for action logging
     template <typename Pool>
-    size_t apply_due_trades(Pool& pool, CowswapMetrics<T>& metrics) {
+    size_t apply_due_trades(Pool& pool, CowswapMetrics<T>& metrics,
+                            std::vector<CowswapExecDetail<T>>* exec_details = nullptr) {
         if (!trades_ || idx_ >= trades_->size()) {
             return 0;
         }
@@ -199,26 +230,38 @@ public:
                 auto [sim_dy, sim_fee] = pools::twocrypto_fx::simulate_exchange_once(
                     pool, 0, 1, dx);
                 
-                // Historical effective price: usd_amount / wbtc_amount (USD per BTC)
-                // Pool effective price: dx / sim_dy (USD per BTC)
-                const T hist_price = dx / required_dy;
-                const T pool_price = (sim_dy > T(0)) ? dx / sim_dy : T(0);
+                // Required threshold: pool must beat historical by fee_bps
+                // sim_dy >= required_dy * (1 + fee_bps/10000)
+                const T threshold_dy = required_dy * (T(1) + fee_bps_ / T(10000));
+                const bool should_exec = sim_dy >= threshold_dy;
+                
+                // For action logging: advantage in bps
+                const T advantage_bps = (required_dy > T(0)) 
+                    ? (sim_dy / required_dy - T(1)) * T(10000) 
+                    : T(0);
                 
                 if (cowswap_debug_enabled()) {
+                    // For BUY: pool gives more BTC = better for user
+                    // Advantage = (pool_btc - hist_btc) / hist_btc * 100
+                    const double adv_pct = (static_cast<double>(sim_dy) - static_cast<double>(required_dy)) 
+                                          / static_cast<double>(required_dy) * 100.0;
+                    const double thresh_pct = static_cast<double>(fee_bps_) / 100.0;
                     std::cerr << "[COWSWAP] ts=" << trade.ts 
                               << " BUY dx_usd=" << std::fixed << std::setprecision(2) << static_cast<double>(dx)
                               << " hist_btc=" << std::setprecision(8) << static_cast<double>(required_dy)
                               << " pool_btc=" << static_cast<double>(sim_dy)
-                              << " hist_price=" << std::setprecision(2) << static_cast<double>(hist_price)
-                              << " pool_price=" << static_cast<double>(pool_price)
+                              << " adv=" << std::setprecision(4) << std::showpos << adv_pct << "%" << std::noshowpos
+                              << " thresh=" << thresh_pct << "%"
                               << " ps=" << std::setprecision(0) << static_cast<double>(pool.cached_price_scale)
-                              << " => " << (sim_dy >= required_dy ? "EXEC" : "SKIP") << "\n";
+                              << " => " << (should_exec ? "EXEC" : "SKIP") << "\n";
                 }
                 
-                if (sim_dy >= required_dy) {
+                if (should_exec) {
                     // Execute the trade
                     try {
+                        const T ps_before = pool.cached_price_scale;
                         auto res = pool.exchange(T(0), T(1), dx, T(0));
+                        const T dy_after_fee = res[0];
                         const T fee_tokens = res[1];
                         
                         // Update metrics
@@ -226,6 +269,22 @@ public:
                         metrics.notional_coin0 += dx;
                         // Fee is in coin1 (WBTC), convert to coin0 using pool price
                         metrics.lp_fee_coin0 += fee_tokens * pool.cached_price_scale;
+                        
+                        // Record execution details for action logging
+                        if (exec_details) {
+                            CowswapExecDetail<T> detail;
+                            detail.ts = trade.ts;
+                            detail.is_buy = true;
+                            detail.dx = dx;
+                            detail.dy_after_fee = dy_after_fee;
+                            detail.fee_tokens = fee_tokens;
+                            detail.hist_dy = required_dy;
+                            detail.advantage_bps = advantage_bps;
+                            detail.threshold_bps = fee_bps_;
+                            detail.ps_before = ps_before;
+                            detail.ps_after = pool.cached_price_scale;
+                            exec_details->push_back(detail);
+                        }
                         
                         ++executed;
                     } catch (...) {
@@ -244,26 +303,38 @@ public:
                 auto [sim_dy, sim_fee] = pools::twocrypto_fx::simulate_exchange_once(
                     pool, 1, 0, dx);
                 
-                // Historical effective price: usd_amount / wbtc_amount (USD per BTC)
-                // Pool effective price: sim_dy / dx (USD per BTC)
-                const T hist_price = required_dy / dx;
-                const T pool_price = sim_dy / dx;
+                // Required threshold: pool must beat historical by fee_bps
+                // sim_dy >= required_dy * (1 + fee_bps/10000)
+                const T threshold_dy = required_dy * (T(1) + fee_bps_ / T(10000));
+                const bool should_exec = sim_dy >= threshold_dy;
+                
+                // For action logging: advantage in bps
+                const T advantage_bps = (required_dy > T(0)) 
+                    ? (sim_dy / required_dy - T(1)) * T(10000) 
+                    : T(0);
                 
                 if (cowswap_debug_enabled()) {
+                    // For SELL: pool gives more USD = better for user
+                    // Advantage = (pool_usd - hist_usd) / hist_usd * 100
+                    const double adv_pct = (static_cast<double>(sim_dy) - static_cast<double>(required_dy)) 
+                                          / static_cast<double>(required_dy) * 100.0;
+                    const double thresh_pct = static_cast<double>(fee_bps_) / 100.0;
                     std::cerr << "[COWSWAP] ts=" << trade.ts
                               << " SELL dx_btc=" << std::fixed << std::setprecision(8) << static_cast<double>(dx)
                               << " hist_usd=" << std::setprecision(2) << static_cast<double>(required_dy)
                               << " pool_usd=" << static_cast<double>(sim_dy)
-                              << " hist_price=" << static_cast<double>(hist_price)
-                              << " pool_price=" << static_cast<double>(pool_price)
+                              << " adv=" << std::setprecision(4) << std::showpos << adv_pct << "%" << std::noshowpos
+                              << " thresh=" << thresh_pct << "%"
                               << " ps=" << std::setprecision(0) << static_cast<double>(pool.cached_price_scale)
-                              << " => " << (sim_dy >= required_dy ? "EXEC" : "SKIP") << "\n";
+                              << " => " << (should_exec ? "EXEC" : "SKIP") << "\n";
                 }
                 
-                if (sim_dy >= required_dy) {
+                if (should_exec) {
                     // Execute the trade
                     try {
+                        const T ps_before = pool.cached_price_scale;
                         auto res = pool.exchange(T(1), T(0), dx, T(0));
+                        const T dy_after_fee = res[0];
                         const T fee_tokens = res[1];
                         
                         // Update metrics
@@ -272,6 +343,22 @@ public:
                         metrics.notional_coin0 += dx * pool.cached_price_scale;
                         // Fee is in coin0 (USD)
                         metrics.lp_fee_coin0 += fee_tokens;
+                        
+                        // Record execution details for action logging
+                        if (exec_details) {
+                            CowswapExecDetail<T> detail;
+                            detail.ts = trade.ts;
+                            detail.is_buy = false;
+                            detail.dx = dx;
+                            detail.dy_after_fee = dy_after_fee;
+                            detail.fee_tokens = fee_tokens;
+                            detail.hist_dy = required_dy;
+                            detail.advantage_bps = advantage_bps;
+                            detail.threshold_bps = fee_bps_;
+                            detail.ps_before = ps_before;
+                            detail.ps_after = pool.cached_price_scale;
+                            exec_details->push_back(detail);
+                        }
                         
                         ++executed;
                     } catch (...) {
@@ -290,6 +377,7 @@ private:
     std::vector<CowswapTrade> owned_trades_;       // Storage if owning
     const std::vector<CowswapTrade>* trades_{nullptr};  // Pointer to trades (owned or shared)
     size_t idx_{0};
+    T fee_bps_{0};  // Fee in basis points to beat historical execution
 };
 
 } // namespace trading

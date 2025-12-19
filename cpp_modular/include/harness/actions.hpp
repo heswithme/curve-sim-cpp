@@ -137,9 +137,41 @@ struct ExchangeAction {
     }
 };
 
+// Cowswap organic trade action
+template <typename T>
+struct CowswapAction {
+    uint64_t ts{0};
+    bool is_buy{false};        // true = buying coin1 (BUY), false = selling coin1 (SELL)
+    T dx{0};                   // input amount
+    T dy_after_fee{0};         // output amount after pool fee
+    T fee_tokens{0};           // pool fee in output tokens
+    T hist_dy{0};              // historical execution amount (what cowswap actually got)
+    T advantage_bps{0};        // pool advantage vs historical in bps
+    T threshold_bps{0};        // required threshold in bps
+    T ps_before{0};
+    T ps_after{0};
+    
+    json::object to_json() const {
+        json::object o;
+        o["type"] = "cowswap";
+        o["ts"] = ts;
+        o["side"] = is_buy ? "buy" : "sell";
+        o["dx"] = static_cast<double>(dx);
+        o["dx_wei"] = to_str_1e18(dx);
+        o["dy_after_fee"] = static_cast<double>(dy_after_fee);
+        o["fee_tokens"] = static_cast<double>(fee_tokens);
+        o["hist_dy"] = static_cast<double>(hist_dy);
+        o["advantage_bps"] = static_cast<double>(advantage_bps);
+        o["threshold_bps"] = static_cast<double>(threshold_bps);
+        o["ps_before"] = static_cast<double>(ps_before);
+        o["ps_after"] = static_cast<double>(ps_after);
+        return o;
+    }
+};
+
 // Variant for all action types
 template <typename T>
-using Action = std::variant<DonationAction<T>, TickAction<T>, ExchangeAction<T>>;
+using Action = std::variant<DonationAction<T>, TickAction<T>, ExchangeAction<T>, CowswapAction<T>>;
 
 // Convert action variant to JSON
 template <typename T>

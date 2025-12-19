@@ -117,6 +117,7 @@ struct RunConfig {
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
+    T cowswap_fee_bps{T(0)};   // fee in bps to beat historical execution
 };
 
 // Run a single pool configuration and return results
@@ -213,7 +214,7 @@ PoolResult<T> run_single_pool(
         trading::CowswapTrader<T> cowswap_trader;
         trading::CowswapTrader<T>* cowswap_ptr = nullptr;
         if (cowswap_trades && !cowswap_trades->empty() && !events.empty()) {
-            cowswap_trader = trading::CowswapTrader<T>(cowswap_trades);
+            cowswap_trader = trading::CowswapTrader<T>(cowswap_trades, cfg.cowswap_fee_bps);
             cowswap_trader.init_at(events.front().ts);
             cowswap_ptr = &cowswap_trader;
         }

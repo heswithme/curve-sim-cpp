@@ -81,6 +81,7 @@ class ArbHarnessRunner:
         apy_period_cap: int | None = None,
         detailed_log: bool = False,
         cowswap_trades: str | None = None,
+        cowswap_fee_bps: float | None = None,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
         cmd = [
@@ -117,6 +118,8 @@ class ArbHarnessRunner:
             cmd += ["--detailed-log"]
         if cowswap_trades:
             cmd += ["--cowswap-trades", str(cowswap_trades)]
+        if cowswap_fee_bps is not None:
+            cmd += ["--cowswap-fee-bps", str(cowswap_fee_bps)]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
@@ -230,10 +233,9 @@ def main() -> int:
         help="Write per-candle detailed_log.json next to output file",
     )
     parser.add_argument(
-        "--cowswap-trades",
-        type=str,
-        default=None,
-        help="Path to cowswap trades CSV for organic trade replay",
+        "--cow",
+        action="store_true",
+        help="Enable cowswap organic trade replay (uses cowswap_file from pool_config)",
     )
     args = parser.parse_args()
 
@@ -270,6 +272,28 @@ def main() -> int:
     if not candles_path.exists():
         raise FileNotFoundError(f"Candles file not found: {candles_path}")
 
+    # Resolve cowswap trades path if --cow enabled
+    cowswap_path: str | None = None
+    cowswap_fee_bps: float | None = None
+    if args.cow:
+        meta = cfg.get("meta") if isinstance(cfg, dict) else None
+        cowswap_file = meta.get("cowswap_file") if isinstance(meta, dict) else None
+        if cowswap_file:
+            cpath = Path(cowswap_file)
+            if not cpath.is_absolute():
+                cpath = repo_root / cpath
+            if not cpath.exists():
+                raise FileNotFoundError(f"Cowswap file not found: {cpath}")
+            cowswap_path = str(cpath)
+        else:
+            raise ValueError(
+                "--cow specified but meta.cowswap_file missing in pool_config.json"
+            )
+        # Get fee from config (default 0 if not specified)
+        cowswap_fee_bps = (
+            meta.get("cowswap_fee_bps", 0.0) if isinstance(meta, dict) else 0.0
+        )
+
     # Invoke the harness once over the entire config
     out_json_path = (
         Path(args.out)
@@ -296,7 +320,8 @@ def main() -> int:
         apy_period_days=args.apy_period_days,
         apy_period_cap=args.apy_period_cap,
         detailed_log=args.detailed_log,
-        cowswap_trades=args.cowswap_trades,
+        cowswap_trades=cowswap_path,
+        cowswap_fee_bps=cowswap_fee_bps,
     )
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])

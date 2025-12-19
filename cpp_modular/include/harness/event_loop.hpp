@@ -10,6 +10,7 @@
 #include "harness/metrics.hpp"
 #include "harness/actions.hpp"
 #include "harness/detailed_output.hpp"
+#include "harness/logging.hpp"
 #include "harness/donation.hpp"
 #include "harness/idle_tick.hpp"
 #include "harness/user_swap.hpp"
@@ -351,12 +352,34 @@ EventLoopResult<T> run_event_loop(
         // Process cowswap organic trades (after arb)
         if (cowswap && cowswap->has_pending()) {
             trading::CowswapMetrics<T> cs_metrics{};
-            cowswap->apply_due_trades(pool, cs_metrics);
+            std::vector<trading::CowswapExecDetail<T>> cs_exec_details;
+            std::vector<trading::CowswapExecDetail<T>>* cs_details_ptr = save_actions ? &cs_exec_details : nullptr;
+            
+            cowswap->apply_due_trades(pool, cs_metrics, cs_details_ptr);
+            
             // Accumulate cowswap metrics into main metrics
             m.cowswap_trades += cs_metrics.trades_executed;
             m.cowswap_skipped += cs_metrics.trades_skipped;
             m.cowswap_notional_coin0 += cs_metrics.notional_coin0;
             m.cowswap_lp_fee_coin0 += cs_metrics.lp_fee_coin0;
+            
+            // Record cowswap actions if logging enabled
+            if (save_actions && !cs_exec_details.empty()) {
+                for (const auto& detail : cs_exec_details) {
+                    CowswapAction<T> act;
+                    act.ts = detail.ts;
+                    act.is_buy = detail.is_buy;
+                    act.dx = detail.dx;
+                    act.dy_after_fee = detail.dy_after_fee;
+                    act.fee_tokens = detail.fee_tokens;
+                    act.hist_dy = detail.hist_dy;
+                    act.advantage_bps = detail.advantage_bps;
+                    act.threshold_bps = detail.threshold_bps;
+                    act.ps_before = detail.ps_before;
+                    act.ps_after = detail.ps_after;
+                    result.actions.push_back(std::move(act));
+                }
+            }
         }
         
         // Detailed logging: log at candle boundary (when candle.ts changes or last event)

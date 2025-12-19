@@ -176,8 +176,9 @@ int main(int argc, char* argv[]) {
         // Wire detailed_log flag
         run_cfg.detailed_log = args.detailed_log;
         
-        // Wire cowswap trades path
+        // Wire cowswap trades path and fee
         run_cfg.cowswap_path = args.cowswap_path;
+        run_cfg.cowswap_fee_bps = static_cast<RealT>(args.cowswap_fee_bps);
         
         auto t_exec0 = std::chrono::high_resolution_clock::now();
         
