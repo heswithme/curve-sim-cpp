@@ -36,7 +36,7 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
     std::ofstream out(path);
     if (!out) return false;
     
-    out << std::setprecision(8);
+    out << std::setprecision(18);
     out << "[\n";
     for (size_t i = 0; i < entries.size(); ++i) {
         const auto& e = entries[i];
