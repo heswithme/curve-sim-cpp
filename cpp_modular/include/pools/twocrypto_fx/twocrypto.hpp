@@ -610,7 +610,7 @@ public:
                 norm = PoolTraits<T>::PRECISION() - norm;
             }
 
-            T step = PoolTraits<T>::max(adjustment_step, norm / 5);
+            T step = PoolTraits<T>::min(adjustment_step, norm / 5);
             if (trace) {
                 if constexpr (std::is_same_v<T, uint256>) {
                     std::cout << "TRACE tp_norm norm=" << norm.template convert_to<std::string>()
