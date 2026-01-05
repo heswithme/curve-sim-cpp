@@ -23,17 +23,17 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 16
+GRID_SIZE = 32
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
 # 1. A-mid_fee log
 
-# X_name = "mid_fee"
-# xmin = int(1 / 10_000 * 10**10)
-# xmax = int(500 / 10_000 * 10**10)
-# xlogspace = True
-# FEE_EQUALIZE = True
+X_name = "mid_fee"
+xmin = int(1 / 10_000 * 10**10)
+xmax = int(500 / 10_000 * 10**10)
+xlogspace = True
+FEE_EQUALIZE = True
 
 Y_name = "A"
 ymin = 1 * 10_000
@@ -96,10 +96,10 @@ ylogspace = True
 # xmax = int(100/10_000*10**10)
 # xlogspace = True
 
-X_name = "donation_apy"
-xmin = 0.01
-xmax = 0.2
-xlogspace = False
+# X_name = "donation_apy"
+# xmin = 0.01
+# xmax = 0.2
+# xlogspace = False
 
 
 # X_name = "fee_gamma"
@@ -143,7 +143,7 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-up.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-processed.json")
 DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0  # Fee in basis points to beat historical execution
@@ -168,8 +168,8 @@ BASE_POOL = {
     ],
     "A": 20 * 10_000,
     "gamma": 10**14,  # unused in twocrypto
-    "mid_fee": int(150 / 10_000 * 10**10),
-    "out_fee": int(150 / 10_000 * 10**10),
+    "mid_fee": int(50 / 10_000 * 10**10),
+    "out_fee": int(50 / 10_000 * 10**10),
     "fee_gamma": int(0.001 * 10**18),
     "allowed_extra_profit": int(1e-12 * 10**18),
     "adjustment_step": int(0.02 * 10**18), # 2%
@@ -180,7 +180,7 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.10,
+    "donation_apy": 0.075,
     "donation_frequency": int(7 * 86400),
     "donation_coins_ratio": 0.5,
 }

@@ -142,3 +142,5 @@ python/benchmark_math/**.json
 
 # Personal notes
 todo.txt
+
+yb-curve-sim-cpp
