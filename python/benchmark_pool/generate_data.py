@@ -29,7 +29,7 @@ def generate_pool_configs(num_pools: int = 3) -> List[Dict[str, Any]]:
             "out_fee": str(out_fee_val),
             "fee_gamma": str(random.randint(10**10, 10**18)),
             "allowed_extra_profit": str(random.randint(10**10, 10**13)),
-            "adjustment_step": str(random.randint(10**10, 10**14)),
+            "adjustment_step": str(int(random.randint(1, 20)/100 * 10**18)),
             "ma_time": str(1+int(random.randint(60, 3600)/math.log(2))),
             "initial_price": str(10**18),  # 1.0
             "initial_liquidity": [
