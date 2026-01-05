@@ -182,14 +182,15 @@ PoolResult<T> run_single_pool(
         }
         pool.add_liquidity({liq0, liq1}, T(0));
         
-        // Initialize donation config
+        // Initialize donation config (also locks in base TVL for no-compounding)
         DonationCfg<T> dcfg{};
         if (pool_init.donation_apy > T(0) && pool_init.donation_frequency > T(0) && !events.empty()) {
             dcfg.init(
                 pool_init.donation_apy,
                 pool_init.donation_frequency,
                 pool_init.donation_coins_ratio,
-                init_ts
+                init_ts,
+                pool
             );
         }
         

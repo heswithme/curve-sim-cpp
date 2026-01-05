@@ -53,6 +53,7 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     if (duration_s <= 0.0 || r.tvl_start <= T(0)) {
         // Can't compute APYs
         apy["apy"] = -1.0;
+        apy["apy_net"] = -1.0;
         apy["apy_xcp"] = -1.0;
         apy["apy_coin0"] = -1.0;
         apy["apy_coin0_boost"] = -1.0;
@@ -69,6 +70,7 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     const double vp_end = static_cast<double>(r.virtual_price);
     double apy_vp = (vp_end > 0.0) ? std::pow(vp_end, exponent) - 1.0 : -1.0;
     
+    double apy_net = apy_vp - static_cast<double>(r.donation_apy);
     // xcp_profit based APY
     const double xcp_end = static_cast<double>((r.xcp_profit + T(1)) / T(2));
     double apy_xcp = (xcp_end > 0.0) ? std::pow(xcp_end, exponent) - 1.0 : -1.0;
@@ -110,6 +112,7 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     }
     
     apy["apy"] = apy_vp;
+    apy["apy_net"] = apy_net;
     apy["apy_xcp"] = apy_xcp;
     apy["apy_coin0"] = apy_coin0;
     apy["apy_coin0_boost"] = apy_coin0_boost;
@@ -185,6 +188,9 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     // End-state TVL
     const T tvl_end = r.balances[0] + r.balances[1] * r.price_scale;
     summary["tvl_coin0_end"] = static_cast<double>(tvl_end);
+    
+    // TVL growth
+    summary["tvl_growth"] = static_cast<double>(tvl_end / r.tvl_start);
     
     // Baseline HODL value at end price
     const T v_hold_end = r.initial_liq[0] + r.initial_liq[1] * r.price_scale;

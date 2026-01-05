@@ -20,15 +20,19 @@ struct DonationCfg {
     uint64_t next_ts{0};
     T        apy{0};              // fraction per year, e.g., 0.05
     T        ratio1{T(0.5)};      // fraction of donation in coin1
+    T        base_tvl{0};         // initial TVL to base donations on (no compounding)
+    bool     use_base_tvl{false};  // false = compound on current TVL
     
-    // Initialize from pool config parameters
-    void init(T donation_apy, T donation_frequency, T donation_coins_ratio, uint64_t start_ts) {
+    // Initialize from pool config parameters and lock in base TVL
+    template <typename Pool>
+    void init(T donation_apy, T donation_frequency, T donation_coins_ratio, uint64_t start_ts, const Pool& pool) {
         if (donation_apy > T(0) && donation_frequency > T(0)) {
             enabled = true;
             apy = donation_apy;
             freq_s = static_cast<uint64_t>(donation_frequency);
             ratio1 = std::clamp<T>(donation_coins_ratio, T(0), T(1));
             next_ts = start_ts;
+            base_tvl = pool.balances[0] + pool.balances[1] * pool.cached_price_oracle;
         }
     }
 };
@@ -61,14 +65,14 @@ DonationResult<T> make_donation_ex(
     DonationResult<T> result;
     if (!cfg.enabled || cfg.next_ts == 0 || ev_ts < cfg.next_ts) return result;
 
-    // Compute one-period donation from current TVL
+    // Compute one-period donation
     constexpr T SEC_PER_YEAR = static_cast<T>(365.0 * 86400.0);
-    const T ps   = pool.cached_price_scale;
-    const T tvl0 = pool.balances[0] + pool.balances[1] * ps;
+    const T po   = pool.cached_price_oracle;
     const T frac = cfg.apy * static_cast<T>(static_cast<long double>(cfg.freq_s) / static_cast<long double>(SEC_PER_YEAR));
-    const T coin0_equiv_amt = tvl0 * frac;
+    const T tvl  = cfg.use_base_tvl ? cfg.base_tvl : (pool.balances[0] + pool.balances[1] * po);
+    const T coin0_equiv_amt = tvl * frac;
     const T amt0 = (T(1) - cfg.ratio1) * coin0_equiv_amt;
-    const T amt1 = (ps > T(0)) ? (cfg.ratio1 * coin0_equiv_amt / ps) : T(0);
+    const T amt1 = (po > T(0)) ? (cfg.ratio1 * coin0_equiv_amt / po) : T(0);
 
     const uint64_t ts_due = cfg.next_ts;
     const T ps_before = pool.cached_price_scale;
