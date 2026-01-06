@@ -157,6 +157,12 @@ EventLoopResult<T> run_event_loop(
         // Band tracking (>10% deviation from CEX)
         tw.sample_band(ev.ts, pool.cached_price_scale, cex_price);
         
+        // Multi-threshold band tracking (3%, 5%, 10%, 20%, 30%, 1/A)
+        tw.sample_thresholds(ev.ts, pool.cached_price_scale, cex_price, pool.A);
+        
+        // EMA-smoothed correlation tracking
+        tw.sample_correlation(ev.ts, pool.cached_price_scale, cex_price);
+        
         // Try donation before trading
         auto don_res = make_donation_ex(pool, dcfg, ev.ts, m);
         if (don_res.success) {

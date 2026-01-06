@@ -38,7 +38,7 @@ uv run python/arb_sim/generate_pools_generic.py
 uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 --apy-period-days 1 --apy-period-cap 30 -n 10
 
 # 3. Plot results
-uv run python/arb_sim/plot_heatmap.py --metrics apy,tw_capped_apy,tw_capped_apy_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,tw_apy_geom_mean,avg_rel_bps,tw_slippage,tw_liq_density --ncol 5
+uv run python/arb_sim/plot_heatmap.py --metrics apy,tw_capped_apy,tw_capped_apy_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,tw_apy_geom_mean,avg_rel_price_diff,tw_slippage,tw_liq_density --ncol 5
 ```
 
 **With CoWSwap replay (add `--cow`):**
@@ -50,7 +50,7 @@ uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 --apy-period-d
 **One-liner:**
 
 ```bash
-uv run python/arb_sim/generate_pools_generic.py && uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 --apy-period-days 1 --apy-period-cap 30 -n 10 && uv run python/arb_sim/plot_heatmap.py --metrics apy,tw_capped_apy,tw_capped_apy_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,tw_apy_geom_mean,avg_rel_bps,tw_slippage,tw_liq_density --ncol 5
+uv run python/arb_sim/generate_pools_generic.py && uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 --apy-period-days 1 --apy-period-cap 30 -n 10 && uv run python/arb_sim/plot_heatmap.py --metrics apy,tw_capped_apy,tw_capped_apy_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,tw_apy_geom_mean,avg_rel_price_diff,tw_slippage,tw_liq_density --ncol 5
 ```
 
 ## Key CLI Flags

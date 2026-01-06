@@ -378,6 +378,7 @@ def main() -> int:
             or "apy" in mlow
             or "tw_real_slippage" in mlow
             or "geom_mean" in mlow
+            or "rel_price_diff" in mlow
         )
         return scale_1e18, scale_percent
 

@@ -140,6 +140,16 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     summary["avg_pool_fee"] = static_cast<double>(m.avg_pool_fee());
     summary["tw_avg_pool_fee"] = tw.tw_avg_pool_fee();
     summary["arb_pnl_coin0"] = static_cast<double>(m.arb_pnl_coin0);
+    
+    // Fee capture rate: fraction of gross LVR recovered by fees
+    // fee_capture_rate = lp_fee / (lp_fee + arb_pnl), -1 if no arb activity
+    {
+        const double gross_lvr = static_cast<double>(m.lp_fee_coin0 + m.arb_pnl_coin0);
+        summary["fee_capture_rate"] = (gross_lvr > 0.0) 
+            ? static_cast<double>(m.lp_fee_coin0) / gross_lvr 
+            : -1.0;
+    }
+    
     summary["n_rebalances"] = static_cast<uint64_t>(m.n_rebalances);
     summary["donations"] = static_cast<uint64_t>(m.donations);
     summary["donation_coin0_total"] = static_cast<double>(m.donation_coin0_total);
@@ -169,9 +179,28 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     summary["tw_real_slippage_10pct"] = sp.tw_slippage(2);
     
     // Price follow metrics
-    summary["avg_rel_bps"] = tw.avg_rel_bps();
-    summary["max_rel_bps"] = tw.max_rel_bps();
+    summary["avg_rel_price_diff"] = tw.avg_rel_price_diff();
+    summary["max_rel_price_diff"] = tw.max_rel_price_diff();
     summary["cex_follow_time_frac"] = tw.cex_follow_time_frac(r.duration_s());
+    
+    // Multi-threshold price tracking: fraction of time within X% of CEX
+    const double frac_3 = tw.pct_within(0, r.duration_s());
+    const double frac_5 = tw.pct_within(1, r.duration_s());
+    const double frac_10 = tw.pct_within(2, r.duration_s());
+    const double frac_20 = tw.pct_within(3, r.duration_s());
+    const double frac_30 = tw.pct_within(4, r.duration_s());
+    const double frac_inv_A = tw.pct_within(5, r.duration_s());
+    
+    summary["frac_within_3pct"] = frac_3;
+    summary["frac_within_5pct"] = frac_5;
+    summary["frac_within_10pct"] = frac_10;
+    summary["frac_within_20pct"] = frac_20;
+    summary["frac_within_30pct"] = frac_30;
+    summary["frac_within_inv_A"] = frac_inv_A;
+    
+    // EMA-smoothed price correlation (1hr window)
+    const double corr = tw.price_correlation();
+    summary["price_correlation"] = corr;
     
     // Time-weighted APY from tracker
     summary["tw_capped_apy"] = r.tw_capped_apy;
@@ -201,6 +230,19 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     for (const auto& kv : apy_metrics) {
         summary[kv.key()] = kv.value();
     }
+    
+    // Masked APY metrics: apy_net * frac_within_X
+    const double apy_net_val = apy_metrics["apy_net"].as_double();
+    summary["apy_mask_3"] = apy_net_val * frac_3;
+    summary["apy_mask_5"] = apy_net_val * frac_5;
+    summary["apy_mask_10"] = apy_net_val * frac_10;
+    summary["apy_mask_20"] = apy_net_val * frac_20;
+    summary["apy_mask_30"] = apy_net_val * frac_30;
+    summary["apy_mask_inv_A"] = apy_net_val * frac_inv_A;
+    
+    // Correlation-adjusted APY: full credit at corr >= 0.75, linear penalty below
+    const double corr_factor = (corr > 0.0) ? std::min(1.0, corr / 0.75) : 0.0;
+    summary["apy_corr"] = apy_net_val * corr_factor;
     
     // Additional end-state metrics
     summary["vp"] = static_cast<double>(r.virtual_price);

@@ -23,23 +23,34 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 32
+GRID_SIZE = 16
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
 # 1. A-mid_fee log
 
 X_name = "mid_fee"
-xmin = int(1 / 10_000 * 10**10)
-xmax = int(500 / 10_000 * 10**10)
-xlogspace = True
+xmin = int(10 / 10_000 * 10**10)
+xmax = int(1000 / 10_000 * 10**10)
+xlogspace = False
 FEE_EQUALIZE = True
 
 Y_name = "A"
-ymin = 1 * 10_000
-ymax = 100 * 10_000
-ylogspace = True
+ymin = 2 * 10_000
+ymax = 20 * 10_000
+ylogspace = False
 
+# 1a. A-don_apy log
+
+# X_name = "donation_apy"
+# xmin = 0.001
+# xmax = 0.03
+# xlogspace = False
+
+# Y_name = "A"
+# ymin = 1 * 10_000
+# ymax = 100 * 10_000
+# ylogspace = True
 
 # # 2. A-mid_fee zoom_lin
 
@@ -143,7 +154,7 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-processed.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0  # Fee in basis points to beat historical execution
@@ -151,7 +162,7 @@ DEFAULT_COWSWAP_FEE_BPS = 0.0  # Fee in basis points to beat historical executio
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
 init_price = _initial_price_from_file(DEFAULT_DATAFILE)
-init_liq = 100_000_000  # in coin0
+init_liq = 10_000_000  # in coin0
 
 
 INVERT_LIQ = False
@@ -168,11 +179,11 @@ BASE_POOL = {
     ],
     "A": 20 * 10_000,
     "gamma": 10**14,  # unused in twocrypto
-    "mid_fee": int(50 / 10_000 * 10**10),
-    "out_fee": int(50 / 10_000 * 10**10),
+    "mid_fee": int(200 / 10_000 * 10**10),
+    "out_fee": int(200 / 10_000 * 10**10),
     "fee_gamma": int(0.001 * 10**18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.02 * 10**18), # 2%
+    "adjustment_step": int(0.01 * 10**18), # 1%
     "ma_time": 866,  # int(86400 / math.log(2)), #5200,
     "initial_price": int(init_price * 10**18),
     "start_timestamp": START_TS,
@@ -180,7 +191,7 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.075,
+    "donation_apy": 0.01,
     "donation_frequency": int(7 * 86400),
     "donation_coins_ratio": 0.5,
 }
