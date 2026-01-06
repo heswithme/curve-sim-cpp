@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 16
+GRID_SIZE = 32
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 

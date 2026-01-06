@@ -18,15 +18,25 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
-# Use non-interactive backend for headless systems (must be before pyplot import)
+# Use interactive backend if --show is passed, otherwise Agg for headless
 import matplotlib
 
-matplotlib.use("Agg")
+if "--show" in sys.argv:
+    # Try interactive backends in order of preference
+    for backend in ["macosx", "TkAgg", "Qt5Agg"]:
+        try:
+            matplotlib.use(backend)
+            break
+        except Exception:
+            continue
+else:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 
@@ -470,17 +480,19 @@ def main() -> int:
                 ax.set_xticks([xs[i] for i in xticks])
                 ax.set_yticks([ys[i] for i in yticks])
             else:
-                aspect = "auto"
-                im = ax.imshow(Z, origin="lower", aspect=aspect, cmap=args.cmap)
+                # Use pcolormesh for proper coordinate display on hover
+                Xedges = _edges_from_centers(xs, False)
+                Yedges = _edges_from_centers(ys, False)
+                im = ax.pcolormesh(Xedges, Yedges, Z, cmap=args.cmap, shading="auto")
                 if args.square:
                     ny, nx = Z.shape
                     try:
                         ax.set_box_aspect(ny / nx)
                     except Exception:
                         ax.set_aspect("equal", adjustable="box")
-                # Tick placement at index positions
-                ax.set_xticks(xticks)
-                ax.set_yticks(yticks)
+                # Tick placement at data values
+                ax.set_xticks([xs[i] for i in xticks])
+                ax.set_yticks([ys[i] for i in yticks])
             ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
             # Only label y on first column
             if c == 0:
@@ -519,6 +531,43 @@ def main() -> int:
                 cb.set_ticks(tick_vals)
             # Fixed decimal formatter for colorbar ticks
             cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
+
+            # Custom hover format to display x, y, and z values
+            def make_format_coord(xs_local, ys_local, Z_local):
+                """Create a format_coord function with captured data."""
+                xs_arr = np.array(xs_local)
+                ys_arr = np.array(ys_local)
+
+                def format_coord(x, y):
+                    # Find nearest grid cell
+                    if len(xs_arr) == 0 or len(ys_arr) == 0:
+                        return ""
+                    j = int(
+                        np.clip(np.searchsorted(xs_arr, x) - 0.5, 0, len(xs_arr) - 1)
+                    )
+                    i = int(
+                        np.clip(np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1)
+                    )
+                    # Snap to nearest
+                    if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
+                        x - xs_arr[j]
+                    ):
+                        j += 1
+                    if i < len(ys_arr) - 1 and abs(y - ys_arr[i + 1]) < abs(
+                        y - ys_arr[i]
+                    ):
+                        i += 1
+                    z_val = (
+                        Z_local[i, j]
+                        if 0 <= i < Z_local.shape[0] and 0 <= j < Z_local.shape[1]
+                        else float("nan")
+                    )
+                    return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
+
+                return format_coord
+
+            ax.format_coord = make_format_coord(xs, ys, Z)
+
             if args.annot:
                 for i in range(Z.shape[0]):
                     for j in range(Z.shape[1]):
@@ -558,6 +607,14 @@ def main() -> int:
     print(f"Saved heatmap(s) to {out_path}")
 
     if args.show:
+        # Adjust figure DPI and size for interactive display
+        fig.set_dpi(80)
+        # Cap figure size to fit on screen
+        max_w, max_h = 20, 14
+        cur_w, cur_h = fig.get_size_inches()
+        if cur_w > max_w or cur_h > max_h:
+            scale = min(max_w / cur_w, max_h / cur_h)
+            fig.set_size_inches(cur_w * scale, cur_h * scale)
         plt.show()
     else:
         plt.close(fig)
