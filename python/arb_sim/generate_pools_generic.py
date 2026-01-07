@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 32
+GRID_SIZE = 8
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -31,16 +31,17 @@ N_GRID_Y = GRID_SIZE
 
 X_name = "mid_fee"
 xmin = int(10 / 10_000 * 10**10)
-xmax = int(1000 / 10_000 * 10**10)
+xmax = int(300 / 10_000 * 10**10)
 xlogspace = False
 FEE_EQUALIZE = True
 
 Y_name = "A"
-ymin = 2 * 10_000
-ymax = 20 * 10_000
+ymin = 1 * 10_000
+ymax = 10 * 10_000
 ylogspace = False
 
-# 1a. A-don_apy log
+# # 1a. A-don_apy log
+# FEE_EQUALIZE = False
 
 # X_name = "donation_apy"
 # xmin = 0.001
@@ -49,8 +50,8 @@ ylogspace = False
 
 # Y_name = "A"
 # ymin = 1 * 10_000
-# ymax = 100 * 10_000
-# ylogspace = True
+# ymax = 10 * 10_000
+# ylogspace = False
 
 # # 2. A-mid_fee zoom_lin
 
@@ -66,14 +67,16 @@ ylogspace = False
 # ylogspace = False
 
 # # 3. mid_fee-out_fee
+# N_GRID_X = 32
+# N_GRID_Y = 32
 # X_name = "mid_fee"
 # xmin = int(1/10_000*10**10)
-# xmax = int(100/10_000*10**10)
+# xmax = int(150/10_000*10**10)
 # xlogspace = False
-
+# FEE_EQUALIZE = False
 # Y_name = "out_fee"
-# ymin = int(1/10_000*10**10)
-# ymax = int(100/10_000*10**10)
+# ymin = int(150/10_000*10**10)
+# ymax = int(300/10_000*10**10)
 # ylogspace = False
 
 # 4. out_fee-fee_gamma
@@ -177,13 +180,13 @@ BASE_POOL = {
         int(init_liq * 10**18 // 2),
         int(init_liq * 10**18 // 2 / init_price),
     ],
-    "A": 20 * 10_000,
+    "A": 3.5 * 10_000,
     "gamma": 10**14,  # unused in twocrypto
-    "mid_fee": int(200 / 10_000 * 10**10),
+    "mid_fee": int(100 / 10_000 * 10**10),
     "out_fee": int(200 / 10_000 * 10**10),
     "fee_gamma": int(0.001 * 10**18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.01 * 10**18), # 1%
+    "adjustment_step": int(0.01 * 10**18),  # 1%
     "ma_time": 866,  # int(86400 / math.log(2)), #5200,
     "initial_price": int(init_price * 10**18),
     "start_timestamp": START_TS,
@@ -234,13 +237,13 @@ def main():
         "meta": {
             "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "grid": {
-                "X": {
+                "x1": {
                     "name": X_name,
                     "min": X_vals[0],
                     "max": X_vals[-1],
                     "n": len(X_vals),
                 },
-                "Y": {
+                "x2": {
                     "name": Y_name,
                     "min": Y_vals[0],
                     "max": Y_vals[-1],

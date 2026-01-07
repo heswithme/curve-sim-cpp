@@ -4,7 +4,8 @@ Arbitrage runner for the C++ arb_harness (multi-pool, threaded in C++).
 
 - Always reads pools from python/arb_sim/run_data/pool_config.json
 - Calls the C++ harness once with all pools; C++ handles internal threading.
-- Emits an aggregated arb_run JSON with x/y keys, per-pool final_state, and result.
+- Emits an aggregated arb_run JSON with per-pool final_state and result.
+- Supports N-dimensional grids via meta.grid.dims (falls back to X/Y).
 """
 
 import argparse
@@ -324,16 +325,31 @@ def main() -> int:
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])
     print(f"Time taken: {(datetime.now() - ts).total_seconds()} seconds")
 
-    # Derive x/y and base_pool from pool_config meta
+    # Derive grid dimension names from pool_config meta (x1..xn format)
+    def _grid_dim_names(grid: Dict[str, Any]) -> List[str]:
+        if not isinstance(grid, dict):
+            return []
+        # Parse x1, x2, ..., xN keys
+        numbered = []
+        for key, val in grid.items():
+            if not isinstance(key, str):
+                continue
+            if key.lower().startswith("x") and key[1:].isdigit():
+                name = val.get("name") if isinstance(val, dict) else None
+                if name:
+                    numbered.append((int(key[1:]), name))
+        if numbered:
+            return [name for _, name in sorted(numbered)]
+        return []
+
     def get_meta(conf: Dict[str, Any]):
         meta = conf.get("meta", {}) if isinstance(conf, dict) else {}
         grid = meta.get("grid", {}) if isinstance(meta, dict) else {}
-        x_name = (grid.get("X") or {}).get("name") if isinstance(grid, dict) else None
-        y_name = (grid.get("Y") or {}).get("name") if isinstance(grid, dict) else None
+        dim_names = _grid_dim_names(grid)
         base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
-        return x_name, y_name, base_pool
+        return dim_names, base_pool
 
-    x_name, y_name, base_pool_meta = get_meta(cfg)
+    dim_names, base_pool_meta = get_meta(cfg)
 
     # Derive base_pool from actual pools if meta missing
     def pools_list():
@@ -357,7 +373,8 @@ def main() -> int:
             for e in plist[1:]:
                 keys &= set(e.get("pool", {}).keys())
             for k in sorted(keys):
-                if k == x_name or k == y_name:
+                # Exclude all varying dim_names from base_pool
+                if k in dim_names:
                     continue
                 vals = [to_strish(e.get("pool", {}).get(k)) for e in plist]
                 if all(v == vals[0] for v in vals):
@@ -365,13 +382,11 @@ def main() -> int:
     else:
         base_pool = base_pool_meta
 
-    # Enrich runs with x/y keys/values
+    # Enrich runs with x1_key/x1_val, x2_key/x2_val, ..., xN_key/xN_val
     enriched_runs: List[Dict[str, Any]] = []
     total_trades = 0
     for rr in runs_raw:
         pool_obj = rr.get("params", {}).get("pool", {})
-        xv = str(pool_obj.get(x_name)) if x_name and x_name in pool_obj else None
-        yv = str(pool_obj.get(y_name)) if y_name and y_name in pool_obj else None
         # Accumulate total trades for metadata (no duplicate field in result)
         result_obj = rr.get("result", {}) or {}
         try:
@@ -379,14 +394,15 @@ def main() -> int:
         except Exception:
             pass
 
-        enriched = {
-            "x_key": x_name,
-            "x_val": xv,
-            "y_key": y_name,
-            "y_val": yv,
-            "result": result_obj,
-            "final_state": rr.get("final_state", {}),
-        }
+        enriched: Dict[str, Any] = {}
+        # Add x1_key/x1_val, x2_key/x2_val, etc. for each dimension
+        for idx, name in enumerate(dim_names, start=1):
+            val = str(pool_obj.get(name)) if name and name in pool_obj else None
+            enriched[f"x{idx}_key"] = name
+            enriched[f"x{idx}_val"] = val
+
+        enriched["result"] = result_obj
+        enriched["final_state"] = rr.get("final_state", {})
         if "actions" in rr:
             enriched["actions"] = rr.get("actions")
         if "states" in rr:

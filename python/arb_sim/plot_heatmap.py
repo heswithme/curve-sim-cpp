@@ -2,7 +2,7 @@
 """
 Plot a heatmap from the latest (or given) arb_sim aggregated run JSON.
 
-Assumes a two-parameter grid (X, Y) across runs and uses the final_state
+Assumes a two-parameter grid (x1, x2) across runs and uses the final_state
 metric as Z. By default, Z = virtual_price / 1e18.
 
 Usage:
@@ -128,16 +128,16 @@ def _extract_grid(
     if not runs:
         raise SystemExit("No runs[] found in arb_run JSON")
 
-    # Determine axis names
+    # Determine axis names from x1/x2 schema
     x_name = (
-        runs[0].get("x_key")
-        or data.get("metadata", {}).get("grid", {}).get("X", {}).get("name")
-        or "X"
+        runs[0].get("x1_key")
+        or data.get("metadata", {}).get("grid", {}).get("x1", {}).get("name")
+        or "x1"
     )
     y_name = (
-        runs[0].get("y_key")
-        or data.get("metadata", {}).get("grid", {}).get("Y", {}).get("name")
-        or "Y"
+        runs[0].get("x2_key")
+        or data.get("metadata", {}).get("grid", {}).get("x2", {}).get("name")
+        or "x2"
     )
 
     x_transform = _axis_transformer(x_name)
@@ -148,8 +148,8 @@ def _extract_grid(
     xs: List[float] = []
     ys: List[float] = []
     for r in runs:
-        raw_x = r.get("x_val")
-        raw_y = r.get("y_val")
+        raw_x = r.get("x1_val")
+        raw_y = r.get("x2_val")
         xv = _to_float(raw_x) if raw_x is not None else float("nan")
         yv = _to_float(raw_y) if raw_y is not None else float("nan")
         xv = x_transform(xv)
@@ -172,7 +172,7 @@ def _extract_grid(
 
     if not points:
         raise SystemExit(
-            "No valid (x,y,z) points found in runs; ensure x_val/y_val and final_state exist."
+            "No valid (x1,x2,z) points found in runs; ensure x1_val/x2_val and final_state exist."
         )
 
     xs_sorted = sorted(sorted(set(xs)))

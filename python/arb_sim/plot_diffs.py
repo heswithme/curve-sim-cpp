@@ -2,7 +2,7 @@
 """
 Plot diffs between a current arb_run_*.json and a reference results.json.
 
-- Uses parsing logic consistent with plot_heatmap.py to build the (X,Y)->Z grid.
+- Uses parsing logic consistent with plot_heatmap.py to build the (x1,x2)->Z grid.
 - Reference loader accepts ref_plot_all-style results.json with:
   { "configuration": [ {"A":..., "mid_fee":..., "Result": { ...metrics... } }, ... ] }
 
@@ -61,23 +61,23 @@ def _extract_grid(
         raise SystemExit("No runs[] found in arb_run JSON")
 
     x_name = (
-        runs[0].get("x_key")
-        or data.get("metadata", {}).get("grid", {}).get("X", {}).get("name")
-        or "X"
+        runs[0].get("x1_key")
+        or data.get("metadata", {}).get("grid", {}).get("x1", {}).get("name")
+        or "x1"
     )
     y_name = (
-        runs[0].get("y_key")
-        or data.get("metadata", {}).get("grid", {}).get("Y", {}).get("name")
-        or "Y"
+        runs[0].get("x2_key")
+        or data.get("metadata", {}).get("grid", {}).get("x2", {}).get("name")
+        or "x2"
     )
 
     points: Dict[Tuple[float, float], float] = {}
     xs: List[float] = []
     ys: List[float] = []
     for r in runs:
-        # Prefer explicit x_val/y_val; fallback to params.pool using axis names
-        xv_raw = r.get("x_val")
-        yv_raw = r.get("y_val")
+        # Prefer explicit x1_val/x2_val; fallback to params.pool using axis names
+        xv_raw = r.get("x1_val")
+        yv_raw = r.get("x2_val")
         if xv_raw is None or yv_raw is None:
             pool_obj = (r.get("params") or {}).get("pool", {})
             xv_raw = pool_obj.get(x_name) if xv_raw is None else xv_raw
@@ -101,7 +101,7 @@ def _extract_grid(
 
     if not points:
         raise SystemExit(
-            "No valid (x,y,z) points found in runs; ensure x_val/y_val and final_state exist."
+            "No valid (x1,x2,z) points found in runs; ensure x1_val/x2_val and final_state exist."
         )
 
     xs_sorted = sorted(sorted(set(xs)))
