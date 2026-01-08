@@ -127,7 +127,7 @@ EventLoopResult<T> run_event_loop(
         const bool is_last_event = (ev_idx == n_events - 1);
         
         // Detailed logging: log previous candle when candle changes (or final candle at end)
-        detailed_logger.maybe_log_candle_boundary(pool, ev.candle, is_last_event);
+        detailed_logger.maybe_log_candle_boundary(pool, ev.candle, is_last_event, m.trades, m.n_rebalances);
         
         // Update pool timestamp
         pool.set_block_timestamp(ev.ts);

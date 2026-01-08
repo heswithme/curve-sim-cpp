@@ -26,20 +26,11 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 # Example 3D grid: A, donation_apy, mid_fee (10x10x10)
 # Keep names consistent with pool param keys.
-# # DIM_NAMES = ["mid_fee", "out_fee", "donation_apy", "A"]
-# # DIM_MINS = [int(10 / 10_000 * 10**10), 1 * 10_000,  0.001]
-# # DIM_MAXS = [int(500 / 10_000 * 10**10), 30 * 10_000, 0.1]
-# DIM_MINS = [int(10 / 10_000 * 10**10), int(151 / 10_000 * 10**10),  0.001, 2*10_000]
-# DIM_MAXS = [int(150 / 10_000 * 10**10), int(300 / 10_000 * 10**10), 0.1, 10*10_000]
-
-# DIM_COUNTS = [24, 24, 4, 4]
-# DIM_LOG = [False, False, False, False]
-# DIM_AS_INT = [True, True, False, True]
-
+# # DIM_NAMES = ["donation_apy", "A"]
 DIM_NAMES = ["donation_apy", "A"]
-DIM_MINS = [0.001, 1 * 10_000]
-DIM_MAXS = [0.1, 20 * 10_000,]
-DIM_COUNTS = [24, 24]
+DIM_MINS = [0.01, 2 * 10_000]
+DIM_MAXS = [3.0, 100 * 10_000]
+DIM_COUNTS = [16, 16]
 DIM_LOG = [False, False]
 DIM_AS_INT = [False, True]
 
@@ -70,11 +61,11 @@ BASE_POOL = {
     ],
     "A": 3.5 * 10_000,
     "gamma": 10**14,  # unused in twocrypto
-    "mid_fee": int(130 / 10_000 * 10**10),
+    "mid_fee": int(43 / 10_000 * 10**10),
     "out_fee": int(240 / 10_000 * 10**10),
-    "fee_gamma": int(0.001 * 10**18),
+    "fee_gamma": int(0.0023 * 10**18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.01 * 10**18),  # 1%
+    "adjustment_step": int(0.005 * 10**18),  # 1%
     "ma_time": 866,
     "initial_price": int(init_price * 10**18),
     "start_timestamp": START_TS,

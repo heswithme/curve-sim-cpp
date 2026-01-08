@@ -27,6 +27,8 @@ struct DetailedEntry {
     T low;
     T close;
     T fee;                // dynamic fee at this point
+    uint64_t n_trades;    // cumulative trade count
+    uint64_t n_rebalances; // cumulative rebalance count
 };
 
 // Write detailed entries to JSON file
@@ -52,6 +54,8 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
             << ", \"low\": " << e.low
             << ", \"close\": " << e.close
             << ", \"fee\": " << e.fee
+            << ", \"n_trades\": " << e.n_trades
+            << ", \"n_rebalances\": " << e.n_rebalances
             << "}";
         if (i + 1 < entries.size()) out << ",";
         out << "\n";

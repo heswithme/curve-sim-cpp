@@ -426,12 +426,35 @@ class NDHeatmapExplorer:
         cols = min(self.ncol, n)
         rows = int(np.ceil(n / cols)) if n > 0 else 1
 
+        # Target 27" screen full size: ~24x13 inches usable at 100 DPI
+        # Leave room for window chrome and controls window
+        max_fig_w = 22.0
+        max_fig_h = 12.0
+
+        # Calculate ideal size based on grid
         xs = self.dim_values[self.x_name]
         ys = self.dim_values[self.y_name]
 
-        base = max(len(xs), len(ys))
-        side = max(4.5, min(10.0, 0.35 * max(1, base)))
-        fig_w, fig_h = side * cols, side * rows
+        # Each subplot wants roughly square aspect based on data
+        cell_aspect = len(ys) / max(1, len(xs))  # height/width ratio of data
+
+        # Start with max width, compute height
+        cell_w = max_fig_w / cols
+        cell_h = cell_w * cell_aspect
+        fig_h = cell_h * rows
+
+        # If too tall, constrain by height instead
+        if fig_h > max_fig_h:
+            fig_h = max_fig_h
+            cell_h = fig_h / rows
+            cell_w = cell_h / cell_aspect
+            fig_w = cell_w * cols
+        else:
+            fig_w = max_fig_w
+
+        # Ensure minimum size
+        fig_w = max(10.0, min(max_fig_w, fig_w))
+        fig_h = max(6.0, min(max_fig_h, fig_h))
 
         self.fig_main, axes_grid = plt.subplots(
             rows, cols, figsize=(fig_w, fig_h), constrained_layout=True, num="Heatmaps"

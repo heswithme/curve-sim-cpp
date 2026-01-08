@@ -142,7 +142,7 @@ public:
     
     // Log entry at candle boundary - call with previous candle when candle changes
     template <typename Pool>
-    void log_entry(const Pool& pool, const Candle& candle) {
+    void log_entry(const Pool& pool, const Candle& candle, uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return;
         DetailedEntry<T> entry;
         entry.t = candle.ts;
@@ -159,20 +159,23 @@ public:
         // Compute dynamic fee at current pool state
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
         entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+        entry.n_trades = n_trades;
+        entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);
     }
     
     // Check if candle changed and log previous candle if so
     // Returns true if this is a new candle
     template <typename Pool>
-    bool maybe_log_candle_boundary(const Pool& pool, const Candle& current_candle, bool is_last_event) {
+    bool maybe_log_candle_boundary(const Pool& pool, const Candle& current_candle, bool is_last_event,
+                                   uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return false;
         
         const bool candle_changed = (last_candle_ts_ > 0 && current_candle.ts != last_candle_ts_);
         
         // Log the *previous* candle when we see a new one
         if (candle_changed) {
-            log_entry(pool, last_candle_);
+            log_entry(pool, last_candle_, n_trades, n_rebalances);
         }
         
         // Track current candle
@@ -181,7 +184,7 @@ public:
         
         // Log final candle at end of simulation
         if (is_last_event) {
-            log_entry(pool, last_candle_);
+            log_entry(pool, last_candle_, n_trades, n_rebalances);
         }
         
         return candle_changed;

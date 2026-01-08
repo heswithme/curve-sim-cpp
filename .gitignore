@@ -144,3 +144,5 @@ python/benchmark_math/**.json
 todo.txt
 
 yb-curve-sim-cpp
+comparison-results/
+legacy_sim/
