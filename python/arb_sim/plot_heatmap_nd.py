@@ -211,6 +211,7 @@ def _metric_scale_flags(m: str) -> Tuple[bool, bool]:
         or "tw_real_slippage" in mlow
         or "geom_mean" in mlow
         or "rel_price_diff" in mlow
+        or "tw_avg_pool_fee" in mlow
     )
     return scale_1e18, scale_percent
 

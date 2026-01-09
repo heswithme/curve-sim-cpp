@@ -17,17 +17,26 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 # Each dimension: (name, min, max, count, log_scale, as_int)
 DIMS = [
-    ("donation_apy", 0.01, 0.1, 5, False, False),
-    ("A", 1*10_000, 50*10_000, 64, False, True),
-    ("mid_fee", 10 / 10_000 * 10**10, 500 / 10_000 * 10**10, 64, False, True),
-    # ("out_fee", 20 / 10_000 * 10**10, 200 / 10_000 * 10**10, 16, False, True),
-    # ("fee_gamma", 0.001 * 10**18, 0.5 * 10**18, 8, True, True),
+    ("donation_apy", 0.00, 0.1, 32, False, False),
+    ("A", 10*10_000, 200*10_000, 32, False, True),
+    # ("mid_fee", 1 / 10_000 * 10**10, 500 / 10_000 * 10**10, 64, False, True),
+    ("out_fee", 20 / 10_000 * 10**10, 200 / 10_000 * 10**10, 10, False, True),
+    ("fee_gamma", 0.001 * 10**18, 0.5 * 10**18, 10, True, True),
 ]
-FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
+FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
+
+# DIMS = [
+#     ("A", 100*10_000, 500*10_000, 1, False, True),
+#     ("mid_fee", 1 / 10_000 * 10**10, 500 / 10_000 * 10**10, 1, False, True),
+# ]
+# FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json")
+
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
 
@@ -43,15 +52,15 @@ BASE_POOL = {
     ],
     "A": int(3.5*10_000),
     "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(45 / 10_000 * 1e10),
+    "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(240 / 10_000 * 1e10),
     "fee_gamma": int(0.0023 * 1e18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.005 * 10**18),
+    "adjustment_step": int(0.001 * 10**18),
     "ma_time": 866,
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,
-    "donation_apy": 0.01,
+    "donation_apy": 0.05,
     "donation_frequency": 7 * 86400,
     "donation_coins_ratio": 0.5,
 }
