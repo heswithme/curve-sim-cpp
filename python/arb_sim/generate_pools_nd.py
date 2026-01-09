@@ -17,18 +17,17 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 # Each dimension: (name, min, max, count, log_scale, as_int)
 DIMS = [
-    # ("donation_apy", 0.01, 3.0, 141, False, False),
-    # ("A", 20_000, 1_000_000, 142, False, True),
-    ("donation_apy", 0.01, 0.2, 24, False, False),
-    ("A", 10*10_000, 50*10_000, 24, True, True),
-    ("mid_fee", 1 / 10_000 * 10**10, 10 / 10_000 * 10**10, 4, False, True),
-    ("out_fee", 10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 10, False, True),
+    ("donation_apy", 0.01, 0.1, 5, False, False),
+    ("A", 1*10_000, 50*10_000, 64, False, True),
+    ("mid_fee", 10 / 10_000 * 10**10, 500 / 10_000 * 10**10, 64, False, True),
+    # ("out_fee", 20 / 10_000 * 10**10, 200 / 10_000 * 10**10, 16, False, True),
+    # ("fee_gamma", 0.001 * 10**18, 0.5 * 10**18, 8, True, True),
 ]
-FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
+FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-2020-latest.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
 

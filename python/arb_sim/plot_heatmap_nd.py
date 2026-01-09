@@ -44,6 +44,36 @@ LN2 = math.log(2)
 SECONDS_PER_HOUR = 3600.0
 MA_TIME_TO_HOURS = LN2 / SECONDS_PER_HOUR
 
+# ==================== LAYOUT CONSTANTS ====================
+# Controls window
+CTRL_FIG_WIDTH = 4.5  # Controls window width
+CTRL_MIN_HEIGHT = 3.0  # Minimum controls window height
+CTRL_HEIGHT_MULT = 7  # Multiplier for content -> figure height
+
+# Title
+CTRL_TITLE_Y = 0.98  # Title Y position
+CTRL_TITLE_FONTSIZE = 10
+
+# Radio buttons
+RADIO_ITEM_HEIGHT = 0.04  # Height per radio option
+RADIO_BOX_PADDING = 0.02  # Extra padding for radio box
+RADIO_FONTSIZE = 8
+RADIO_X_LABEL_Y = 0.93  # X axis label Y position
+RADIO_LABEL_GAP = 0.02  # Gap between label and box
+RADIO_GROUP_GAP = 0.03  # Gap between X and Y radio groups
+
+# Sliders
+SLIDER_HEIGHT = 0.06  # Height per slider row
+SLIDER_TOP_GAP = 0.04  # Gap above first slider
+SLIDER_LABEL_OFFSET = 0.015  # Label Y offset above slider
+SLIDER_BOX_LEFT = 0.20  # Slider box left position
+SLIDER_BOX_WIDTH = 0.50  # Slider box width
+SLIDER_BOX_HEIGHT = 0.035  # Slider box height
+SLIDER_BOX_Y_OFFSET = 0.02  # Slider box Y offset from row
+SLIDER_VALUE_X = 0.73  # Value text X position
+SLIDER_FONTSIZE = 8
+# ==========================================================
+
 # Default metrics to display
 DEFAULT_METRICS = [
     "apy_net",
@@ -552,69 +582,70 @@ class NDHeatmapExplorer:
         n_sliders = len(slider_dims)
         n_dims = len(self.dim_names)
 
-        # Calculate heights based on content
-        radio_item_height = 0.06  # per dimension option
-        radio_box_height = n_dims * radio_item_height + 0.03
-        slider_height_each = 0.08
+        # Calculate heights based on content using layout constants
+        radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
         # Total height calculation
         total_content = (
-            0.1
-            + 2 * (0.05 + radio_box_height + 0.04)
-            + n_sliders * slider_height_each
-            + 0.08
+            0.04  # title area
+            + 2
+            * (RADIO_LABEL_GAP + radio_box_height + RADIO_GROUP_GAP)  # two radio groups
+            + n_sliders * SLIDER_HEIGHT
+            + SLIDER_TOP_GAP  # bottom margin
         )
-        fig_height = max(3.5, total_content * 6)
+        fig_height = max(CTRL_MIN_HEIGHT, total_content * CTRL_HEIGHT_MULT)
 
-        self.fig_controls = plt.figure(figsize=(5, fig_height), num="Controls")
+        self.fig_controls = plt.figure(
+            figsize=(CTRL_FIG_WIDTH, fig_height), num="Controls"
+        )
 
         # Title
         self.fig_controls.text(
             0.5,
-            0.97,
+            CTRL_TITLE_Y,
             "Dimension Controls",
             ha="center",
             va="top",
-            fontsize=11,
+            fontsize=CTRL_TITLE_FONTSIZE,
             fontweight="bold",
         )
 
         # X axis radio buttons
-        x_label_y = 0.91
-        x_box_top = x_label_y - 0.03
+        x_label_y = RADIO_X_LABEL_Y
+        x_box_top = x_label_y - RADIO_LABEL_GAP
         x_box_height = radio_box_height
 
         self.fig_controls.text(
-            0.05, x_label_y, "X axis:", ha="left", va="top", fontsize=10
+            0.05, x_label_y, "X axis:", ha="left", va="top", fontsize=RADIO_FONTSIZE + 1
         )
         x_ax = self.fig_controls.add_axes(
-            [0.20, x_box_top - x_box_height, 0.75, x_box_height]
+            [SLIDER_BOX_LEFT, x_box_top - x_box_height, 0.75, x_box_height]
         )
         x_ax.set_frame_on(False)
         self.x_radio = RadioButtons(
             x_ax, self.dim_names, active=self.dim_names.index(self.x_name)
         )
         for label in self.x_radio.labels:
-            label.set_fontsize(9)
+            label.set_fontsize(RADIO_FONTSIZE)
         self.x_radio.on_clicked(self._on_x_changed)
 
         # Y axis radio buttons
-        y_label_y = x_box_top - x_box_height - 0.05
-        y_box_top = y_label_y - 0.03
+        y_label_y = x_box_top - x_box_height - RADIO_GROUP_GAP
+        y_box_top = y_label_y - RADIO_LABEL_GAP
         y_box_height = radio_box_height
 
         self.fig_controls.text(
-            0.05, y_label_y, "Y axis:", ha="left", va="top", fontsize=10
+            0.05, y_label_y, "Y axis:", ha="left", va="top", fontsize=RADIO_FONTSIZE + 1
         )
         y_ax = self.fig_controls.add_axes(
-            [0.20, y_box_top - y_box_height, 0.75, y_box_height]
+            [SLIDER_BOX_LEFT, y_box_top - y_box_height, 0.75, y_box_height]
         )
         y_ax.set_frame_on(False)
         self.y_radio = RadioButtons(
             y_ax, self.dim_names, active=self.dim_names.index(self.y_name)
         )
         for label in self.y_radio.labels:
-            label.set_fontsize(9)
+            label.set_fontsize(RADIO_FONTSIZE)
         self.y_radio.on_clicked(self._on_y_changed)
 
         # Sliders for remaining dimensions
@@ -623,25 +654,32 @@ class NDHeatmapExplorer:
         self.slider_labels = []
         self.slider_value_texts = []  # Separate text elements for values
 
-        slider_start_y = y_box_top - y_box_height - 0.07
+        slider_start_y = y_box_top - y_box_height - SLIDER_TOP_GAP
 
         for i, (dim_idx, dim_name) in enumerate(slider_dims):
             vals = self.dim_values[dim_name]
-            slider_y = slider_start_y - i * slider_height_each
+            slider_y = slider_start_y - i * SLIDER_HEIGHT
 
             # Label
             lbl = self.fig_controls.text(
                 0.05,
-                slider_y + 0.02,
+                slider_y + SLIDER_LABEL_OFFSET,
                 f"{dim_name}:",
                 ha="left",
                 va="bottom",
-                fontsize=9,
+                fontsize=SLIDER_FONTSIZE,
             )
             self.slider_labels.append(lbl)
 
             # Slider - shorter to leave room for value text
-            slider_ax = self.fig_controls.add_axes([0.20, slider_y - 0.025, 0.55, 0.04])
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
             self.slider_axes.append(slider_ax)
 
             slider = Slider(
@@ -657,12 +695,12 @@ class NDHeatmapExplorer:
 
             # Separate value text element
             val_text = self.fig_controls.text(
-                0.78,
+                SLIDER_VALUE_X,
                 slider_y,
                 _format_slider_value(dim_name, vals[0]),
                 ha="left",
                 va="center",
-                fontsize=9,
+                fontsize=SLIDER_FONTSIZE,
             )
             self.slider_value_texts.append(val_text)
 
@@ -755,20 +793,18 @@ class NDHeatmapExplorer:
         slider_dims = self._get_slider_dims()
         n_dims = len(self.dim_names)
 
-        # Calculate positions matching _setup_controls
-        radio_item_height = 0.06
-        radio_box_height = n_dims * radio_item_height + 0.03
-        slider_height_each = 0.08
+        # Calculate positions matching _setup_controls using layout constants
+        radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
-        x_label_y = 0.91
-        x_box_top = x_label_y - 0.03
-        y_label_y = x_box_top - radio_box_height - 0.05
-        y_box_top = y_label_y - 0.03
-        slider_start_y = y_box_top - radio_box_height - 0.07
+        x_label_y = RADIO_X_LABEL_Y
+        x_box_top = x_label_y - RADIO_LABEL_GAP
+        y_label_y = x_box_top - radio_box_height - RADIO_GROUP_GAP
+        y_box_top = y_label_y - RADIO_LABEL_GAP
+        slider_start_y = y_box_top - radio_box_height - SLIDER_TOP_GAP
 
         for i, (dim_idx, dim_name) in enumerate(slider_dims):
             vals = self.dim_values[dim_name]
-            slider_y = slider_start_y - i * slider_height_each
+            slider_y = slider_start_y - i * SLIDER_HEIGHT
 
             # Find current index
             current_val = self.slider_values.get(dim_name, vals[0])
@@ -781,16 +817,23 @@ class NDHeatmapExplorer:
             # Label
             lbl = self.fig_controls.text(
                 0.05,
-                slider_y + 0.02,
+                slider_y + SLIDER_LABEL_OFFSET,
                 f"{dim_name}:",
                 ha="left",
                 va="bottom",
-                fontsize=9,
+                fontsize=SLIDER_FONTSIZE,
             )
             self.slider_labels.append(lbl)
 
             # Slider - shorter to leave room for value text
-            slider_ax = self.fig_controls.add_axes([0.20, slider_y - 0.025, 0.55, 0.04])
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
             self.slider_axes.append(slider_ax)
 
             slider = Slider(
@@ -806,12 +849,12 @@ class NDHeatmapExplorer:
 
             # Separate value text element
             val_text = self.fig_controls.text(
-                0.78,
+                SLIDER_VALUE_X,
                 slider_y,
                 _format_slider_value(dim_name, vals[current_idx]),
                 ha="left",
                 va="center",
-                fontsize=9,
+                fontsize=SLIDER_FONTSIZE,
             )
             self.slider_value_texts.append(val_text)
 

@@ -23,7 +23,7 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 8
+GRID_SIZE = 1
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
@@ -36,8 +36,8 @@ xlogspace = False
 FEE_EQUALIZE = True
 
 Y_name = "A"
-ymin = 1 * 10_000
-ymax = 10 * 10_000
+ymin = 32 * 10_000
+ymax = 100 * 10_000
 ylogspace = False
 
 # # 1a. A-don_apy log
@@ -157,8 +157,9 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
-DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-2020-latest.json")
+# DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0  # Fee in basis points to beat historical execution
 
@@ -194,13 +195,13 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.01,
+    "donation_apy": 0.07,
     "donation_frequency": int(7 * 86400),
     "donation_coins_ratio": 0.5,
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 10.0,
+    "arb_fee_bps": 20.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,
