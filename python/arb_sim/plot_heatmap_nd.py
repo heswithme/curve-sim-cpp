@@ -133,9 +133,12 @@ def _extract_nd_grid(
     for r in runs:
         coords = []
         valid = True
+        pool = r.get("pool", {})
         for i, name in enumerate(dim_names):
-            key = f"x{i + 1}_val"
-            raw = r.get(key)
+            # Try multiple sources: x{i+1}_val field, pool dict, or tag parsing
+            raw = r.get(f"x{i + 1}_val")
+            if raw is None:
+                raw = pool.get(name)
             v = _to_float(raw) if raw is not None else float("nan")
             if not math.isfinite(v):
                 valid = False
@@ -830,6 +833,15 @@ class NDHeatmapExplorer:
 
     def _rebuild_heatmaps(self):
         """Completely rebuild heatmaps after X/Y axis change."""
+        # Remove old colorbars BEFORE clearing axes (they reference the axes)
+        for cb in self.colorbars:
+            try:
+                cb.remove()
+            except Exception:
+                pass
+        self.colorbars = []
+        self.meshes = []
+
         # Clear and rebuild main figure
         for ax in self.axes:
             ax.clear()
@@ -852,12 +864,6 @@ class NDHeatmapExplorer:
 
         Xedges = _edges_from_centers(xs)
         Yedges = _edges_from_centers(ys)
-
-        # Remove old colorbars
-        for cb in self.colorbars:
-            cb.remove()
-        self.colorbars = []
-        self.meshes = []
 
         n = len(self.metrics)
         cols = min(self.ncol, n)
