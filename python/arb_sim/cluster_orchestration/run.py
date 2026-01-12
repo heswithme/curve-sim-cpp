@@ -70,6 +70,8 @@ def run_blade_job(
     remote_pools: str,
     remote_candles: str,
     job_id: str,
+    pool_start: int,
+    pool_end: int,
     threads: int,
     dustswap_freq: int,
     apy_period_days: float,
@@ -97,16 +99,24 @@ def run_blade_job(
             remote_pools,
             remote_candles,
             output_file,
-            f"--threads={threads}",
-            f"--dustswapfreq={dustswap_freq}",
-            f"--apy-period-days={apy_period_days}",
-            f"--apy-period-cap={apy_period_cap}",
+            f"--threads",
+            str(threads),
+            f"--pool-start",
+            str(pool_start),
+            f"--pool-end",
+            str(pool_end),
+            f"--dustswapfreq",
+            str(dustswap_freq),
+            f"--apy-period-days",
+            str(apy_period_days),
+            f"--apy-period-cap",
+            str(apy_period_cap),
         ]
         if candle_filter is not None:
-            cmd_parts.append(f"--candle-filter={candle_filter}")
+            cmd_parts.extend(["--candle-filter", str(candle_filter)])
 
         cmd_str = " ".join(cmd_parts)
-        print(f"[{blade}] Starting: {cmd_str[:80]}...")
+        print(f"[{blade}] Starting: pools {pool_start}-{pool_end}...")
 
         if stream_output:
             stream_cmd = cmd_str
@@ -152,6 +162,7 @@ def run_parallel(
     """Run jobs on all blades in parallel."""
     blades_info = manifest["blades"]
     remote_candles = manifest["remote_candles"]
+    remote_pools = manifest["remote_pools"]
     job_id = manifest["job_id"]
     cfg = manifest["config"]
 
@@ -169,9 +180,11 @@ def run_parallel(
             future = executor.submit(
                 run_blade_job,
                 blade=blade,
-                remote_pools=info["remote_pools"],
+                remote_pools=remote_pools,
                 remote_candles=remote_candles,
                 job_id=job_id,
+                pool_start=info["pool_start"],
+                pool_end=info["pool_end"],
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
                 dustswap_freq=cfg.get("dustswap_freq", 600),
                 apy_period_days=cfg.get("apy_period_days", 1.0),

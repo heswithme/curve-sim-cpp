@@ -569,6 +569,53 @@ class NDHeatmapExplorer:
                 cb.ax.tick_params(labelsize=tick_font)
                 cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
 
+                # Custom hover format to display x, y, and z values
+                # Capture mesh to get current Z data dynamically (updates with sliders)
+                def make_format_coord(xs_local, ys_local, mesh_obj):
+                    """Create a format_coord function with captured data."""
+                    xs_arr = np.array(xs_local)
+                    ys_arr = np.array(ys_local)
+
+                    def format_coord(x, y):
+                        # Find nearest grid cell
+                        if len(xs_arr) == 0 or len(ys_arr) == 0:
+                            return ""
+                        j = int(
+                            np.clip(
+                                np.searchsorted(xs_arr, x) - 0.5, 0, len(xs_arr) - 1
+                            )
+                        )
+                        i = int(
+                            np.clip(
+                                np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1
+                            )
+                        )
+                        # Snap to nearest
+                        if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
+                            x - xs_arr[j]
+                        ):
+                            j += 1
+                        if i < len(ys_arr) - 1 and abs(y - ys_arr[i + 1]) < abs(
+                            y - ys_arr[i]
+                        ):
+                            i += 1
+                        # Get current Z from mesh (may have been updated by sliders)
+                        Z_arr = mesh_obj.get_array()
+                        if Z_arr is not None:
+                            Z_2d = Z_arr.reshape(len(ys_arr), len(xs_arr))
+                            z_val = (
+                                Z_2d[i, j]
+                                if 0 <= i < Z_2d.shape[0] and 0 <= j < Z_2d.shape[1]
+                                else float("nan")
+                            )
+                        else:
+                            z_val = float("nan")
+                        return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
+
+                    return format_coord
+
+                ax.format_coord = make_format_coord(xs, ys, mesh)
+
                 self.axes.append(ax)
                 self.meshes.append(mesh)
                 self.colorbars.append(cb)
@@ -958,6 +1005,49 @@ class NDHeatmapExplorer:
             cb.set_label(m + (" (%)" if scale_percent else ""), fontsize=colorbar_font)
             cb.ax.tick_params(labelsize=tick_font)
             cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
+
+            # Custom hover format to display x, y, and z values
+            # Capture mesh to get current Z data dynamically (updates with sliders)
+            def make_format_coord(xs_local, ys_local, mesh_obj):
+                """Create a format_coord function with captured data."""
+                xs_arr = np.array(xs_local)
+                ys_arr = np.array(ys_local)
+
+                def format_coord(x, y):
+                    # Find nearest grid cell
+                    if len(xs_arr) == 0 or len(ys_arr) == 0:
+                        return ""
+                    j = int(
+                        np.clip(np.searchsorted(xs_arr, x) - 0.5, 0, len(xs_arr) - 1)
+                    )
+                    i = int(
+                        np.clip(np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1)
+                    )
+                    # Snap to nearest
+                    if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
+                        x - xs_arr[j]
+                    ):
+                        j += 1
+                    if i < len(ys_arr) - 1 and abs(y - ys_arr[i + 1]) < abs(
+                        y - ys_arr[i]
+                    ):
+                        i += 1
+                    # Get current Z from mesh (may have been updated by sliders)
+                    Z_arr = mesh_obj.get_array()
+                    if Z_arr is not None:
+                        Z_2d = Z_arr.reshape(len(ys_arr), len(xs_arr))
+                        z_val = (
+                            Z_2d[i, j]
+                            if 0 <= i < Z_2d.shape[0] and 0 <= j < Z_2d.shape[1]
+                            else float("nan")
+                        )
+                    else:
+                        z_val = float("nan")
+                    return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
+
+                return format_coord
+
+            ax.format_coord = make_format_coord(xs, ys, mesh)
 
             self.meshes.append(mesh)
             self.colorbars.append(cb)

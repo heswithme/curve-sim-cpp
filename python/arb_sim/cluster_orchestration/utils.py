@@ -4,6 +4,7 @@ Cluster utility functions.
 
 Commands:
     status  - Show blade status (reachability, binary, load)
+    check   - Alias for status
     clean   - Remove job data from shared NFS
     kill    - Kill running harness processes
 """
@@ -39,6 +40,7 @@ def get_blade_status(blade: str) -> dict:
         "cores": 0,
         "load": "-",
         "mem_free_gb": 0,
+        "home_owner": "-",
     }
 
     try:
@@ -54,7 +56,11 @@ def get_blade_status(blade: str) -> dict:
         status["binary"] = "YES" in result.stdout
 
         # System info
-        result = run_ssh(blade, "nproc && uptime && free -g | grep Mem", timeout=15)
+        result = run_ssh(
+            blade,
+            "nproc && uptime && free -g | grep Mem && stat -c '%U:%G' /home/heswithme",
+            timeout=15,
+        )
         lines = result.stdout.strip().split("\n")
 
         if lines:
@@ -65,6 +71,8 @@ def get_blade_status(blade: str) -> dict:
             parts = lines[2].split()
             if len(parts) >= 4:
                 status["mem_free_gb"] = int(parts[3])
+        if len(lines) >= 4:
+            status["home_owner"] = lines[3].strip()
     except Exception as e:
         status["error"] = str(e)
 
@@ -77,9 +85,9 @@ def show_status(blades: List[str] = None):
         blades = ALL_BLADES
 
     print(
-        f"\n{'Blade':<12} {'Status':<10} {'Binary':<8} {'Cores':<6} {'Load':<18} {'RAM Free':<10}"
+        f"\n{'Blade':<12} {'Status':<10} {'Binary':<8} {'Home':<12} {'Cores':<6} {'Load':<18} {'RAM Free':<10}"
     )
-    print("-" * 70)
+    print("-" * 84)
 
     for blade in blades:
         s = get_blade_status(blade)
@@ -87,6 +95,7 @@ def show_status(blades: List[str] = None):
             f"{blade:<12} "
             f"{'OK' if s['reachable'] else 'DOWN':<10} "
             f"{'YES' if s['binary'] else 'NO':<8} "
+            f"{s['home_owner']:<12} "
             f"{s['cores'] or '-':<6} "
             f"{s['load']:<18} "
             f"{s['mem_free_gb']}G"
@@ -151,6 +160,10 @@ def main():
     p = sub.add_parser("status", help="Show cluster status")
     p.add_argument("--blades", nargs="+")
 
+    # check (alias for status)
+    p = sub.add_parser("check", help="Check blades (alias for status)")
+    p.add_argument("--blades", nargs="+")
+
     # clean
     p = sub.add_parser("clean", help="Clean job data")
     p.add_argument("-y", "--yes", action="store_true")
@@ -162,7 +175,7 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cmd == "status":
+    if args.cmd in {"status", "check"}:
         show_status(args.blades)
     elif args.cmd == "clean":
         clean(confirm=not args.yes)

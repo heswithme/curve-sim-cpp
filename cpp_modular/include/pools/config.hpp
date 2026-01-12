@@ -118,9 +118,10 @@ void parse_pool_entry(
 // - { "pools": [ {...}, {...} ] }
 // - { "pool": {...} }
 // - [ {...}, {...} ]
+// Optional: start_idx/end_idx for loading a subset (0-based, end exclusive)
 template <typename T>
 std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> 
-load_pool_configs(const std::string& path) {
+load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx = SIZE_MAX) {
     namespace json = boost::json;
     
     std::ifstream in(path, std::ios::binary);
@@ -151,13 +152,19 @@ load_pool_configs(const std::string& path) {
         throw std::runtime_error("Invalid pools json root type");
     }
     
-    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
-    result.reserve(entries.size());
+    // Apply range bounds
+    if (start_idx >= entries.size()) {
+        return {};  // Empty result if start beyond range
+    }
+    size_t actual_end = std::min(end_idx, entries.size());
     
-    for (const auto& entry : entries) {
+    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
+    result.reserve(actual_end - start_idx);
+    
+    for (size_t i = start_idx; i < actual_end; ++i) {
         PoolInit<T> pool_init{};
         arb::trading::Costs<T> costs{};
-        parse_pool_entry(entry, pool_init, costs);
+        parse_pool_entry(entries[i], pool_init, costs);
         result.emplace_back(std::move(pool_init), std::move(costs));
     }
     

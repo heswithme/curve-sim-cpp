@@ -46,10 +46,6 @@ SSH_OPTIONS = [
 
 # Blades with CORRECT /home/heswithme ownership (can read/write home dir)
 BLADES_WORKING = [
-    "blade-a1",
-    "blade-a2",
-    "blade-a3",
-    "blade-a4",
     "blade-a5",
     "blade-a6",
     "blade-a7",

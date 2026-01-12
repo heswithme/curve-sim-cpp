@@ -25,19 +25,22 @@ from config import (
 )
 
 
-def scp_from_cluster(remote_path: str, local_path: Path, blade: str) -> bool:
-    """Download file from shared NFS via any blade."""
+def rsync_from_cluster(
+    remote_path: str, local_path: Path, blade: str, timeout: int = 600
+) -> bool:
+    """Download file from shared NFS via rsync with compression."""
+    ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
     cmd = [
-        "scp",
-        "-i",
-        str(SSH_KEY),
-        "-o",
-        "StrictHostKeyChecking=accept-new",
+        "rsync",
+        "-avz",  # archive, verbose, compress
+        "--progress",
+        "-e",
+        ssh_opts,
         f"{SSH_USER}@{blade}:{remote_path}",
         str(local_path),
     ]
     try:
-        subprocess.run(cmd, check=True, timeout=300, capture_output=True)
+        subprocess.run(cmd, check=True, timeout=timeout, capture_output=True)
         return True
     except Exception as e:
         print(f"Download failed: {e}")
@@ -119,7 +122,7 @@ def collect(manifest_path: Path, output_file: Path = None) -> Optional[dict]:
         local_path = downloads_dir / f"result_{blade_name}.json"
         print(f"[{blade_name}] Downloading...")
 
-        if scp_from_cluster(remote_path, local_path, blade):
+        if rsync_from_cluster(remote_path, local_path, blade):
             downloaded[blade_name] = local_path
             print(f"[{blade_name}] OK ({local_path.stat().st_size:,} bytes)")
         else:

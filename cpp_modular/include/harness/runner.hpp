@@ -5,6 +5,7 @@
 #include <atomic>
 #include <future>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <thread>
 #include <mutex>
@@ -284,6 +285,22 @@ PoolResult<T> run_single_pool(
     return result;
 }
 
+// Helper to format seconds as HH:MM:SS or MM:SS
+inline std::string format_duration(double seconds) {
+    int total_s = static_cast<int>(seconds + 0.5);
+    int h = total_s / 3600;
+    int m = (total_s % 3600) / 60;
+    int s = total_s % 60;
+    
+    std::ostringstream oss;
+    if (h > 0) {
+        oss << h << ":" << std::setfill('0') << std::setw(2) << m << ":" << std::setw(2) << s;
+    } else {
+        oss << m << ":" << std::setfill('0') << std::setw(2) << s;
+    }
+    return oss.str();
+}
+
 // Run multiple pools in parallel using a thread pool
 template <typename T>
 std::vector<PoolResult<T>> run_pools_parallel(
@@ -305,6 +322,9 @@ std::vector<PoolResult<T>> run_pools_parallel(
         return results;
     }
     
+    // Log every ~1% of pools, minimum every pool if < 100, max every 1000
+    const size_t log_interval = std::max(size_t(1), std::min(n_pools / 100, size_t(1000)));
+    
     // Load cowswap trades if path specified
     std::vector<trading::CowswapTrade> cowswap_trades;
     const std::vector<trading::CowswapTrade>* cs_ptr = nullptr;
@@ -315,27 +335,33 @@ std::vector<PoolResult<T>> run_pools_parallel(
             if (verbose) {
                 std::lock_guard<std::mutex> lock(io_mu);
                 std::cout << "loaded " << cowswap_trades.size() 
-                          << " cowswap trades from " << cfg.cowswap_path << "\n";
+                          << " cowswap trades from " << cfg.cowswap_path << "\n" << std::flush;
             }
         }
     }
     
+    // Track wall-clock time for ETA
+    auto t_total_start = std::chrono::high_resolution_clock::now();
+    
     // For single pool or single thread, run sequentially
     if (n_pools == 1 || n_threads == 1) {
         for (size_t i = 0; i < n_pools; ++i) {
-            if (verbose) {
-                std::lock_guard<std::mutex> lock(io_mu);
-                std::cout << "dispatch job " << (i + 1) << "/" << n_pools << "\n";
-            }
-            
             const auto& [pool_init, costs] = pool_configs[i];
             results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
             
-            if (verbose) {
+            size_t done = i + 1;
+            if (verbose && (done % log_interval == 0 || done == n_pools)) {
+                auto now = std::chrono::high_resolution_clock::now();
+                double elapsed_s = std::chrono::duration<double>(now - t_total_start).count();
+                double avg_s = elapsed_s / done;
+                double eta_s = avg_s * (n_pools - done);
+                
                 std::lock_guard<std::mutex> lock(io_mu);
-                std::cout << "finished job " << (i + 1) << "/" << n_pools
-                          << ", time: " << std::fixed << std::setprecision(4)
-                          << (results[i].elapsed_ms / 1000.0) << " s\n";
+                std::cout << "pool " << done << "/" << n_pools
+                          << " (" << (100 * done / n_pools) << "%)"
+                          << " | elapsed:" << format_duration(elapsed_s)
+                          << " | eta:" << format_duration(eta_s)
+                          << "\n" << std::flush;
             }
         }
         return results;
@@ -344,27 +370,33 @@ std::vector<PoolResult<T>> run_pools_parallel(
     // Thread pool with work stealing via atomic index
     std::atomic<size_t> next_idx{0};
     std::atomic<size_t> completed{0};
+    std::atomic<size_t> last_logged{0};
     
     auto worker = [&]() {
         while (true) {
             const size_t i = next_idx.fetch_add(1);
             if (i >= n_pools) break;
             
-            if (verbose) {
-                std::lock_guard<std::mutex> lock(io_mu);
-                std::cout << "dispatch job " << (i + 1) << "/" << n_pools << "\n";
-            }
-            
             const auto& [pool_init, costs] = pool_configs[i];
             results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
             
-            completed.fetch_add(1);
+            size_t done = completed.fetch_add(1) + 1;
             
-            if (verbose) {
+            // Log at intervals or when complete
+            if (verbose && (done == n_pools || done / log_interval > last_logged.load())) {
+                last_logged.store(done / log_interval);
+                
+                auto now = std::chrono::high_resolution_clock::now();
+                double elapsed_s = std::chrono::duration<double>(now - t_total_start).count();
+                double avg_s = elapsed_s / done;
+                double eta_s = avg_s * (n_pools - done);
+                
                 std::lock_guard<std::mutex> lock(io_mu);
-                std::cout << "finished job " << (i + 1) << "/" << n_pools
-                          << ", time: " << std::fixed << std::setprecision(4)
-                          << (results[i].elapsed_ms / 1000.0) << " s\n";
+                std::cout << "pool " << done << "/" << n_pools
+                          << " (" << (100 * done / n_pools) << "%)"
+                          << " | elapsed:" << format_duration(elapsed_s)
+                          << " | eta:" << format_duration(eta_s)
+                          << "\n" << std::flush;
             }
         }
     };

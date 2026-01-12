@@ -5,8 +5,8 @@ Distribute job data to shared NFS.
 Since all blades share /home/heswithme, we only upload once:
 1. Read candles path from pool config meta.datafile
 2. Upload candles file (conditionally - skip if exists)
-3. Split pools into per-blade batches
-4. Upload all batch files
+3. Upload single pools file (all blades read same file)
+4. Compute pool index ranges per blade
 """
 
 import json
@@ -33,18 +33,21 @@ def run_ssh(blade: str, command: str, timeout: int = 60) -> subprocess.Completed
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
 
-def scp_to_cluster(local_path: Path, remote_path: str, blade: str) -> None:
-    """Copy file to shared NFS via any blade."""
+def rsync_to_cluster(
+    local_path: Path, remote_path: str, blade: str, timeout: int = 600
+) -> None:
+    """Copy file to shared NFS via rsync with compression."""
+    ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
     cmd = [
-        "scp",
-        "-i",
-        str(SSH_KEY),
-        "-o",
-        "StrictHostKeyChecking=accept-new",
+        "rsync",
+        "-avz",  # archive, verbose, compress
+        "--progress",
+        "-e",
+        ssh_opts,
         str(local_path),
         f"{SSH_USER}@{blade}:{remote_path}",
     ]
-    subprocess.run(cmd, check=True, timeout=600)
+    subprocess.run(cmd, check=True, timeout=timeout)
 
 
 def file_exists_remote(blade: str, remote_path: str) -> bool:
@@ -64,32 +67,32 @@ def get_remote_file_size(blade: str, remote_path: str) -> int:
         return 0
 
 
-def load_pools(pools_file: Path) -> Tuple[List[dict], dict]:
-    """Load pools from JSON. Returns (pools_list, metadata)."""
+def load_pools(pools_file: Path) -> Tuple[int, dict]:
+    """Load pools from JSON. Returns (pool_count, metadata)."""
     with open(pools_file) as f:
         data = json.load(f)
 
     pools = data.get("pools", [])
     meta = data.get("meta", data.get("metadata", {}))
-    return pools, meta
+    return len(pools), meta
 
 
-def split_pools(pools: List[dict], n_blades: int) -> List[List[dict]]:
-    """Split pools evenly across blades."""
-    if n_blades <= 0 or len(pools) == 0:
-        return [[] for _ in range(max(1, n_blades))]
+def compute_ranges(n_pools: int, n_blades: int) -> List[Tuple[int, int]]:
+    """Compute (start, end) ranges for each blade."""
+    if n_blades <= 0 or n_pools == 0:
+        return [(0, 0) for _ in range(max(1, n_blades))]
 
-    base_size = len(pools) // n_blades
-    remainder = len(pools) % n_blades
+    base_size = n_pools // n_blades
+    remainder = n_pools % n_blades
 
-    batches = []
+    ranges = []
     start = 0
     for i in range(n_blades):
         size = base_size + (1 if i < remainder else 0)
-        batches.append(pools[start : start + size])
+        ranges.append((start, start + size))
         start += size
 
-    return batches
+    return ranges
 
 
 def distribute(
@@ -109,6 +112,7 @@ def distribute(
 
     Reads candles path from pool config meta.datafile if not provided.
     Skips candles upload if file already exists with same size.
+    Uploads single pools file - blades use --pool-start/--pool-end for ranges.
 
     Returns manifest with all paths and configuration.
     """
@@ -119,7 +123,7 @@ def distribute(
 
     # Load pools and get metadata
     print(f"Loading pools from {pools_file}...")
-    pools, meta = load_pools(pools_file)
+    n_pools, meta = load_pools(pools_file)
 
     # Get candles file from meta.datafile if not provided
     if candles_file is None:
@@ -135,7 +139,7 @@ def distribute(
 
     print(f"\n{'=' * 60}")
     print(f"Distributing job: {job_id}")
-    print(f"  Pools:   {len(pools)} from {pools_file.name}")
+    print(f"  Pools:   {n_pools} from {pools_file.name}")
     print(f"  Candles: {candles_file.name}")
     print(f"  Blades:  {len(blades)}")
     print(f"{'=' * 60}\n")
@@ -152,56 +156,49 @@ def distribute(
         print(f"Candles already uploaded: {candles_file.name} ({local_size:,} bytes)")
     else:
         print(f"Uploading candles: {candles_file.name} ({local_size:,} bytes)...")
-        scp_to_cluster(candles_file, remote_candles, blade)
+        rsync_to_cluster(candles_file, remote_candles, blade)
         print(f"  Done.")
 
-    # Split pools across blades
-    print(f"Splitting {len(pools)} pools across {len(blades)} blades...")
-    batches = split_pools(pools, len(blades))
+    # Upload single pools file
+    remote_pools = f"{REMOTE_JOBS}/pools.json"
+    local_pools_size = pools_file.stat().st_size
+    remote_pools_size = get_remote_file_size(blade, remote_pools)
 
-    # Create local job directory
-    local_job_dir = Path(__file__).parent / "jobs" / job_id
-    local_job_dir.mkdir(parents=True, exist_ok=True)
+    if remote_pools_size == local_pools_size:
+        print(f"Pools already uploaded: {pools_file.name} ({local_pools_size:,} bytes)")
+    else:
+        print(f"Uploading pools: {pools_file.name} ({local_pools_size:,} bytes)...")
+        rsync_to_cluster(pools_file, remote_pools, blade)
+        print(f"  Done.")
 
-    # Create and upload batch files
+    # Compute pool ranges per blade
+    ranges = compute_ranges(n_pools, len(blades))
     blade_assignments = {}
 
-    for i, (blade_name, batch) in enumerate(zip(blades, batches)):
-        if not batch:
+    for i, (blade_name, (start, end)) in enumerate(zip(blades, ranges)):
+        n_blade_pools = end - start
+        if n_blade_pools == 0:
             print(f"  {blade_name}: 0 pools (skipped)")
             continue
 
-        # Create batch file with updated meta
-        batch_data = {
-            "meta": {
-                **meta,
-                "datafile": remote_candles,  # Update to remote path
-                "blade_index": i,
-                "job_id": job_id,
-                "batch_size": len(batch),
-            },
-            "pools": batch,
-        }
-
-        local_file = local_job_dir / f"pools_{blade_name}.json"
-        with open(local_file, "w") as f:
-            json.dump(batch_data, f)
-
-        # Upload to shared NFS
-        remote_file = f"{REMOTE_JOBS}/pools_{blade_name}.json"
-        scp_to_cluster(local_file, remote_file, blade)
-
         blade_assignments[blade_name] = {
-            "remote_pools": remote_file,
-            "n_pools": len(batch),
+            "pool_start": start,
+            "pool_end": end,
+            "n_pools": n_blade_pools,
         }
-        print(f"  {blade_name}: {len(batch)} pools")
+        print(f"  {blade_name}: pools {start}-{end} ({n_blade_pools} pools)")
+
+    # Create local job directory for manifest
+    local_job_dir = Path(__file__).parent / "jobs" / job_id
+    local_job_dir.mkdir(parents=True, exist_ok=True)
 
     # Build manifest
     manifest = {
         "job_id": job_id,
         "created_at": datetime.utcnow().isoformat(),
         "remote_candles": remote_candles,
+        "remote_pools": remote_pools,
+        "total_pools": n_pools,
         "blades": blade_assignments,
         "config": {
             "threads_per_blade": threads_per_blade,

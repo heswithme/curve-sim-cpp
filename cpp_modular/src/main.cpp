@@ -140,16 +140,22 @@ int main(int argc, char* argv[]) {
         auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
         auto events = arb::gen_events(candles);
         std::cout << "loaded " << candles.size() << " candles -> "
-                  << events.size() << " events from " << args.candles_path << "\n";
+                  << events.size() << " events from " << args.candles_path << "\n" << std::flush;
         
         auto t_read1 = std::chrono::high_resolution_clock::now();
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
 
-        // Load pool configs from JSON
-        auto pool_configs = arb::pools::load_pool_configs<RealT>(args.pools_path);
+        // Load pool configs from JSON (optionally subset by range)
+        auto pool_configs = arb::pools::load_pool_configs<RealT>(
+            args.pools_path, args.pool_start, args.pool_end);
         if (pool_configs.empty()) {
             throw std::runtime_error("No pool configurations found in " + args.pools_path);
         }
+        std::cout << "loaded " << pool_configs.size() << " pools";
+        if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
+            std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+        }
+        std::cout << "\n" << std::flush;
         
         // Build run configuration from CLI args
         arb::harness::RunConfig<RealT> run_cfg{};
