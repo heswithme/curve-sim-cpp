@@ -45,12 +45,9 @@ SSH_OPTIONS = [
 # =============================================================================
 
 # Blades with CORRECT /home/heswithme ownership (can read/write home dir)
-BLADES_WORKING = ["blade-a2", "blade-b8", "blade-b9", "blade-b10"]
-
-# Blades with broken ownership (george/heswithme/michwill rotated)
-# These need admin fix before they can access /home/heswithme
-BLADES_BROKEN_PERMS = [
+BLADES_WORKING = [
     "blade-a1",
+    "blade-a2",
     "blade-a3",
     "blade-a4",
     "blade-a5",
@@ -64,13 +61,20 @@ BLADES_BROKEN_PERMS = [
     "blade-b5",
     "blade-b6",
     "blade-b7",
+    "blade-b8",
+    "blade-b9",
+    "blade-b10",
 ]
+
+# Blades with broken ownership (george/heswithme/michwill rotated)
+# These need admin fix before they can access /home/heswithme
+BLADES_BROKEN_PERMS = []
 
 # Unreachable blades
 BLADES_DOWN = ["blade-a9", "blade-b3"]
 
 ALL_BLADES = BLADES_WORKING + BLADES_BROKEN_PERMS
-DEFAULT_BLADES = BLADES_WORKING  # Only use blades with correct permissions
+DEFAULT_BLADES = BLADES_WORKING  # Use all reachable blades
 
 # Per-blade resources
 CORES_PER_BLADE = 128  # Logical cores (64 physical with HT)
