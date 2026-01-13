@@ -175,6 +175,7 @@ int main(int argc, char* argv[]) {
         
         // Wire detailed_log flag
         run_cfg.detailed_log = args.detailed_log;
+        run_cfg.detailed_interval = args.detailed_interval;
         
         // Wire cowswap trades path and fee
         run_cfg.cowswap_path = args.cowswap_path;

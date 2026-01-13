@@ -3,6 +3,7 @@
 Plot price_scale vs candle midpoint (open+close)/2 from detailed-output.json
 """
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -14,11 +15,12 @@ import numpy as np
 
 
 def main():
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <detailed-output.json>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Plot price_scale vs CEX midpoint")
+    parser.add_argument("filepath", type=Path, help="Path to detailed-output.json")
+    parser.add_argument("--no-save", action="store_true", help="Don't save PNG file")
+    args = parser.parse_args()
 
-    filepath = Path(sys.argv[1])
+    filepath = args.filepath
     with open(filepath) as f:
         data = json.load(f)
 
@@ -98,10 +100,10 @@ def main():
 
     plt.tight_layout()
 
-    # Save next to input file
-    out_path = filepath.with_suffix(".png")
-    plt.savefig(out_path, dpi=150)
-    print(f"Saved plot to {out_path}")
+    if not args.no_save:
+        out_path = filepath.with_suffix(".png")
+        plt.savefig(out_path, dpi=150)
+        print(f"Saved plot to {out_path}")
 
     plt.show()
 

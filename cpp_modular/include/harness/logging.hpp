@@ -129,10 +129,12 @@ template <typename T>
 class DetailedLogger {
 public:
     DetailedLogger() = default;
-    explicit DetailedLogger(bool enabled) : enabled_(enabled) {}
+    explicit DetailedLogger(bool enabled, size_t interval = 1) 
+        : enabled_(enabled), interval_(interval > 0 ? interval : 1) {}
     
     bool enabled() const { return enabled_; }
     void set_enabled(bool e) { enabled_ = e; }
+    void set_interval(size_t interval) { interval_ = interval > 0 ? interval : 1; }
     
     // Get recorded entries (moves out)
     std::vector<DetailedEntry<T>> take_entries() { return std::move(entries_); }
@@ -144,6 +146,9 @@ public:
     template <typename Pool>
     void log_entry(const Pool& pool, const Candle& candle, uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return;
+        // Only log every interval_ candles
+        if (candle_count_ % interval_ != 0) return;
+        
         DetailedEntry<T> entry;
         entry.t = candle.ts;
         entry.token0 = pool.balances[0];
@@ -176,15 +181,20 @@ public:
         // Log the *previous* candle when we see a new one
         if (candle_changed) {
             log_entry(pool, last_candle_, n_trades, n_rebalances);
+            ++candle_count_;
         }
         
         // Track current candle
         last_candle_ts_ = current_candle.ts;
         last_candle_ = current_candle;
         
-        // Log final candle at end of simulation
+        // Log final candle at end of simulation (always log last candle regardless of interval)
         if (is_last_event) {
+            // Force log the final candle
+            const size_t saved_count = candle_count_;
+            candle_count_ = 0;  // temporarily set to 0 to force logging
             log_entry(pool, last_candle_, n_trades, n_rebalances);
+            candle_count_ = saved_count;
         }
         
         return candle_changed;
@@ -192,6 +202,8 @@ public:
 
 private:
     bool enabled_{false};
+    size_t interval_{1};
+    size_t candle_count_{0};
     std::vector<DetailedEntry<T>> entries_;
     uint64_t last_candle_ts_{0};
     Candle last_candle_{};

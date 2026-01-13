@@ -11,9 +11,11 @@ Since all results are on shared NFS, we only need to:
 import json
 import subprocess
 import sys
-from datetime import datetime
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from config import (
     SSH_USER,
@@ -24,11 +26,27 @@ from config import (
     REMOTE_RESULTS,
 )
 
+SCRIPT_DIR = Path(__file__).resolve().parents[1]
+TRADE_DATA_DIR = SCRIPT_DIR / "trade_data"
+
+
+def find_local_candles(filename: str) -> Optional[Path]:
+    """Search trade_data folder recursively for candles file by name."""
+    if not TRADE_DATA_DIR.exists():
+        return None
+    matches = list(TRADE_DATA_DIR.rglob(filename))
+    return matches[0] if matches else None
+
 
 def rsync_from_cluster(
-    remote_path: str, local_path: Path, blade: str, timeout: int = 600
+    remote_path: str,
+    local_path: Path,
+    blade: str,
+    timeout: int = 600,
+    retries: int = 3,
+    retry_delay: float = 1.0,
 ) -> bool:
-    """Download file from shared NFS via rsync with compression."""
+    """Download file from shared NFS via rsync with compression and retry."""
     ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
     cmd = [
         "rsync",
@@ -39,12 +57,16 @@ def rsync_from_cluster(
         f"{SSH_USER}@{blade}:{remote_path}",
         str(local_path),
     ]
-    try:
-        subprocess.run(cmd, check=True, timeout=timeout, capture_output=True)
-        return True
-    except Exception as e:
-        print(f"Download failed: {e}")
-        return False
+    for attempt in range(retries):
+        try:
+            subprocess.run(cmd, check=True, timeout=timeout, capture_output=True)
+            return True
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(retry_delay)
+            else:
+                print(f"Download failed after {retries} attempts: {e}")
+    return False
 
 
 def load_json(path: Path) -> Optional[dict]:
@@ -84,9 +106,16 @@ def extract_grid_values(run: Dict[str, Any], grid: Dict[str, Any]) -> Dict[str, 
     return values
 
 
-def collect(manifest_path: Path, output_file: Path = None) -> Optional[dict]:
+def collect(
+    manifest_path: Path, output_file: Path = None, force: bool = False
+) -> Optional[dict]:
     """
     Download and merge results from shared NFS.
+
+    Args:
+        manifest_path: Path to job manifest
+        output_file: Where to save merged results
+        force: If True, attempt download even if manifest says jobs failed
 
     Returns merged results dict.
     """
@@ -108,25 +137,47 @@ def collect(manifest_path: Path, output_file: Path = None) -> Optional[dict]:
     downloads_dir = job_dir / "downloads"
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download each result file
-    downloaded = {}
+    # Build list of files to download
+    to_download = []
     for blade_name, status in run_status.items():
-        if not status.get("success"):
+        if not force and not status.get("success"):
             print(f"[{blade_name}] Skipping (job failed)")
             continue
 
         remote_path = status.get("remote_output")
         if not remote_path:
-            continue
+            # If force mode, try to construct the path
+            if force:
+                remote_path = f"{REMOTE_RESULTS}/result_{blade_name}.json"
+            else:
+                continue
 
         local_path = downloads_dir / f"result_{blade_name}.json"
-        print(f"[{blade_name}] Downloading...")
+        to_download.append((blade_name, remote_path, local_path))
 
-        if rsync_from_cluster(remote_path, local_path, blade):
-            downloaded[blade_name] = local_path
-            print(f"[{blade_name}] OK ({local_path.stat().st_size:,} bytes)")
-        else:
-            print(f"[{blade_name}] Failed")
+    # Download in parallel
+    def download_one(args: Tuple[str, str, Path]) -> Tuple[str, Path, bool]:
+        blade_name, remote_path, local_path = args
+        success = rsync_from_cluster(remote_path, local_path, blade)
+        return blade_name, local_path, success
+
+    downloaded = {}
+    if not to_download:
+        print("No files to download!")
+        print("Hint: use --force to attempt download even if manifest says jobs failed")
+        return None
+
+    print(f"Downloading {len(to_download)} result files in parallel...")
+
+    with ThreadPoolExecutor(max_workers=min(32, len(to_download))) as executor:
+        futures = {executor.submit(download_one, args): args[0] for args in to_download}
+        for future in as_completed(futures):
+            blade_name, local_path, success = future.result()
+            if success:
+                downloaded[blade_name] = local_path
+                print(f"[{blade_name}] OK ({local_path.stat().st_size:,} bytes)")
+            else:
+                print(f"[{blade_name}] Failed")
 
     if not downloaded:
         print("No results downloaded!")
@@ -163,7 +214,7 @@ def collect(manifest_path: Path, output_file: Path = None) -> Optional[dict]:
     cfg = manifest.get("config", {})
     merged = {
         "metadata": {
-            "created_utc": datetime.utcnow().isoformat(),
+            "created_utc": datetime.now(timezone.utc).isoformat(),
             "job_id": job_id,
             "total_pools": len(all_runs),
             "errors": sum(s["errors"] for s in blade_stats.values()),
@@ -180,6 +231,17 @@ def collect(manifest_path: Path, output_file: Path = None) -> Optional[dict]:
         },
         "runs": all_runs,
     }
+
+    remote_candles = manifest.get("remote_candles")
+    if remote_candles:
+        candles_name = Path(remote_candles).name
+        local_candles = find_local_candles(candles_name)
+        if local_candles:
+            merged["metadata"]["candles_file"] = str(local_candles)
+        else:
+            merged["metadata"]["candles_file"] = (
+                candles_name  # fallback to filename only
+            )
 
     # Compute summary stats
     vps = [
@@ -243,13 +305,18 @@ def main():
     parser = argparse.ArgumentParser(description="Collect results from cluster")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Attempt download even if manifest says jobs failed",
+    )
     args = parser.parse_args()
 
     if not args.manifest.exists():
         print(f"Manifest not found: {args.manifest}")
         sys.exit(1)
 
-    merged = collect(args.manifest, args.output)
+    merged = collect(args.manifest, args.output, force=args.force)
     sys.exit(0 if merged else 1)
 
 

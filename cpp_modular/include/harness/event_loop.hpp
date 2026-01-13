@@ -46,6 +46,7 @@ EventLoopResult<T> run_event_loop(
     const ApyConfig<T>& apy_cfg = ApyConfig<T>{},
     bool save_actions = false,
     bool detailed_log = false,
+    size_t detailed_interval = 1,  // log every N-th candle (1 = all)
     trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
 ) {
     EventLoopResult<T> result{};
@@ -83,7 +84,7 @@ EventLoopResult<T> run_event_loop(
     
     // Initialize loggers
     ActionLogger<T> action_logger(save_actions);
-    DetailedLogger<T> detailed_logger(detailed_log);
+    DetailedLogger<T> detailed_logger(detailed_log, detailed_interval);
     
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {

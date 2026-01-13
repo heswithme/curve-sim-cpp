@@ -18,14 +18,33 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # Each dimension: (name, min, max, count, log_scale, as_int)
 DIMS = [
     ("donation_apy", 0.00, 0.1, 10, False, False),
-    ("A", 10*10_000, 100*10_000, 24, False, True),
+    ("A", 10 * 10_000, 200 * 10_000, 24, False, True),
     # ("mid_fee", 1 / 10_000 * 10**10, 10 / 10_000 * 10**10, 3, False, True),
     ("out_fee", 10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 24, False, True),
     ("fee_gamma", 0.001 * 10**18, 0.5 * 10**18, 8, True, True),
-    ("ma_time", 866, 3600*4/np.log(2), 6, False, True),
+    ("ma_time", 866, 3600 * 4 / np.log(2), 6, False, True),
 ]
 FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 
+# Manual grid override: if set, uses these exact values instead of DIMS
+# Format: {"param_name": [val1, val2, ...], ...}
+# Example:
+# MANUAL_GRID = {
+#     "A": [100_000, 200_000, 500_000],
+#     "donation_apy": [0.0, 0.05, 0.1],
+# }
+MANUAL_GRID = None
+MANUAL_GRID = {
+    "A": np.linspace(10 * 10_000, 200 * 10_000, 32),
+    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 32),
+    # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 5]],
+    "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
+    # "donation_apy": [0.0, 0.025, 0.05, 0.075, 0.1],
+    "donation_apy": np.linspace(0.0, 0.1, 11),
+    # "fee_gamma": np.geomspace(0.001 * 10**18, 0.5 * 10**18, 8),
+    "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
+    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.1]],
+}
 # DIMS = [
 #     ("A", 100*10_000, 500*10_000, 1, False, True),
 #     ("mid_fee", 1 / 10_000 * 10**10, 500 / 10_000 * 10**10, 1, False, True),
@@ -35,7 +54,12 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json")
+DEFAULT_DATAFILE = str(
+    _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
+)
+# DEFAULT_DATAFILE = str(
+#     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20251231.json"
+# )
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json")
 
 DEFAULT_COWSWAP_FILE = None
@@ -51,13 +75,13 @@ BASE_POOL = {
         int(INIT_LIQ * 1e18 // 2),
         int(INIT_LIQ * 1e18 // 2 / INIT_PRICE),
     ],
-    "A": int(3.5*10_000),
+    "A": int(3.5 * 10_000),
     "gamma": int(1e-4 * 10**18),
     "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(240 / 10_000 * 1e10),
     "fee_gamma": int(0.0023 * 1e18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.001 * 10**18),
+    "adjustment_step": int(0.005 * 10**18),
     "ma_time": 866,
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,
@@ -82,10 +106,31 @@ def build_axis(min_v: float, max_v: float, n: int, log: bool, as_int: bool) -> l
     return [int(round(v)) if as_int else float(v) for v in vals]
 
 
-def build_grid() -> list:
-    """Build all pool configurations from grid dimensions."""
-    axes = [build_axis(*dim[1:]) for dim in DIMS]
-    names = [dim[0] for dim in DIMS]
+def build_grid() -> tuple[list, dict]:
+    """Build all pool configurations from grid dimensions.
+
+    Returns:
+        (pools, grid_meta) tuple
+    """
+    # Use MANUAL_GRID if set, otherwise generate from DIMS
+    if MANUAL_GRID is not None:
+        names = list(MANUAL_GRID.keys())
+        # Convert numpy arrays to lists for JSON serialization
+        axes = [
+            list(v) if isinstance(v, np.ndarray) else list(v)
+            for v in MANUAL_GRID.values()
+        ]
+        grid_meta = {
+            f"x{i}": {"name": name, "values": [float(x) for x in vals]}
+            for i, (name, vals) in enumerate(zip(names, axes), 1)
+        }
+    else:
+        names = [dim[0] for dim in DIMS]
+        axes = [build_axis(*dim[1:]) for dim in DIMS]
+        grid_meta = {
+            f"x{i}": {"name": d[0], "min": d[1], "max": d[2], "n": d[3], "log": d[4]}
+            for i, d in enumerate(DIMS, 1)
+        }
 
     pools = []
     for coords in itertools.product(*axes):
@@ -109,16 +154,11 @@ def build_grid() -> list:
                 "costs": dict(BASE_COSTS),
             }
         )
-    return pools
+    return pools, grid_meta
 
 
 def main():
-    pools = build_grid()
-
-    grid_meta = {
-        f"x{i}": {"name": d[0], "min": d[1], "max": d[2], "n": d[3], "log": d[4]}
-        for i, d in enumerate(DIMS, 1)
-    }
+    pools, grid_meta = build_grid()
 
     out = {
         "meta": {

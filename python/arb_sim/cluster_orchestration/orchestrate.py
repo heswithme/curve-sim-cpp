@@ -27,9 +27,10 @@ import json
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from config import (
     DEFAULT_BLADES,
@@ -46,33 +47,60 @@ from run import run
 from collect import collect
 
 
-def check_connectivity(blades: List[str]) -> List[str]:
-    """Return list of reachable blades."""
-    print("Checking blade connectivity...")
-    reachable = []
-
-    for blade in blades:
-        cmd = (
-            ["ssh"]
-            + SSH_OPTIONS
-            + [
-                "-i",
-                str(SSH_KEY),
-                "-o",
-                "ConnectTimeout=10",
-                f"{SSH_USER}@{blade}",
-                "echo OK",
-            ]
-        )
+def _check_blade(
+    blade: str, attempts: int = 3, delay_s: float = 1.0
+) -> Tuple[str, bool, str]:
+    """Check if a single blade is reachable. Returns (blade, ok, message)."""
+    cmd = (
+        ["ssh"]
+        + SSH_OPTIONS
+        + [
+            "-i",
+            str(SSH_KEY),
+            "-o",
+            "ConnectTimeout=10",
+            f"{SSH_USER}@{blade}",
+            "echo OK",
+        ]
+    )
+    last_msg = "UNREACHABLE"
+    for attempt in range(1, attempts + 1):
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
             if "OK" in result.stdout:
-                reachable.append(blade)
-                print(f"  {blade}: OK")
-            else:
-                print(f"  {blade}: UNREACHABLE")
+                return (blade, True, "OK")
+            last_msg = "UNREACHABLE"
         except Exception as e:
-            print(f"  {blade}: ERROR ({e})")
+            last_msg = f"ERROR ({e})"
+        if attempt < attempts:
+            time.sleep(delay_s)
+    return (blade, False, last_msg)
+
+
+def check_connectivity(
+    blades: List[str], attempts: int = 3, delay_s: float = 1.0
+) -> List[str]:
+    """Return list of reachable blades (parallel SSH probes)."""
+    print(
+        f"Checking blade connectivity (up to {attempts} attempts, {delay_s:.1f}s delay)..."
+    )
+    results = {}
+
+    with ThreadPoolExecutor(max_workers=min(32, len(blades))) as executor:
+        futures = {
+            executor.submit(_check_blade, b, attempts, delay_s): b for b in blades
+        }
+        for future in as_completed(futures):
+            blade, ok, msg = future.result()
+            results[blade] = (ok, msg)
+
+    # Print in original order
+    reachable = []
+    for blade in blades:
+        ok, msg = results[blade]
+        print(f"  {blade}: {msg}")
+        if ok:
+            reachable.append(blade)
 
     return reachable
 

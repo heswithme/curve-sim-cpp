@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """
-Interactive N-dimensional heatmap explorer.
+Optimized N-dimensional heatmap explorer.
 
-- Loads aggregated arb_run JSON with x1..xN grid dimensions.
-- Plots a grid of 2D heatmaps (one per metric), mirroring plot_heatmap.py layout.
-- Separate controls window with dropdowns for X/Y axis selection and sliders
-  for remaining dimensions.
-
-Usage:
-  uv run python arb_sim/plot_heatmap_nd.py
-  uv run python arb_sim/plot_heatmap_nd.py --metrics apy_net,apy_corr,tw_real_slippage
-  uv run python arb_sim/plot_heatmap_nd.py --arb path/to/arb_run.json --ncol 4
+Key improvements vs plot_heatmap_nd.py:
+- Precompute dense N-D metric arrays
+- Use index-based slicing (O(1) per slider update)
+- Avoid per-point scanning on updates
 """
 
 from __future__ import annotations
@@ -18,6 +13,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -45,36 +42,32 @@ SECONDS_PER_HOUR = 3600.0
 MA_TIME_TO_HOURS = LN2 / SECONDS_PER_HOUR
 
 # ==================== LAYOUT CONSTANTS ====================
-# Controls window
-CTRL_FIG_WIDTH = 4.0  # Controls window width
-CTRL_MIN_HEIGHT = 2.5  # Minimum controls window height
-CTRL_HEIGHT_MULT = 5  # Multiplier for content -> figure height
+CTRL_FIG_WIDTH = 3.2
+CTRL_MIN_HEIGHT = 6.0
+CTRL_HEIGHT_MULT = 11.0
+CTRL_HEIGHT_PAD = 1.0
 
-# Title
-CTRL_TITLE_Y = 0.98  # Title Y position
+CTRL_TITLE_Y = 0.98
 CTRL_TITLE_FONTSIZE = 10
 
-# Radio buttons
-RADIO_ITEM_HEIGHT = 0.025  # Height per radio option (compact)
-RADIO_BOX_PADDING = 0.01  # Extra padding for radio box
+RADIO_ITEM_HEIGHT = 0.03
+RADIO_BOX_PADDING = 0.01
 RADIO_FONTSIZE = 8
-RADIO_X_LABEL_Y = 0.95  # X axis label Y position
-RADIO_LABEL_GAP = 0.01  # Gap between label and box
-RADIO_GROUP_GAP = 0.015  # Gap between X and Y radio groups
+RADIO_X_LABEL_Y = 0.95
+RADIO_LABEL_GAP = 0.01
+RADIO_GROUP_GAP = 0.02
 
-# Sliders
-SLIDER_HEIGHT = 0.045  # Height per slider row (compact)
-SLIDER_TOP_GAP = 0.02  # Gap above first slider
-SLIDER_LABEL_OFFSET = 0.012  # Label Y offset above slider
-SLIDER_BOX_LEFT = 0.20  # Slider box left position
-SLIDER_BOX_WIDTH = 0.50  # Slider box width
-SLIDER_BOX_HEIGHT = 0.025  # Slider box height (compact)
-SLIDER_BOX_Y_OFFSET = 0.015  # Slider box Y offset from row
-SLIDER_VALUE_X = 0.73  # Value text X position
+SLIDER_HEIGHT = 0.05
+SLIDER_TOP_GAP = 0.02
+SLIDER_LABEL_OFFSET = 0.015
+SLIDER_BOX_LEFT = 0.20
+SLIDER_BOX_WIDTH = 0.50
+SLIDER_BOX_HEIGHT = 0.03
+SLIDER_BOX_Y_OFFSET = 0.02
+SLIDER_VALUE_X = 0.73
 SLIDER_FONTSIZE = 8
 # ==========================================================
 
-# Default metrics to display
 DEFAULT_METRICS = [
     "apy_net",
     "apy_corr",
@@ -83,6 +76,22 @@ DEFAULT_METRICS = [
     "virtual_price",
     "xcp_profit",
 ]
+
+DEFAULT_COSTS = {
+    "arb_fee_bps": 10.0,
+    "gas_coin0": 0.0,
+    "use_volume_cap": False,
+    "volume_cap_mult": 1,
+}
+
+INSPECT_POOL_FILENAME = "inspect_pool.json"
+INSPECT_OUTPUT_FILENAME = "inspect_output.json"
+INSPECT_REAL = "double"
+INSPECT_DUSTSWAPFREQ = 600
+INSPECT_APY_PERIOD_DAYS = 1
+INSPECT_APY_PERIOD_CAP = 20
+INSPECT_THREADS = 10
+INSPECT_DETAILED_INTERVAL = 1000
 
 
 def _latest_arb_run() -> Path:
@@ -105,14 +114,6 @@ def _to_float(x: Any) -> float:
         return float("nan")
 
 
-def _axis_transformer(name: str):
-    """Return a transformer for axis values based on the parameter name."""
-    key = (name or "").lower()
-    if "ma_time" in key:
-        return lambda value: value * MA_TIME_TO_HOURS
-    return lambda value: value
-
-
 def _parse_grid_dims(data: Dict[str, Any]) -> List[Tuple[str, str]]:
     """
     Parse grid dimensions from metadata.
@@ -130,94 +131,7 @@ def _parse_grid_dims(data: Dict[str, Any]) -> List[Tuple[str, str]]:
     return [(key, name) for _, key, name in dims]
 
 
-def _extract_nd_grid(
-    data: Dict[str, Any],
-) -> Tuple[
-    List[str], Dict[str, List[float]], Dict[Tuple[float, ...], Dict[str, float]]
-]:
-    """
-    Extract N-dimensional grid data for all metrics at once.
-
-    Returns:
-        dim_names: list of dimension names in order (x1, x2, ...)
-        dim_values: dict of dim_name -> sorted unique values
-        points: dict of (v1, v2, ..., vN) -> {metric_name: z_value}
-    """
-    runs = data.get("runs", [])
-    if not runs:
-        raise SystemExit("No runs[] found in arb_run JSON")
-
-    # Get dimension info
-    dims = _parse_grid_dims(data)
-    if not dims:
-        raise SystemExit("No grid dimensions found in metadata")
-
-    dim_keys = [key for key, _ in dims]
-    dim_names = [name for _, name in dims]
-    n_dims = len(dim_names)
-
-    # Collect values per dimension and all metric values
-    dim_values: Dict[str, set] = {name: set() for name in dim_names}
-    points: Dict[Tuple[float, ...], Dict[str, Any]] = {}
-
-    for r in runs:
-        coords = []
-        valid = True
-        pool = r.get("pool", {})
-        for i, name in enumerate(dim_names):
-            # Try multiple sources: x{i+1}_val field, pool dict, or tag parsing
-            raw = r.get(f"x{i + 1}_val")
-            if raw is None:
-                raw = pool.get(name)
-            v = _to_float(raw) if raw is not None else float("nan")
-            if not math.isfinite(v):
-                valid = False
-                break
-            coords.append(v)
-            dim_values[name].add(v)
-
-        if not valid:
-            continue
-
-        # Store all metrics from final_state and result
-        coord_tuple = tuple(coords)
-        fs = r.get("final_state", {})
-        res = r.get("result", {})
-        merged = {**res, **fs}  # final_state takes precedence
-        points[coord_tuple] = merged
-
-    if not points:
-        raise SystemExit("No valid data points found")
-
-    # Sort values per dimension
-    dim_values_sorted = {name: sorted(vals) for name, vals in dim_values.items()}
-
-    return dim_names, dim_values_sorted, points
-
-
-def _metric_scale_flags(m: str) -> Tuple[bool, bool]:
-    """Return (scale_1e18, scale_percent) for a metric."""
-    mlow = (m or "").lower()
-    scale_1e18 = m in {
-        "virtual_price",
-        "xcp_profit",
-        "price_scale",
-        "D",
-        "totalSupply",
-    }
-    scale_percent = (
-        mlow in {"vpminusone", "apy"}
-        or "apy" in mlow
-        or "tw_real_slippage" in mlow
-        or "geom_mean" in mlow
-        or "rel_price_diff" in mlow
-        or "tw_avg_pool_fee" in mlow
-    )
-    return scale_1e18, scale_percent
-
-
 def _axis_normalization(name: str) -> Tuple[float, str]:
-    """Return (scale_factor, unit_suffix) for axis values."""
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
@@ -256,7 +170,6 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
 
 
 def _format_slider_value(name: str, value: float) -> str:
-    """Format a value for slider display."""
     scale, _ = _axis_normalization(name)
     key = (name or "").lower()
     if scale == 0.0 and "fee" in key and "gamma" not in key:
@@ -270,8 +183,31 @@ def _format_slider_value(name: str, value: float) -> str:
     return f"{value:.4g}"
 
 
+def _stringify_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_stringify_value(v) for v in value]
+    if isinstance(value, float):
+        return str(value)
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    return str(value)
+
+
+def _stringify_pool(pool: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: _stringify_value(val) for key, val in pool.items()}
+
+
+def _nearest_index(values: List[float], coord: float) -> int:
+    if not values or not math.isfinite(coord):
+        return 0
+    arr = np.asarray(values, dtype=float)
+    idx = int(np.clip(np.searchsorted(arr, coord), 0, len(arr) - 1))
+    if idx > 0 and abs(arr[idx - 1] - coord) < abs(arr[idx] - coord):
+        idx -= 1
+    return idx
+
+
 def _edges_from_centers(centers: List[float]) -> np.ndarray:
-    """Compute bin edges from bin centers for pcolormesh."""
     c = np.asarray(centers, dtype=float)
     if c.size == 0:
         return np.array([0, 1])
@@ -299,7 +235,6 @@ def _select_ticks(values: List[float], max_ticks: int) -> List[int]:
 
 
 def _auto_font_size(nx: int, ny: int) -> int:
-    """Choose a tick font size based on grid resolution. Smaller for interactive use."""
     grid = max(1, nx, ny)
     if grid <= 4:
         return 6
@@ -315,8 +250,164 @@ def _auto_font_size(nx: int, ny: int) -> int:
     return int(round(size))
 
 
-class NDHeatmapExplorer:
-    """Interactive N-dimensional heatmap explorer with separate controls window."""
+def _metric_scale_flags(metric: str) -> Tuple[bool, bool]:
+    mlow = (metric or "").lower()
+    scale_1e18 = metric in {
+        "virtual_price",
+        "xcp_profit",
+        "price_scale",
+        "D",
+        "totalSupply",
+    }
+    scale_percent = (
+        mlow in {"vpminusone", "apy"}
+        or "apy" in mlow
+        or "tw_real_slippage" in mlow
+        or "geom_mean" in mlow
+        or "rel_price_diff" in mlow
+        or "tw_avg_pool_fee" in mlow
+    )
+    return scale_1e18, scale_percent
+
+
+def _metric_scale_info(metric: str) -> Tuple[float, str]:
+    scale_1e18, scale_percent = _metric_scale_flags(metric)
+    factor = 1.0
+    if scale_1e18:
+        factor /= 1e18
+    if scale_percent:
+        factor *= 100.0
+    suffix = " (%)" if scale_percent else ""
+    return factor, suffix
+
+
+def _extract_coord(run: Dict[str, Any], dim_names: List[str]) -> List[float] | None:
+    pool = run.get("pool", {})
+    coords: List[float] = []
+    for i, name in enumerate(dim_names):
+        raw = run.get(f"x{i + 1}_val")
+        if raw is None:
+            raw = pool.get(name)
+        v = _to_float(raw) if raw is not None else float("nan")
+        if not math.isfinite(v):
+            return None
+        coords.append(v)
+    return coords
+
+
+def _extract_nd_arrays(
+    data: Dict[str, Any],
+    metrics: List[str],
+) -> Tuple[
+    List[str],
+    Dict[str, List[float]],
+    Dict[str, np.ndarray],
+    Dict[str, float],
+    Dict[Tuple[int, ...], Dict[str, Any]],
+]:
+    runs = data.get("runs", [])
+    if not runs:
+        raise SystemExit("No runs[] found in arb_run JSON")
+
+    dims = _parse_grid_dims(data)
+    if dims:
+        dim_names = [name for _, name in dims]
+    else:
+        pool = runs[0].get("pool", {})
+        if not pool:
+            raise SystemExit("No grid dimensions found in metadata or pool")
+        dim_names = sorted(pool.keys())
+
+    dim_values: Dict[str, set] = {name: set() for name in dim_names}
+    for r in runs:
+        coords = _extract_coord(r, dim_names)
+        if coords is None:
+            continue
+        for name, val in zip(dim_names, coords):
+            dim_values[name].add(val)
+
+    dim_values_sorted: Dict[str, List[float]] = {
+        name: sorted(vals) for name, vals in dim_values.items()
+    }
+    dim_index: Dict[str, Dict[float, int]] = {
+        name: {v: i for i, v in enumerate(vals)}
+        for name, vals in dim_values_sorted.items()
+    }
+
+    shape = tuple(len(dim_values_sorted[name]) for name in dim_names)
+    metric_arrays: Dict[str, np.ndarray] = {
+        m: np.full(shape, np.nan, dtype=float) for m in metrics
+    }
+    metric_scale: Dict[str, float] = {m: _metric_scale_info(m)[0] for m in metrics}
+    pool_configs: Dict[Tuple[int, ...], Dict[str, Any]] = {}
+
+    metric_items = [(m, metric_arrays[m], metric_scale[m]) for m in metrics]
+
+    for r in runs:
+        coords = _extract_coord(r, dim_names)
+        if coords is None:
+            continue
+        idxs = []
+        valid = True
+        for name, val in zip(dim_names, coords):
+            idx = dim_index[name].get(val)
+            if idx is None:
+                valid = False
+                break
+            idxs.append(idx)
+        if not valid:
+            continue
+        idx_tuple = tuple(idxs)
+
+        fs = r.get("final_state", {})
+        res = r.get("result", {})
+        metrics_dict = {**res, **fs}
+        for metric, arr, factor in metric_items:
+            val = metrics_dict.get(metric)
+            if val is None:
+                continue
+            v = _to_float(val)
+            if math.isfinite(v):
+                arr[idx_tuple] = v * factor
+
+        params = r.get("params", {})
+        pool = params.get("pool") or r.get("pool")
+        costs = params.get("costs")
+        if pool:
+            if costs is not None:
+                pool_configs[idx_tuple] = {"pool": pool, "costs": costs}
+            else:
+                pool_configs[idx_tuple] = {"pool": pool}
+
+    return dim_names, dim_values_sorted, metric_arrays, metric_scale, pool_configs
+
+
+def _compute_global_clims(
+    metric_arrays: Dict[str, np.ndarray],
+) -> Dict[str, Tuple[float, float]]:
+    clims: Dict[str, Tuple[float, float]] = {}
+    for metric, arr in metric_arrays.items():
+        if arr.size == 0:
+            clims[metric] = (0.0, 1.0)
+            continue
+        try:
+            zmin = float(np.nanmin(arr))
+            zmax = float(np.nanmax(arr))
+        except ValueError:
+            clims[metric] = (0.0, 1.0)
+            continue
+        if not math.isfinite(zmin) or not math.isfinite(zmax):
+            clims[metric] = (0.0, 1.0)
+            continue
+        if zmin == zmax:
+            eps = 1e-12 if zmax == 0 else abs(zmax) * 1e-12
+            zmin, zmax = zmin - eps, zmax + eps
+        clims[metric] = (zmin, zmax)
+    return clims
+
+
+class NDHeatmapExplorerOpt:
+    """Optimized N-dimensional heatmap explorer with fast slicing."""
 
     def __init__(
         self,
@@ -332,26 +423,44 @@ class NDHeatmapExplorer:
         self.cmap = cmap
         self.max_ticks = max_ticks
 
-        # Extract grid data
-        self.dim_names, self.dim_values, self.points = _extract_nd_grid(data)
+        (
+            self.dim_names,
+            self.dim_values,
+            self.metric_arrays,
+            self.metric_scale,
+            self.pool_configs,
+        ) = _extract_nd_arrays(data, metrics)
         self.n_dims = len(self.dim_names)
 
         if self.n_dims < 2:
             raise SystemExit("Need at least 2 dimensions for a heatmap")
 
-        # Current X/Y axes (default to first two dimensions)
         self.x_name = self.dim_names[0]
         self.y_name = self.dim_names[1]
 
-        # Slider values for non-X/Y dimensions
-        self.slider_values: Dict[str, float] = {}
-        self._init_slider_values()
+        self.slider_indices: Dict[str, int] = {}
+        self._init_slider_indices()
 
-        # Compute global min/max per metric (across ALL slices)
-        self.global_clim: Dict[str, Tuple[float, float]] = {}
-        self._compute_global_clims()
+        self.global_clim = _compute_global_clims(self.metric_arrays)
 
-        # Figure handles
+        meta = data.get("metadata", {}) if isinstance(data, dict) else {}
+        self.base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
+        if not isinstance(self.base_pool, dict):
+            self.base_pool = {}
+        self.candles_file = None
+        if isinstance(meta, dict):
+            self.candles_file = (
+                meta.get("candles_file")
+                or meta.get("datafile")
+                or meta.get("remote_candles")
+            )
+
+        self.repo_root = Path(__file__).resolve().parents[2]
+        self.python_dir = HERE.parent
+        self.inspect_pool_path = RUN_DIR / INSPECT_POOL_FILENAME
+        self.inspect_output_path = RUN_DIR / INSPECT_OUTPUT_FILENAME
+        self._inspect_running = False
+
         self.fig_main = None
         self.fig_controls = None
         self.axes = []
@@ -359,125 +468,62 @@ class NDHeatmapExplorer:
         self.colorbars = []
         self.sliders = []
         self.slider_axes = []
-        self.slider_labels = []  # Track slider label text objects
-        self.slider_value_texts = []  # Track slider value text objects
+        self.slider_labels = []
+        self.slider_value_texts = []
         self.x_radio = None
         self.y_radio = None
-        self._updating_radios = False  # Prevent recursive radio updates
+        self._updating_radios = False
 
         self._setup_figures()
 
-    def _init_slider_values(self):
-        """Initialize slider values for all dimensions except current X/Y."""
-        self.slider_values = {}
+    def _init_slider_indices(self):
+        self.slider_indices = {}
         for name in self.dim_names:
             if name not in (self.x_name, self.y_name):
-                self.slider_values[name] = self.dim_values[name][0]
-
-    def _compute_global_clims(self):
-        """Compute global min/max for each metric across ALL data points."""
-        self.global_clim = {}
-        for metric in self.metrics:
-            scale_1e18, scale_percent = _metric_scale_flags(metric)
-            all_z = []
-            for coord, metrics_dict in self.points.items():
-                z = _to_float(metrics_dict.get(metric, float("nan")))
-                if scale_1e18 and math.isfinite(z):
-                    z = z / 1e18
-                if scale_percent and math.isfinite(z):
-                    z = z * 100.0
-                if math.isfinite(z):
-                    all_z.append(z)
-            if all_z:
-                zmin, zmax = min(all_z), max(all_z)
-                if zmin == zmax:
-                    eps = 1e-12 if zmax == 0 else abs(zmax) * 1e-12
-                    zmin, zmax = zmin - eps, zmax + eps
-                self.global_clim[metric] = (zmin, zmax)
-            else:
-                self.global_clim[metric] = (0.0, 1.0)
+                self.slider_indices[name] = 0
 
     def _get_slider_dims(self) -> List[Tuple[int, str]]:
-        """Get dimensions that need sliders (all except X and Y)."""
         return [
             (i, name)
             for i, name in enumerate(self.dim_names)
             if name not in (self.x_name, self.y_name)
         ]
 
-    def _build_slice(self, metric: str) -> np.ndarray:
-        """Build 2D Z array for current X/Y and slider positions."""
-        xs = self.dim_values[self.x_name]
-        ys = self.dim_values[self.y_name]
+    def _slice_metric(self, metric: str) -> np.ndarray:
+        arr = self.metric_arrays[metric]
         x_idx = self.dim_names.index(self.x_name)
         y_idx = self.dim_names.index(self.y_name)
-        slider_dims = self._get_slider_dims()
 
-        Z = np.full((len(ys), len(xs)), float("nan"))
+        slicer: List[Any] = []
+        for name in self.dim_names:
+            if name == self.x_name or name == self.y_name:
+                slicer.append(slice(None))
+            else:
+                slicer.append(self.slider_indices.get(name, 0))
 
-        scale_1e18, scale_percent = _metric_scale_flags(metric)
+        slice_arr = arr[tuple(slicer)]
 
-        for coord, metrics_dict in self.points.items():
-            # Check if this point matches slider values
-            match = True
-            for dim_idx, dim_name in slider_dims:
-                expected = self.slider_values.get(dim_name)
-                if expected is None:
-                    continue
-                actual = coord[dim_idx]
-                if actual != expected:
-                    match = False
-                    break
-            if not match:
-                continue
+        if x_idx < y_idx:
+            slice_arr = slice_arr.T
 
-            # Get z value
-            z = _to_float(metrics_dict.get(metric, float("nan")))
-            if scale_1e18 and math.isfinite(z):
-                z = z / 1e18
-            if scale_percent and math.isfinite(z):
-                z = z * 100.0
-
-            if not math.isfinite(z):
-                continue
-
-            # Get x and y indices
-            x_val = coord[x_idx]
-            y_val = coord[y_idx]
-            try:
-                xi = xs.index(x_val)
-                yi = ys.index(y_val)
-                Z[yi, xi] = z
-            except ValueError:
-                pass
-
-        return Z
+        return slice_arr
 
     def _setup_figures(self):
-        """Create main heatmap figure and controls figure."""
-        # Main figure with heatmap grid
         n = len(self.metrics)
         cols = min(self.ncol, n)
         rows = int(np.ceil(n / cols)) if n > 0 else 1
 
-        # Target 27" screen full size: ~24x13 inches usable at 100 DPI
-        # Leave room for window chrome and controls window
         max_fig_w = 22.0
         max_fig_h = 12.0
 
-        # Calculate ideal size based on grid
         xs = self.dim_values[self.x_name]
         ys = self.dim_values[self.y_name]
 
-        # Each subplot wants roughly square aspect based on data
-        cell_aspect = len(ys) / max(1, len(xs))  # height/width ratio of data
-
-        # Start with max width, compute height
+        cell_aspect = len(ys) / max(1, len(xs))
         cell_w = max_fig_w / cols
         cell_h = cell_w * cell_aspect
         fig_h = cell_h * rows
 
-        # If too tall, constrain by height instead
         if fig_h > max_fig_h:
             fig_h = max_fig_h
             cell_h = fig_h / rows
@@ -486,7 +532,6 @@ class NDHeatmapExplorer:
         else:
             fig_w = max_fig_w
 
-        # Ensure minimum size
         fig_w = max(10.0, min(max_fig_w, fig_w))
         fig_h = max(6.0, min(max_fig_h, fig_h))
 
@@ -495,14 +540,12 @@ class NDHeatmapExplorer:
         )
         axes_grid = np.atleast_1d(axes_grid).reshape(rows, cols)
 
-        # Font sizes
         base_font = _auto_font_size(len(xs), len(ys))
         tick_font = base_font
         label_font = max(8, base_font + 2)
         title_font = max(label_font, base_font + 4)
         colorbar_font = base_font
 
-        # Precompute tick indices and labels
         xticks = _select_ticks(xs, self.max_ticks)
         yticks = _select_ticks(ys, self.max_ticks)
         xlab_full, xlabel = _format_axis_labels(self.x_name, xs)
@@ -525,20 +568,17 @@ class NDHeatmapExplorer:
                     ax.axis("off")
                     continue
 
-                m = self.metrics[idx]
-                Z = self._build_slice(m)
+                metric = self.metrics[idx]
+                Z = self._slice_metric(metric)
 
-                # Plot
                 mesh = ax.pcolormesh(Xedges, Yedges, Z, cmap=self.cmap, shading="auto")
 
-                # Aspect ratio
                 ny, nx = Z.shape
                 try:
                     ax.set_box_aspect(ny / nx)
                 except Exception:
                     ax.set_aspect("equal", adjustable="box")
 
-                # Ticks
                 ax.set_xticks([xs[i] for i in xticks])
                 ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
                 if c == 0:
@@ -550,34 +590,23 @@ class NDHeatmapExplorer:
                     ax.set_yticklabels([])
                 ax.set_xlabel(xlabel, fontsize=label_font)
 
-                # Title
-                _, scale_percent = _metric_scale_flags(m)
-                _, scale_1e18 = _metric_scale_flags(m)
-                title_scale = " (%)" if scale_percent else ""
-                ax.set_title(f"{m}{title_scale}", fontsize=title_font)
+                _, title_suffix = _metric_scale_info(metric)
+                ax.set_title(f"{metric}{title_suffix}", fontsize=title_font)
 
-                # Color limits - use global min/max
-                if m in self.global_clim:
-                    zmin, zmax = self.global_clim[m]
+                if metric in self.global_clim:
+                    zmin, zmax = self.global_clim[metric]
                     mesh.set_clim(zmin, zmax)
 
-                # Colorbar
                 cb = self.fig_main.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
-                cb.set_label(
-                    m + (" (%)" if scale_percent else ""), fontsize=colorbar_font
-                )
+                cb.set_label(metric + title_suffix, fontsize=colorbar_font)
                 cb.ax.tick_params(labelsize=tick_font)
                 cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
 
-                # Custom hover format to display x, y, and z values
-                # Capture mesh to get current Z data dynamically (updates with sliders)
                 def make_format_coord(xs_local, ys_local, mesh_obj):
-                    """Create a format_coord function with captured data."""
                     xs_arr = np.array(xs_local)
                     ys_arr = np.array(ys_local)
 
                     def format_coord(x, y):
-                        # Find nearest grid cell
                         if len(xs_arr) == 0 or len(ys_arr) == 0:
                             return ""
                         j = int(
@@ -590,7 +619,6 @@ class NDHeatmapExplorer:
                                 np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1
                             )
                         )
-                        # Snap to nearest
                         if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
                             x - xs_arr[j]
                         ):
@@ -599,7 +627,6 @@ class NDHeatmapExplorer:
                             y - ys_arr[i]
                         ):
                             i += 1
-                        # Get current Z from mesh (may have been updated by sliders)
                         Z_arr = mesh_obj.get_array()
                         if Z_arr is not None:
                             Z_2d = Z_arr.reshape(len(ys_arr), len(xs_arr))
@@ -621,35 +648,29 @@ class NDHeatmapExplorer:
                 self.colorbars.append(cb)
                 idx += 1
 
-        # Controls figure
         self._setup_controls()
+        self.fig_main.canvas.mpl_connect("button_press_event", self._on_click)
 
     def _setup_controls(self):
-        """Create separate controls window with dropdowns and sliders."""
         slider_dims = self._get_slider_dims()
         n_sliders = len(slider_dims)
         n_dims = len(self.dim_names)
 
-        # Calculate heights based on content using layout constants
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
-        # Total height calculation - scale based on number of items
         total_content = (
-            0.03  # title area
-            + 2
-            * (RADIO_LABEL_GAP + radio_box_height + RADIO_GROUP_GAP)  # two radio groups
+            0.03
+            + 2 * (RADIO_LABEL_GAP + radio_box_height + RADIO_GROUP_GAP)
             + n_sliders * SLIDER_HEIGHT
-            + SLIDER_TOP_GAP  # bottom margin
+            + SLIDER_TOP_GAP
         )
-        # Adaptive height multiplier based on content
         height_mult = CTRL_HEIGHT_MULT + max(0, n_dims - 5) * 0.3
-        fig_height = max(CTRL_MIN_HEIGHT, total_content * height_mult)
+        fig_height = max(CTRL_MIN_HEIGHT, total_content * height_mult + CTRL_HEIGHT_PAD)
 
         self.fig_controls = plt.figure(
             figsize=(CTRL_FIG_WIDTH, fig_height), num="Controls"
         )
 
-        # Title
         self.fig_controls.text(
             0.5,
             CTRL_TITLE_Y,
@@ -660,7 +681,6 @@ class NDHeatmapExplorer:
             fontweight="bold",
         )
 
-        # X axis radio buttons
         x_label_y = RADIO_X_LABEL_Y
         x_box_top = x_label_y - RADIO_LABEL_GAP
         x_box_height = radio_box_height
@@ -679,7 +699,6 @@ class NDHeatmapExplorer:
             label.set_fontsize(RADIO_FONTSIZE)
         self.x_radio.on_clicked(self._on_x_changed)
 
-        # Y axis radio buttons
         y_label_y = x_box_top - x_box_height - RADIO_GROUP_GAP
         y_box_top = y_label_y - RADIO_LABEL_GAP
         y_box_height = radio_box_height
@@ -698,19 +717,17 @@ class NDHeatmapExplorer:
             label.set_fontsize(RADIO_FONTSIZE)
         self.y_radio.on_clicked(self._on_y_changed)
 
-        # Sliders for remaining dimensions
         self.sliders = []
         self.slider_axes = []
         self.slider_labels = []
-        self.slider_value_texts = []  # Separate text elements for values
+        self.slider_value_texts = []
 
         slider_start_y = y_box_top - y_box_height - SLIDER_TOP_GAP
 
-        for i, (dim_idx, dim_name) in enumerate(slider_dims):
+        for i, (_, dim_name) in enumerate(slider_dims):
             vals = self.dim_values[dim_name]
             slider_y = slider_start_y - i * SLIDER_HEIGHT
 
-            # Label
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
@@ -721,7 +738,6 @@ class NDHeatmapExplorer:
             )
             self.slider_labels.append(lbl)
 
-            # Slider - shorter to leave room for value text
             slider_ax = self.fig_controls.add_axes(
                 [
                     SLIDER_BOX_LEFT,
@@ -737,31 +753,27 @@ class NDHeatmapExplorer:
                 "",
                 0,
                 len(vals) - 1,
-                valinit=0,
+                valinit=self.slider_indices.get(dim_name, 0),
                 valstep=1,
             )
-            # Hide built-in value text
             slider.valtext.set_visible(False)
 
-            # Separate value text element
+            current_idx = int(slider.val)
             val_text = self.fig_controls.text(
                 SLIDER_VALUE_X,
                 slider_y,
-                _format_slider_value(dim_name, vals[0]),
+                _format_slider_value(dim_name, vals[current_idx]),
                 ha="left",
                 va="center",
                 fontsize=SLIDER_FONTSIZE,
             )
             self.slider_value_texts.append(val_text)
 
-            # Update callback
             def make_update(name, vals_list, val_txt):
                 def update(idx):
                     idx = int(idx)
-                    val = vals_list[idx]
-                    self.slider_values[name] = val
-                    formatted = _format_slider_value(name, val)
-                    val_txt.set_text(formatted)
+                    self.slider_indices[name] = idx
+                    val_txt.set_text(_format_slider_value(name, vals_list[idx]))
                     self._refresh_heatmaps()
 
                 return update
@@ -772,14 +784,12 @@ class NDHeatmapExplorer:
         self.fig_controls.canvas.draw_idle()
 
     def _on_x_changed(self, label: str):
-        """Handle X axis selection change."""
         if self._updating_radios:
             return
         if label == self.x_name:
-            return  # No change
+            return
 
         if label == self.y_name:
-            # Swap X and Y
             self._updating_radios = True
             old_x = self.x_name
             self.x_name = label
@@ -794,14 +804,12 @@ class NDHeatmapExplorer:
         self._rebuild_heatmaps()
 
     def _on_y_changed(self, label: str):
-        """Handle Y axis selection change."""
         if self._updating_radios:
             return
         if label == self.y_name:
-            return  # No change
+            return
 
         if label == self.x_name:
-            # Swap X and Y
             self._updating_radios = True
             old_y = self.y_name
             self.y_name = label
@@ -816,8 +824,6 @@ class NDHeatmapExplorer:
         self._rebuild_heatmaps()
 
     def _rebuild_sliders(self):
-        """Rebuild sliders after X/Y change."""
-        # Clear old sliders, labels, and value texts
         for slider_ax in self.slider_axes:
             slider_ax.remove()
         for lbl in self.slider_labels:
@@ -829,21 +835,17 @@ class NDHeatmapExplorer:
         self.slider_labels = []
         self.slider_value_texts = []
 
-        # Update slider values dict
-        new_slider_values = {}
+        new_slider_indices = {}
         for name in self.dim_names:
             if name not in (self.x_name, self.y_name):
-                if name in self.slider_values:
-                    new_slider_values[name] = self.slider_values[name]
-                else:
-                    new_slider_values[name] = self.dim_values[name][0]
-        self.slider_values = new_slider_values
+                new_slider_indices[name] = min(
+                    self.slider_indices.get(name, 0),
+                    len(self.dim_values[name]) - 1,
+                )
+        self.slider_indices = new_slider_indices
 
-        # Recreate sliders
         slider_dims = self._get_slider_dims()
         n_dims = len(self.dim_names)
-
-        # Calculate positions matching _setup_controls using layout constants
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
         x_label_y = RADIO_X_LABEL_Y
@@ -852,19 +854,11 @@ class NDHeatmapExplorer:
         y_box_top = y_label_y - RADIO_LABEL_GAP
         slider_start_y = y_box_top - radio_box_height - SLIDER_TOP_GAP
 
-        for i, (dim_idx, dim_name) in enumerate(slider_dims):
+        for i, (_, dim_name) in enumerate(slider_dims):
             vals = self.dim_values[dim_name]
             slider_y = slider_start_y - i * SLIDER_HEIGHT
+            current_idx = self.slider_indices.get(dim_name, 0)
 
-            # Find current index
-            current_val = self.slider_values.get(dim_name, vals[0])
-            try:
-                current_idx = vals.index(current_val)
-            except ValueError:
-                current_idx = 0
-                self.slider_values[dim_name] = vals[0]
-
-            # Label
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
@@ -875,7 +869,6 @@ class NDHeatmapExplorer:
             )
             self.slider_labels.append(lbl)
 
-            # Slider - shorter to leave room for value text
             slider_ax = self.fig_controls.add_axes(
                 [
                     SLIDER_BOX_LEFT,
@@ -894,10 +887,8 @@ class NDHeatmapExplorer:
                 valinit=current_idx,
                 valstep=1,
             )
-            # Hide built-in value text
             slider.valtext.set_visible(False)
 
-            # Separate value text element
             val_text = self.fig_controls.text(
                 SLIDER_VALUE_X,
                 slider_y,
@@ -911,10 +902,8 @@ class NDHeatmapExplorer:
             def make_update(name, vals_list, val_txt):
                 def update(idx):
                     idx = int(idx)
-                    val = vals_list[idx]
-                    self.slider_values[name] = val
-                    formatted = _format_slider_value(name, val)
-                    val_txt.set_text(formatted)
+                    self.slider_indices[name] = idx
+                    val_txt.set_text(_format_slider_value(name, vals_list[idx]))
                     self._refresh_heatmaps()
 
                 return update
@@ -925,8 +914,6 @@ class NDHeatmapExplorer:
         self.fig_controls.canvas.draw_idle()
 
     def _rebuild_heatmaps(self):
-        """Completely rebuild heatmaps after X/Y axis change."""
-        # Remove old colorbars BEFORE clearing axes (they reference the axes)
         for cb in self.colorbars:
             try:
                 cb.remove()
@@ -935,7 +922,6 @@ class NDHeatmapExplorer:
         self.colorbars = []
         self.meshes = []
 
-        # Clear and rebuild main figure
         for ax in self.axes:
             ax.clear()
 
@@ -966,20 +952,17 @@ class NDHeatmapExplorer:
                 ax.axis("off")
                 continue
 
-            m = self.metrics[idx]
-            Z = self._build_slice(m)
+            metric = self.metrics[idx]
+            Z = self._slice_metric(metric)
 
-            # Plot
             mesh = ax.pcolormesh(Xedges, Yedges, Z, cmap=self.cmap, shading="auto")
 
-            # Aspect ratio
             ny, nx = Z.shape
             try:
                 ax.set_box_aspect(ny / nx)
             except Exception:
                 ax.set_aspect("equal", adjustable="box")
 
-            # Ticks
             ax.set_xticks([xs[i] for i in xticks])
             ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
             c = idx % cols
@@ -992,64 +975,17 @@ class NDHeatmapExplorer:
                 ax.set_yticklabels([])
             ax.set_xlabel(xlabel, fontsize=label_font)
 
-            # Title
-            _, scale_percent = _metric_scale_flags(m)
-            title_scale = " (%)" if scale_percent else ""
-            ax.set_title(f"{m}{title_scale}", fontsize=title_font)
+            _, title_suffix = _metric_scale_info(metric)
+            ax.set_title(f"{metric}{title_suffix}", fontsize=title_font)
 
-            # Color limits - use global min/max
-            if m in self.global_clim:
-                zmin, zmax = self.global_clim[m]
+            if metric in self.global_clim:
+                zmin, zmax = self.global_clim[metric]
                 mesh.set_clim(zmin, zmax)
 
-            # Colorbar
             cb = self.fig_main.colorbar(mesh, ax=ax, fraction=0.046, pad=0.04)
-            cb.set_label(m + (" (%)" if scale_percent else ""), fontsize=colorbar_font)
+            cb.set_label(metric + title_suffix, fontsize=colorbar_font)
             cb.ax.tick_params(labelsize=tick_font)
             cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
-
-            # Custom hover format to display x, y, and z values
-            # Capture mesh to get current Z data dynamically (updates with sliders)
-            def make_format_coord(xs_local, ys_local, mesh_obj):
-                """Create a format_coord function with captured data."""
-                xs_arr = np.array(xs_local)
-                ys_arr = np.array(ys_local)
-
-                def format_coord(x, y):
-                    # Find nearest grid cell
-                    if len(xs_arr) == 0 or len(ys_arr) == 0:
-                        return ""
-                    j = int(
-                        np.clip(np.searchsorted(xs_arr, x) - 0.5, 0, len(xs_arr) - 1)
-                    )
-                    i = int(
-                        np.clip(np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1)
-                    )
-                    # Snap to nearest
-                    if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
-                        x - xs_arr[j]
-                    ):
-                        j += 1
-                    if i < len(ys_arr) - 1 and abs(y - ys_arr[i + 1]) < abs(
-                        y - ys_arr[i]
-                    ):
-                        i += 1
-                    # Get current Z from mesh (may have been updated by sliders)
-                    Z_arr = mesh_obj.get_array()
-                    if Z_arr is not None:
-                        Z_2d = Z_arr.reshape(len(ys_arr), len(xs_arr))
-                        z_val = (
-                            Z_2d[i, j]
-                            if 0 <= i < Z_2d.shape[0] and 0 <= j < Z_2d.shape[1]
-                            else float("nan")
-                        )
-                    else:
-                        z_val = float("nan")
-                    return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
-
-                return format_coord
-
-            ax.format_coord = make_format_coord(xs, ys, mesh)
 
             self.meshes.append(mesh)
             self.colorbars.append(cb)
@@ -1057,21 +993,175 @@ class NDHeatmapExplorer:
         self.fig_main.canvas.draw_idle()
 
     def _refresh_heatmaps(self):
-        """Update heatmap data without rebuilding axes (for slider changes)."""
-        for idx, (ax, mesh) in enumerate(zip(self.axes, self.meshes)):
+        for idx, mesh in enumerate(self.meshes):
             if idx >= len(self.metrics):
                 continue
-
-            m = self.metrics[idx]
-            Z = self._build_slice(m)
-
+            metric = self.metrics[idx]
+            Z = self._slice_metric(metric)
             mesh.set_array(Z.ravel())
-            # Color limits stay fixed (global clim already set)
-
         self.fig_main.canvas.draw_idle()
 
+    def _build_inspect_pool_config(
+        self, coords: Dict[str, float], idx_tuple: Tuple[int, ...]
+    ) -> Dict[str, Any] | None:
+        config = self.pool_configs.get(idx_tuple)
+        if config and "pool" in config:
+            pool = _stringify_pool(config.get("pool", {}))
+            costs = config.get("costs") or dict(DEFAULT_COSTS)
+            return {"tag": "inspect", "pool": pool, "costs": costs}
+
+        if not self.base_pool:
+            return None
+
+        pool = dict(self.base_pool)
+        for name, val in coords.items():
+            pool[name] = val
+        return {
+            "tag": "inspect",
+            "pool": _stringify_pool(pool),
+            "costs": dict(DEFAULT_COSTS),
+        }
+
+    def _resolve_candles_path(self) -> Path | None:
+        if not self.candles_file:
+            return None
+        candles_path = Path(str(self.candles_file))
+        if candles_path.is_absolute():
+            return candles_path
+
+        candidate = self.repo_root / candles_path
+        if candidate.exists():
+            return candidate
+
+        candidate = HERE / candles_path
+        if candidate.exists():
+            return candidate
+
+        name = candles_path.name
+        trade_root = HERE / "trade_data"
+        if trade_root.exists():
+            matches = list(trade_root.rglob(name))
+            if matches:
+                return matches[0]
+
+        return candidate
+
+    def _write_inspect_pool_config(self, pool_config: Dict[str, Any]) -> Path:
+        meta: Dict[str, Any] = {
+            "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        candles_path = self._resolve_candles_path()
+        if candles_path:
+            meta["datafile"] = str(candles_path)
+        if self.base_pool:
+            meta["base_pool"] = self.base_pool
+        payload = {"meta": meta, "pools": [pool_config]}
+        self.inspect_pool_path.parent.mkdir(parents=True, exist_ok=True)
+        self.inspect_pool_path.write_text(json.dumps(payload, indent=2))
+        return self.inspect_pool_path
+
+    def _run_inspect_simulation(self, pool_config: Dict[str, Any]):
+        if self._inspect_running:
+            print("Inspect run already in progress; ignoring click.")
+            return
+
+        candles_path = self._resolve_candles_path()
+        if not candles_path or not candles_path.exists():
+            missing = self.candles_file or "(missing)"
+            print(f"Candles file not found for inspect: {missing}")
+            return
+
+        self._inspect_running = True
+        try:
+            inspect_path = self._write_inspect_pool_config(pool_config)
+            out_path = self.inspect_output_path
+
+            cmd = [
+                "uv",
+                "run",
+                "arb_sim/arb_sim.py",
+                "--real",
+                INSPECT_REAL,
+                "--dustswapfreq",
+                str(INSPECT_DUSTSWAPFREQ),
+                "--apy-period-days",
+                str(INSPECT_APY_PERIOD_DAYS),
+                "--apy-period-cap",
+                str(INSPECT_APY_PERIOD_CAP),
+                "-n",
+                str(INSPECT_THREADS),
+                "--detailed-log",
+                "--detailed-interval",
+                str(INSPECT_DETAILED_INTERVAL),
+                "--out",
+                str(out_path),
+                "--pool-config",
+                str(inspect_path),
+                "--skip-build",
+                str(candles_path),
+            ]
+            print("\nRunning inspect simulation...")
+            subprocess.run(cmd, cwd=self.python_dir, check=True)
+
+            detailed_path = out_path.parent / "detailed-output.json"
+            plot_cmd = [
+                "uv",
+                "run",
+                "arb_sim/plot_price_scale.py",
+                "--no-save",
+                str(detailed_path),
+            ]
+            subprocess.Popen(plot_cmd, cwd=self.python_dir, start_new_session=True)
+        except subprocess.CalledProcessError as exc:
+            print(f"Inspect run failed: {exc}")
+        finally:
+            self._inspect_running = False
+
+    def _on_click(self, event):
+        is_shift_click = event.button == 1 and event.key == "shift"
+        is_right_click = event.button == 3
+        if not (is_shift_click or is_right_click):
+            return
+        if event.inaxes not in self.axes:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        xs = self.dim_values[self.x_name]
+        ys = self.dim_values[self.y_name]
+        x_idx = _nearest_index(xs, event.xdata)
+        y_idx = _nearest_index(ys, event.ydata)
+
+        indices: List[int] = []
+        coords: Dict[str, float] = {}
+        for name in self.dim_names:
+            if name == self.x_name:
+                idx = x_idx
+                val = xs[x_idx]
+            elif name == self.y_name:
+                idx = y_idx
+                val = ys[y_idx]
+            else:
+                idx = self.slider_indices.get(name, 0)
+                val = self.dim_values[name][idx]
+            indices.append(idx)
+            coords[name] = val
+
+        idx_tuple = tuple(indices)
+        pool_config = self._build_inspect_pool_config(coords, idx_tuple)
+
+        print("\nSelected point:")
+        for name in self.dim_names:
+            print(f"  {name}: {coords[name]}")
+
+        if pool_config:
+            print("Pool config:")
+            print(json.dumps(pool_config, indent=2))
+            self._run_inspect_simulation(pool_config)
+        else:
+            print("No pool config found for this point.")
+
     def show(self):
-        """Display the interactive explorer."""
         print(f"\nGrid dimensions: {self.dim_names}")
         for name in self.dim_names:
             vals = self.dim_values[name]
@@ -1081,14 +1171,15 @@ class NDHeatmapExplorer:
         slider_dims = self._get_slider_dims()
         if slider_dims:
             print(f"Sliders: {[name for _, name in slider_dims]}")
-        print("\nClose both windows to exit.")
+        print("\nShift+click or right-click to run inspect sim.")
+        print("Close both windows to exit.")
         plt.show()
 
 
 def main() -> int:
     import argparse
 
-    ap = argparse.ArgumentParser(description="Interactive N-dim heatmap explorer")
+    ap = argparse.ArgumentParser(description="Optimized N-dim heatmap explorer")
     ap.add_argument("--arb", type=str, default=None, help="Path to arb_run_*.json")
     ap.add_argument(
         "--metrics",
@@ -1096,30 +1187,21 @@ def main() -> int:
         default=None,
         help=f"Comma-separated metrics (default: {','.join(DEFAULT_METRICS)})",
     )
-    ap.add_argument(
-        "--cmap", type=str, default="turbo", help="Colormap (default: turbo)"
-    )
-    ap.add_argument(
-        "--max-ticks", type=int, default=12, help="Max ticks per axis (default: 12)"
-    )
-    ap.add_argument(
-        "--ncol", type=int, default=3, help="Number of columns (default: 3)"
-    )
+    ap.add_argument("--cmap", type=str, default="turbo")
+    ap.add_argument("--max-ticks", type=int, default=12)
+    ap.add_argument("--ncol", type=int, default=3)
     args = ap.parse_args()
 
-    # Load data
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
     print(f"Loading {arb_path}")
     data = _load(arb_path)
 
-    # Parse metrics
     if args.metrics:
         metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
     else:
         metrics = DEFAULT_METRICS
 
-    # Create and show explorer
-    explorer = NDHeatmapExplorer(
+    explorer = NDHeatmapExplorerOpt(
         data=data,
         metrics=metrics,
         ncol=args.ncol,

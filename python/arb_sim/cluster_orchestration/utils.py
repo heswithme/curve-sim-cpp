@@ -11,6 +11,7 @@ Commands:
 
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 from config import (
@@ -80,7 +81,7 @@ def get_blade_status(blade: str) -> dict:
 
 
 def show_status(blades: List[str] = None):
-    """Display cluster status."""
+    """Display cluster status (parallel queries)."""
     if blades is None:
         blades = ALL_BLADES
 
@@ -89,8 +90,17 @@ def show_status(blades: List[str] = None):
     )
     print("-" * 84)
 
+    # Query all blades in parallel
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(32, len(blades))) as executor:
+        futures = {executor.submit(get_blade_status, b): b for b in blades}
+        for future in as_completed(futures):
+            blade = futures[future]
+            results[blade] = future.result()
+
+    # Print in original order
     for blade in blades:
-        s = get_blade_status(blade)
+        s = results[blade]
         print(
             f"{blade:<12} "
             f"{'OK' if s['reachable'] else 'DOWN':<10} "
@@ -131,8 +141,17 @@ def clean(blades: List[str] = None, confirm: bool = True):
         print(f"Failed: {e}")
 
 
+def _kill_on_blade(blade: str) -> tuple:
+    """Kill harness on a single blade. Returns (blade, success, message)."""
+    try:
+        run_ssh(blade, "pkill -f arb_harness || true", timeout=10)
+        return (blade, True, "Killed")
+    except Exception as e:
+        return (blade, False, f"Error: {e}")
+
+
 def kill_jobs(blades: List[str] = None, confirm: bool = True):
-    """Kill harness processes on all blades."""
+    """Kill harness processes on all blades (parallel)."""
     if blades is None:
         blades = ALL_BLADES
 
@@ -142,12 +161,17 @@ def kill_jobs(blades: List[str] = None, confirm: bool = True):
             print("Aborted.")
             return
 
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(32, len(blades))) as executor:
+        futures = {executor.submit(_kill_on_blade, b): b for b in blades}
+        for future in as_completed(futures):
+            blade, success, msg = future.result()
+            results[blade] = (success, msg)
+
+    # Print in original order
     for blade in blades:
-        try:
-            run_ssh(blade, "pkill -f arb_harness || true", timeout=10)
-            print(f"[{blade}] Killed")
-        except Exception as e:
-            print(f"[{blade}] Error: {e}")
+        success, msg = results[blade]
+        print(f"[{blade}] {msg}")
 
 
 def main():

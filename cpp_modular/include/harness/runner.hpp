@@ -116,6 +116,7 @@ struct RunConfig {
     
     // Detailed per-candle logging
     bool detailed_log{false};
+    size_t detailed_interval{1};  // log every N-th candle (1 = all);
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
@@ -226,7 +227,7 @@ PoolResult<T> run_single_pool(
         auto loop_result = run_event_loop(
             pool, events, costs, dcfg, icfg, ucfg,
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
-            apy_cfg, cfg.save_actions, cfg.detailed_log,
+            apy_cfg, cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
             cowswap_ptr
         );
         
