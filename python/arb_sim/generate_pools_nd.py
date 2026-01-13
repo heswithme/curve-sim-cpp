@@ -35,12 +35,13 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 # }
 MANUAL_GRID = None
 MANUAL_GRID = {
-    "A": np.linspace(10 * 10_000, 200 * 10_000, 32),
-    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 32),
+    "A": np.linspace(10 * 10_000, 100 * 10_000, 64),
+    "out_fee": np.linspace(10 / 10_000 * 10**10, 50 / 10_000 * 10**10, 64),
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 5]],
-    "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
-    # "donation_apy": [0.0, 0.025, 0.05, 0.075, 0.1],
-    "donation_apy": np.linspace(0.0, 0.1, 11),
+    # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
+    "ma_time": [int(a / np.log(2)) for a in [3600]],
+    "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
+    # "donation_apy": np.linspace(0.0, 0.1, 11),
     # "fee_gamma": np.geomspace(0.001 * 10**18, 0.5 * 10**18, 8),
     "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.1]],

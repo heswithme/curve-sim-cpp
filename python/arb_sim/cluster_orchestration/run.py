@@ -79,78 +79,105 @@ def run_blade_job(
     candle_filter: Optional[float],
     stream_output: bool = False,
     line_buffered: bool = False,
+    retries: int = 3,
+    retry_delay: float = 2.0,
 ) -> BladeResult:
-    """Run harness on a single blade."""
+    """Run harness on a single blade with retry on connection failures."""
     start = time.time()
     result = BladeResult(blade=blade, success=False)
 
-    try:
-        # Ensure results directory exists
-        run_ssh(blade, f"mkdir -p {REMOTE_RESULTS}", timeout=30)
+    for attempt in range(1, retries + 1):
+        try:
+            # Ensure results directory exists
+            run_ssh(blade, f"mkdir -p {REMOTE_RESULTS}", timeout=30)
 
-        # Output file on shared NFS
-        output_file = f"{REMOTE_RESULTS}/result_{blade}.json"
-        result.remote_output = output_file
+            # Output file on shared NFS
+            output_file = f"{REMOTE_RESULTS}/result_{blade}.json"
+            result.remote_output = output_file
 
-        # Build harness command
-        harness = f"{REMOTE_BUILD}/{HARNESS_BINARY}"
-        cmd_parts = [
-            harness,
-            remote_pools,
-            remote_candles,
-            output_file,
-            f"--threads",
-            str(threads),
-            f"--pool-start",
-            str(pool_start),
-            f"--pool-end",
-            str(pool_end),
-            f"--dustswapfreq",
-            str(dustswap_freq),
-            f"--apy-period-days",
-            str(apy_period_days),
-            f"--apy-period-cap",
-            str(apy_period_cap),
-        ]
-        if candle_filter is not None:
-            cmd_parts.extend(["--candle-filter", str(candle_filter)])
+            # Build harness command
+            harness = f"{REMOTE_BUILD}/{HARNESS_BINARY}"
+            cmd_parts = [
+                harness,
+                remote_pools,
+                remote_candles,
+                output_file,
+                f"--threads",
+                str(threads),
+                f"--pool-start",
+                str(pool_start),
+                f"--pool-end",
+                str(pool_end),
+                f"--dustswapfreq",
+                str(dustswap_freq),
+                f"--apy-period-days",
+                str(apy_period_days),
+                f"--apy-period-cap",
+                str(apy_period_cap),
+            ]
+            if candle_filter is not None:
+                cmd_parts.extend(["--candle-filter", str(candle_filter)])
 
-        cmd_str = " ".join(cmd_parts)
-        print(f"[{blade}] Starting: pools {pool_start}-{pool_end}...")
+            cmd_str = " ".join(cmd_parts)
+            if attempt == 1:
+                print(f"[{blade}] Starting: pools {pool_start}-{pool_end}...")
+            else:
+                print(
+                    f"[{blade}] Retry {attempt}/{retries}: pools {pool_start}-{pool_end}..."
+                )
 
-        if stream_output:
-            stream_cmd = cmd_str
-            if line_buffered:
-                stream_cmd = f"stdbuf -oL -eL {cmd_str}"
-            proc = run_ssh_stream(blade, stream_cmd, timeout=JOB_TIMEOUT)
-        else:
-            proc = run_ssh(blade, cmd_str, timeout=JOB_TIMEOUT)
-
-        if proc.returncode != 0:
             if stream_output:
-                result.error = f"Exit {proc.returncode}"
+                stream_cmd = cmd_str
+                if line_buffered:
+                    stream_cmd = f"stdbuf -oL -eL {cmd_str}"
+                proc = run_ssh_stream(blade, stream_cmd, timeout=JOB_TIMEOUT)
             else:
-                result.error = f"Exit {proc.returncode}: {proc.stderr[:200]}"
-            print(f"[{blade}] FAILED: {result.error}")
-        else:
-            # Verify output exists
-            check = run_ssh(
-                blade, f"test -f {output_file} && wc -c < {output_file}", timeout=30
-            )
-            if check.returncode == 0:
-                result.success = True
-                size = check.stdout.strip()
-                print(f"[{blade}] SUCCESS ({size} bytes)")
-            else:
-                result.error = "Output file not created"
-                print(f"[{blade}] FAILED: no output file")
+                proc = run_ssh(blade, cmd_str, timeout=JOB_TIMEOUT)
 
-    except subprocess.TimeoutExpired:
-        result.error = f"Timeout after {JOB_TIMEOUT}s"
-        print(f"[{blade}] TIMEOUT")
-    except Exception as e:
-        result.error = str(e)
-        print(f"[{blade}] ERROR: {e}")
+            # Check for SSH connection failure (exit 255) - retry
+            if proc.returncode == 255:
+                stderr = proc.stderr if hasattr(proc, "stderr") and proc.stderr else ""
+                result.error = f"Exit 255: {stderr[:200]}"
+                print(f"[{blade}] Connection failed (attempt {attempt}/{retries})")
+                if attempt < retries:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    print(f"[{blade}] FAILED: {result.error}")
+                    break
+
+            if proc.returncode != 0:
+                if stream_output:
+                    result.error = f"Exit {proc.returncode}"
+                else:
+                    result.error = f"Exit {proc.returncode}: {proc.stderr[:200]}"
+                print(f"[{blade}] FAILED: {result.error}")
+                break  # Non-connection error, don't retry
+            else:
+                # Verify output exists
+                check = run_ssh(
+                    blade, f"test -f {output_file} && wc -c < {output_file}", timeout=30
+                )
+                if check.returncode == 0:
+                    result.success = True
+                    size = check.stdout.strip()
+                    print(f"[{blade}] SUCCESS ({size} bytes)")
+                else:
+                    result.error = "Output file not created"
+                    print(f"[{blade}] FAILED: no output file")
+                break  # Success or non-retryable failure
+
+        except subprocess.TimeoutExpired:
+            result.error = f"Timeout after {JOB_TIMEOUT}s"
+            print(f"[{blade}] TIMEOUT")
+            break  # Don't retry timeouts
+        except Exception as e:
+            result.error = str(e)
+            print(f"[{blade}] ERROR (attempt {attempt}/{retries}): {e}")
+            if attempt < retries:
+                time.sleep(retry_delay)
+                continue
+            print(f"[{blade}] FAILED: {result.error}")
 
     result.elapsed_s = time.time() - start
     return result
