@@ -34,17 +34,20 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 #     "donation_apy": [0.0, 0.05, 0.1],
 # }
 MANUAL_GRID = None
+N_DENSE = 64
 MANUAL_GRID = {
-    "A": np.linspace(10 * 10_000, 100 * 10_000, 64),
-    "out_fee": np.linspace(10 / 10_000 * 10**10, 50 / 10_000 * 10**10, 64),
-    # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 5]],
-    # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
-    "ma_time": [int(a / np.log(2)) for a in [3600]],
-    "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
+    "out_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
+    "A": np.linspace(10 * 10_000, 150 * 10_000, N_DENSE),
+    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
+
+    # # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 5]],
+    # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
+    # "ma_time": [int(a / np.log(2)) for a in [600, 3600]],
+    # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
     # "donation_apy": np.linspace(0.0, 0.1, 11),
-    # "fee_gamma": np.geomspace(0.001 * 10**18, 0.5 * 10**18, 8),
-    "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.1]],
+    # # "fee_gamma": np.geomspace(0.001 * 10**18, 0.5 * 10**18, 8),
+    # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
+    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005]],
 }
 # DIMS = [
 #     ("A", 100*10_000, 500*10_000, 1, False, True),
@@ -55,12 +58,15 @@ MANUAL_GRID = {
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
-DEFAULT_DATAFILE = str(
-    _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
-)
 # DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20251231.json"
+#     _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
 # )
+# DEFAULT_DATAFILE = str(
+#     _SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-20180101-20251231.json"
+# )
+DEFAULT_DATAFILE = str(
+    _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20251231.json"
+)
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json")
 
 DEFAULT_COWSWAP_FILE = None
@@ -80,9 +86,10 @@ BASE_POOL = {
     "gamma": int(1e-4 * 10**18),
     "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(240 / 10_000 * 1e10),
-    "fee_gamma": int(0.0023 * 1e18),
-    "allowed_extra_profit": int(1e-12 * 10**18),
+    "fee_gamma": int(0.003 * 1e18),
+    # "allowed_extra_profit": int(1e-12 * 10**18),
     "adjustment_step": int(0.005 * 10**18),
+    # "adjustment_step": int(1e-7 * 10**18), # ONLY FOR OLD POOLS
     "ma_time": 866,
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,

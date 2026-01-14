@@ -460,6 +460,7 @@ class NDHeatmapExplorerOpt:
         self.inspect_pool_path = RUN_DIR / INSPECT_POOL_FILENAME
         self.inspect_output_path = RUN_DIR / INSPECT_OUTPUT_FILENAME
         self._inspect_running = False
+        self._inspect_built_once = False  # Track if we've built binary this session
 
         self.fig_main = None
         self.fig_controls = None
@@ -1088,11 +1089,15 @@ class NDHeatmapExplorerOpt:
                 str(out_path),
                 "--pool-config",
                 str(inspect_path),
-                "--skip-build",
-                str(candles_path),
             ]
+            # First click rebuilds, subsequent clicks skip build
+            if self._inspect_built_once:
+                cmd.append("--skip-build")
+            cmd.append(str(candles_path))
+
             print("\nRunning inspect simulation...")
             subprocess.run(cmd, cwd=self.python_dir, check=True)
+            self._inspect_built_once = True
 
             detailed_path = out_path.parent / "detailed-output.json"
             plot_cmd = [
