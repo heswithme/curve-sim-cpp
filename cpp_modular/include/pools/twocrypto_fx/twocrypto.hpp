@@ -734,6 +734,53 @@ public:
         return (locked_supply == Traits::ZERO()) ? Traits::PRECISION() : (PoolTraits<T>::PRECISION() * xcp / locked_supply);
     }
 
+    // Legacy oracle mode: update oracle EMA after a trade, using pool spot price.
+    // Matches simusmod ma_recorder() behavior:
+    //   1) EMA update uses OLD last_prices (one-trade lag)
+    //   2) alpha = 0.5^(dt/ma_time), no cap on input price
+    //   3) Then last_prices is updated to the new trade price
+    // Call this AFTER exchange() with the post-trade pool spot price.
+    // The EMA block in tweak_price() will then skip (last_timestamp == block_timestamp).
+    void update_oracle_legacy(T trade_price) {
+        uint64_t last_ts = last_timestamp;
+        if (last_ts < block_timestamp) {
+            T price_oracle = cached_price_oracle;
+            T dt = T(block_timestamp - last_ts);
+            
+            // Legacy uses 0.5^(dt/ma_time), no cap on last_prices
+            if constexpr (std::is_same_v<T, uint256>) {
+                // For uint256: approximate 0.5^x using exp(-x * ln(2))
+                // ln(2) ≈ 0.693147... but we need fixed-point
+                // alpha = 0.5^(dt/ma_time) = exp(-ln(2) * dt / ma_time)
+                // Use wad_exp with -ln(2) * dt / ma_time in 1e18 fixed point
+                // ln(2) * 1e18 ≈ 693147180559945309
+                const uint256 LN2_WAD("693147180559945309");
+                auto neg = int256(
+                    -(
+                        int256(dt) *
+                        int256(LN2_WAD) /
+                        int256(ma_time)
+                    )
+                );
+                T alpha = MathOps<T>::wad_exp(neg);
+                // No cap on last_prices for legacy mode
+                price_oracle = (
+                    last_prices * (PoolTraits<T>::PRECISION() - alpha) + price_oracle * alpha
+                ) / PoolTraits<T>::PRECISION();
+            } else {
+                // Floating point: alpha = 0.5^(dt/ma_time) = pow(0.5, dt/ma_time)
+                auto alpha = std::pow(0.5, static_cast<double>(dt) / static_cast<double>(ma_time));
+                // No cap on last_prices for legacy mode
+                price_oracle = last_prices * (T(1) - T(alpha)) + price_oracle * T(alpha);
+            }
+            
+            cached_price_oracle = price_oracle;
+            last_timestamp = block_timestamp;
+        }
+        // Update last_prices to the new trade price (after EMA uses old value)
+        last_prices = trade_price;
+    }
+
     // Testing helpers
     void set_block_timestamp(uint64_t ts) {
         block_timestamp = ts;

@@ -84,6 +84,8 @@ class ArbHarnessRunner:
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
         candle_filter: float | None = None,
+        legacy_arb: bool = False,
+        legacy_oracle: bool = False,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
         cmd = [
@@ -125,6 +127,10 @@ class ArbHarnessRunner:
             cmd += ["--cowswap-fee-bps", str(cowswap_fee_bps)]
         if candle_filter is not None:
             cmd += ["--candle-filter", str(candle_filter)]
+        if legacy_arb:
+            cmd += ["--legacy-arb"]
+        if legacy_oracle:
+            cmd += ["--legacy-oracle"]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
@@ -255,6 +261,16 @@ def main() -> int:
         action="store_true",
         help="Enable cowswap organic trade replay (uses cowswap_file from pool_config)",
     )
+    parser.add_argument(
+        "--legacy-arb",
+        action="store_true",
+        help="Use legacy step_for_price arbitrageur sizing (matches simusmod)",
+    )
+    parser.add_argument(
+        "--legacy-oracle",
+        action="store_true",
+        help="Stream CEX price into oracle EMA (matches simusmod)",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -349,6 +365,8 @@ def main() -> int:
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,
         candle_filter=args.candle_filter,
+        legacy_arb=args.legacy_arb,
+        legacy_oracle=args.legacy_oracle,
     )
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])

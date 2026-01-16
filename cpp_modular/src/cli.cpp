@@ -19,7 +19,9 @@ void print_usage(const char* prog_name) {
               << "       [--pool-start N] [--pool-end N]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
               << "       [--apy-period-days D] [--apy-period-cap PCT]\n"
-              << "       [--detailed-log] [--detailed-interval N] [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
+              << "       [--detailed-log] [--detailed-interval N]\n"
+              << "       [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n"
+              << "       [--legacy-arb] [--legacy-oracle]\n";
 }
 
 CliArgs parse_cli(int argc, char* argv[]) {
@@ -75,6 +77,10 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.cowswap_path = argv[++i];
             } else if (arg == "--cowswap-fee-bps" && i + 1 < argc) {
                 args.cowswap_fee_bps = std::stod(argv[++i]);
+            } else if (arg == "--legacy-arb") {
+                args.use_legacy_arb = true;
+            } else if (arg == "--legacy-oracle") {
+                args.use_legacy_oracle = true;
             }
             // Unknown flags are silently ignored (matches original behavior)
         } catch (...) {

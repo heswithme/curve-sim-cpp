@@ -121,6 +121,10 @@ struct RunConfig {
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
     T cowswap_fee_bps{T(0)};   // fee in bps to beat historical execution
+    
+    // Legacy mode flags (match simusmod behavior)
+    bool use_legacy_arb{false};     // Use legacy step_for_price sizing
+    bool use_legacy_oracle{false};  // Stream CEX price into oracle (no EMA on spot)
 };
 
 // Run a single pool configuration and return results
@@ -228,7 +232,7 @@ PoolResult<T> run_single_pool(
             pool, events, costs, dcfg, icfg, ucfg,
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
             apy_cfg, cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
-            cowswap_ptr
+            cowswap_ptr, cfg.use_legacy_arb, cfg.use_legacy_oracle
         );
         
         // Copy metrics from event loop result

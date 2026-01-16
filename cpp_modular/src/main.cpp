@@ -181,6 +181,12 @@ int main(int argc, char* argv[]) {
         run_cfg.cowswap_path = args.cowswap_path;
         run_cfg.cowswap_fee_bps = static_cast<RealT>(args.cowswap_fee_bps);
         
+        // Wire legacy arb flag
+        run_cfg.use_legacy_arb = args.use_legacy_arb;
+        
+        // Wire legacy oracle flag
+        run_cfg.use_legacy_oracle = args.use_legacy_oracle;
+        
         auto t_exec0 = std::chrono::high_resolution_clock::now();
         
         // Run all pools in parallel

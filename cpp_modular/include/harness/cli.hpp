@@ -44,6 +44,10 @@ struct CliArgs {
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
     double cowswap_fee_bps{0.0};  // fee in bps to beat historical execution
     
+    // Legacy mode flags (match simusmod behavior)
+    bool use_legacy_arb{false};     // Use legacy step_for_price sizing
+    bool use_legacy_oracle{false};  // Update oracle only after trades using pool spot price (no idle tick)
+    
     // Validation
     bool valid{false};
     std::string error_msg;

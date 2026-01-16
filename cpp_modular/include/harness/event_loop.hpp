@@ -17,6 +17,7 @@
 #include "trading/costs.hpp"
 #include "trading/decision.hpp"
 #include "trading/arbitrageur.hpp"
+#include "trading/legacy_arbitrageur.hpp"
 #include "trading/cowswap_trader.hpp"
 #include "pools/twocrypto_fx/helpers.hpp"
 
@@ -47,7 +48,9 @@ EventLoopResult<T> run_event_loop(
     bool save_actions = false,
     bool detailed_log = false,
     size_t detailed_interval = 1,  // log every N-th event (1 = all)
-    trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
+    trading::CowswapTrader<T>* cowswap = nullptr,  // Optional cowswap trader
+    bool use_legacy_arb = false,    // Use legacy step_for_price sizing (matches simusmod)
+    bool use_legacy_oracle = false  // Stream CEX price into oracle (no EMA on spot)
 ) {
     EventLoopResult<T> result{};
     Metrics<T>& m = result.metrics;
@@ -131,6 +134,9 @@ EventLoopResult<T> run_event_loop(
         
         const T cex_price = static_cast<T>(ev.p_cex);
         
+        // Note: Legacy oracle mode updates are done AFTER arb trades, not here.
+        // See the arb trade execution block below.
+        
         // APY window tracking
         if (apy_cfg.period_s > 0) {
             // Use (xcp_profit + 1) / 2 to match old harness exactly
@@ -179,11 +185,23 @@ EventLoopResult<T> run_event_loop(
             notional_cap = static_cast<T>(ev.volume) * costs.volume_cap_mult;
         }
         
-        auto dec = trading::decide_trade(
-            pool, cex_price, costs,
-            notional_cap,
-            min_swap_frac, max_swap_frac
-        );
+        trading::Decision<T> dec;
+        if (use_legacy_arb) {
+            // Legacy sizing: matches simusmod step_for_price_2 behavior
+            // Uses candle volume for vol_cap
+            dec = trading::decide_trade_legacy(
+                pool, cex_price, costs,
+                static_cast<T>(ev.volume),  // ext_vol from candle
+                min_swap_frac, max_swap_frac
+            );
+        } else {
+            // Modular: TOMS748 root-finding for price equilibrium
+            dec = trading::decide_trade(
+                pool, cex_price, costs,
+                notional_cap,
+                min_swap_frac, max_swap_frac
+            );
+        }
         
         // Debug: trace arb decisions with timestamp
         if (trading::trace_arb_enabled() && dec.do_trade) {
@@ -240,6 +258,13 @@ EventLoopResult<T> run_event_loop(
                     m.n_rebalances += 1;
                 }
                 
+                // Legacy oracle mode: update oracle EMA AFTER trade with pool spot price
+                // This matches simusmod behavior: ma_recorder uses old last_prices,
+                // then last_prices is updated to new trade price
+                if (use_legacy_oracle) {
+                    pool.update_oracle_legacy(pool.get_p());
+                }
+                
                 // Sample after trade
                 sample_latent(ev.ts);
                 sample_slippage_probes(ev.ts, cex_price);
@@ -286,7 +311,8 @@ EventLoopResult<T> run_event_loop(
         }
         
         // ---- Idle tick: only if no arb AND no cowswap trades happened ----
-        if (!did_any_trade) {
+        // Skip idle tick in legacy oracle mode (legacy only updates oracle on trades)
+        if (!did_any_trade && !use_legacy_oracle) {
             // Capture pre-tick state for action recording
             const T ps_before = pool.cached_price_scale;
             const T oracle_before = pool.cached_price_oracle;
