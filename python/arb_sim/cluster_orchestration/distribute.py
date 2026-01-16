@@ -27,6 +27,11 @@ from config import (
 )
 
 
+def fmt_size(n_bytes: int) -> str:
+    """Format bytes as human-readable MB."""
+    return f"{n_bytes / 1_000_000:.1f} MB"
+
+
 def run_ssh(blade: str, command: str, timeout: int = 60) -> subprocess.CompletedProcess:
     """Run command on blade via SSH."""
     cmd = ["ssh"] + SSH_OPTIONS + ["-i", str(SSH_KEY), f"{SSH_USER}@{blade}", command]
@@ -153,9 +158,9 @@ def distribute(
     remote_size = get_remote_file_size(blade, remote_candles)
 
     if remote_size == local_size:
-        print(f"Candles already uploaded: {candles_file.name} ({local_size:,} bytes)")
+        print(f"Candles already uploaded: {candles_file.name} ({fmt_size(local_size)})")
     else:
-        print(f"Uploading candles: {candles_file.name} ({local_size:,} bytes)...")
+        print(f"Uploading candles: {candles_file.name} ({fmt_size(local_size)})...")
         rsync_to_cluster(candles_file, remote_candles, blade)
         print(f"  Done.")
 
@@ -165,9 +170,11 @@ def distribute(
     remote_pools_size = get_remote_file_size(blade, remote_pools)
 
     if remote_pools_size == local_pools_size:
-        print(f"Pools already uploaded: {pools_file.name} ({local_pools_size:,} bytes)")
+        print(
+            f"Pools already uploaded: {pools_file.name} ({fmt_size(local_pools_size)})"
+        )
     else:
-        print(f"Uploading pools: {pools_file.name} ({local_pools_size:,} bytes)...")
+        print(f"Uploading pools: {pools_file.name} ({fmt_size(local_pools_size)})...")
         rsync_to_cluster(pools_file, remote_pools, blade)
         print(f"  Done.")
 

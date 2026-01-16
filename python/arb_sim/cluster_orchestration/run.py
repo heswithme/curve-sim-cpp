@@ -160,8 +160,9 @@ def run_blade_job(
                 )
                 if check.returncode == 0:
                     result.success = True
-                    size = check.stdout.strip()
-                    print(f"[{blade}] SUCCESS ({size} bytes)")
+                    size_bytes = int(check.stdout.strip())
+                    size_mb = size_bytes / 1_000_000
+                    print(f"[{blade}] SUCCESS ({size_mb:.1f} MB)")
                 else:
                     result.error = "Output file not created"
                     print(f"[{blade}] FAILED: no output file")

@@ -30,6 +30,11 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1]
 TRADE_DATA_DIR = SCRIPT_DIR / "trade_data"
 
 
+def fmt_size(n_bytes: int) -> str:
+    """Format bytes as human-readable MB."""
+    return f"{n_bytes / 1_000_000:.1f} MB"
+
+
 def find_local_candles(filename: str) -> Optional[Path]:
     """Search trade_data folder recursively for candles file by name."""
     if not TRADE_DATA_DIR.exists():
@@ -175,7 +180,7 @@ def collect(
             blade_name, local_path, success = future.result()
             if success:
                 downloaded[blade_name] = local_path
-                print(f"[{blade_name}] OK ({local_path.stat().st_size:,} bytes)")
+                print(f"[{blade_name}] OK ({fmt_size(local_path.stat().st_size)})")
             else:
                 print(f"[{blade_name}] Failed")
 
