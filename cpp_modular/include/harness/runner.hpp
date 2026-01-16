@@ -114,9 +114,9 @@ struct RunConfig {
     // Action recording
     bool save_actions{false};
     
-    // Detailed per-candle logging
+    // Detailed per-event logging
     bool detailed_log{false};
-    size_t detailed_interval{1};  // log every N-th candle (1 = all);
+    size_t detailed_interval{1};  // log every N-th event (1 = all)
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)

@@ -46,7 +46,7 @@ EventLoopResult<T> run_event_loop(
     const ApyConfig<T>& apy_cfg = ApyConfig<T>{},
     bool save_actions = false,
     bool detailed_log = false,
-    size_t detailed_interval = 1,  // log every N-th candle (1 = all)
+    size_t detailed_interval = 1,  // log every N-th event (1 = all)
     trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
 ) {
     EventLoopResult<T> result{};
@@ -125,10 +125,6 @@ EventLoopResult<T> run_event_loop(
     
     for (size_t ev_idx = 0; ev_idx < n_events; ++ev_idx) {
         const auto& ev = events[ev_idx];
-        const bool is_last_event = (ev_idx == n_events - 1);
-        
-        // Detailed logging: log previous candle when candle changes (or final candle at end)
-        detailed_logger.maybe_log_candle_boundary(pool, ev.candle, is_last_event, m.trades, m.n_rebalances);
         
         // Update pool timestamp
         pool.set_block_timestamp(ev.ts);
@@ -188,6 +184,13 @@ EventLoopResult<T> run_event_loop(
             notional_cap,
             min_swap_frac, max_swap_frac
         );
+        
+        // Debug: trace arb decisions with timestamp
+        if (trading::trace_arb_enabled() && dec.do_trade) {
+            std::cerr << "[ARB_EVENT] ts=" << ev.ts << " cex=" << cex_price 
+                      << " i=" << dec.i << " j=" << dec.j 
+                      << " dx=" << dec.dx << " profit=" << dec.profit << "\n";
+        }
         
         // Track whether any trade happened this event (for idle tick decision)
         bool did_any_trade = false;
@@ -302,6 +305,9 @@ EventLoopResult<T> run_event_loop(
                                        xcp_profit_before, vp_before, pool);
             }
         }
+        
+        // Detailed logging: log pool state AFTER all processing for this event
+        detailed_logger.log_event(pool, ev.ts, ev.candle, m.trades, m.n_rebalances);
     }
     
     // Move logged data into result

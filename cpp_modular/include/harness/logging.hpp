@@ -124,7 +124,7 @@ private:
     std::vector<Action<T>> actions_;
 };
 
-// DetailedLogger: manages per-candle detailed logging when detailed_log is enabled
+// DetailedLogger: logs pool state at every N-th event when enabled
 template <typename T>
 class DetailedLogger {
 public:
@@ -133,24 +133,20 @@ public:
         : enabled_(enabled), interval_(interval > 0 ? interval : 1) {}
     
     bool enabled() const { return enabled_; }
-    void set_enabled(bool e) { enabled_ = e; }
-    void set_interval(size_t interval) { interval_ = interval > 0 ? interval : 1; }
     
     // Get recorded entries (moves out)
     std::vector<DetailedEntry<T>> take_entries() { return std::move(entries_); }
     
-    // Get const reference to entries
-    const std::vector<DetailedEntry<T>>& entries() const { return entries_; }
-    
-    // Log entry at candle boundary - call with previous candle when candle changes
+    // Log current pool state for this event (respects interval)
     template <typename Pool>
-    void log_entry(const Pool& pool, const Candle& candle, uint64_t n_trades, uint64_t n_rebalances) {
+    void log_event(const Pool& pool, uint64_t ts, const Candle& candle, uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return;
-        // Only log every interval_ candles
-        if (candle_count_ % interval_ != 0) return;
+        
+        // Only log every interval_ events
+        if (event_count_++ % interval_ != 0) return;
         
         DetailedEntry<T> entry;
-        entry.t = candle.ts;
+        entry.t = ts;
         entry.token0 = pool.balances[0];
         entry.token1 = pool.balances[1];
         entry.price_oracle = pool.cached_price_oracle;
@@ -161,52 +157,18 @@ public:
         entry.high = static_cast<T>(candle.high);
         entry.low = static_cast<T>(candle.low);
         entry.close = static_cast<T>(candle.close);
-        // Compute dynamic fee at current pool state
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
         entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
         entry.n_trades = n_trades;
         entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);
     }
-    
-    // Check if candle changed and log previous candle if so
-    // Returns true if this is a new candle
-    template <typename Pool>
-    bool maybe_log_candle_boundary(const Pool& pool, const Candle& current_candle, bool is_last_event,
-                                   uint64_t n_trades, uint64_t n_rebalances) {
-        if (!enabled_) return false;
-        
-        const bool candle_changed = (last_candle_ts_ > 0 && current_candle.ts != last_candle_ts_);
-        
-        // Log the *previous* candle when we see a new one
-        if (candle_changed) {
-            log_entry(pool, last_candle_, n_trades, n_rebalances);
-            ++candle_count_;
-        }
-        
-        // Track current candle
-        last_candle_ts_ = current_candle.ts;
-        last_candle_ = current_candle;
-        
-        // Log final candle at end of simulation (always log last candle regardless of interval)
-        if (is_last_event) {
-            // Force log the final candle
-            const size_t saved_count = candle_count_;
-            candle_count_ = 0;  // temporarily set to 0 to force logging
-            log_entry(pool, last_candle_, n_trades, n_rebalances);
-            candle_count_ = saved_count;
-        }
-        
-        return candle_changed;
-    }
 
 private:
     bool enabled_{false};
     size_t interval_{1};
-    size_t candle_count_{0};
+    size_t event_count_{0};
     std::vector<DetailedEntry<T>> entries_;
-    uint64_t last_candle_ts_{0};
-    Candle last_candle_{};
 };
 
 } // namespace harness

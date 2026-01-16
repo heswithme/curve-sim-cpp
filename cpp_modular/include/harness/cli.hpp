@@ -38,7 +38,7 @@ struct CliArgs {
     
     // Detailed logging
     bool detailed_log{false};  // write detailed_log.json next to output
-    size_t detailed_interval{1};  // log every N-th candle (1 = all, 1000 = sparse)
+    size_t detailed_interval{1};  // log every N-th event (1 = all)
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
