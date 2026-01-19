@@ -52,7 +52,7 @@ Decision<T> decide_trade(
     const PoolT& pool,
     T cex_price,
     const Costs<T>& costs,
-    T notional_cap_coin0,
+    T volume_cap,
     T min_swap_frac,
     T max_swap_frac
 ) {
@@ -108,10 +108,18 @@ Decision<T> decide_trade(
     T dx_lo = std::max(T(1e-18), avail * std::max(T(1e-12), min_swap_frac));
     T dx_hi = avail * max_swap_frac;
 
-    if (std::isfinite(static_cast<double>(notional_cap_coin0)) && notional_cap_coin0 > T(0)) {
-        dx_hi = (sel_i == 0)
-            ? std::min(dx_hi, notional_cap_coin0)
-            : std::min(dx_hi, notional_cap_coin0 / pool.cached_price_scale);
+    if (std::isfinite(static_cast<double>(volume_cap)) && volume_cap > T(0)) {
+        T cap = volume_cap;
+        if (costs.volume_cap_is_coin1) {
+            if (sel_i == 0) {
+                cap *= cex_price; // coin1 -> coin0
+            }
+        } else {
+            if (sel_i == 1) {
+                cap /= cex_price; // coin0 -> coin1
+            }
+        }
+        dx_hi = std::min(dx_hi, cap);
     }
     if (!(dx_hi > dx_lo)) return d;
 

@@ -174,14 +174,17 @@ EventLoopResult<T> run_event_loop(
         try_user_swap(pool, ucfg, ev.ts, cex_price);
         
         // Decide trade
-        T notional_cap = std::numeric_limits<T>::infinity();
+        T volume_cap = std::numeric_limits<T>::infinity();
         if (costs.use_volume_cap) {
-            notional_cap = static_cast<T>(ev.volume) * costs.volume_cap_mult;
+            volume_cap = static_cast<T>(ev.volume) * costs.volume_cap_mult;
+            if (!costs.volume_cap_is_coin1) {
+                volume_cap *= cex_price;
+            }
         }
         
         auto dec = trading::decide_trade(
             pool, cex_price, costs,
-            notional_cap,
+            volume_cap,
             min_swap_frac, max_swap_frac
         );
         

@@ -110,6 +110,11 @@ void parse_pool_entry(
         if (auto* v = co.if_contains("gas_coin0")) out_costs.gas_coin0 = parse_plain_real<T>(*v);
         if (auto* v = co.if_contains("use_volume_cap")) out_costs.use_volume_cap = v->as_bool();
         if (auto* v = co.if_contains("volume_cap_mult")) out_costs.volume_cap_mult = parse_plain_real<T>(*v);
+        if (auto* v = co.if_contains("volume_cap_is_coin_1")) {
+            out_costs.volume_cap_is_coin1 = v->is_bool()
+                ? v->as_bool()
+                : (parse_plain_real<T>(*v) != T(0));
+        }
     }
 }
 
