@@ -188,13 +188,6 @@ EventLoopResult<T> run_event_loop(
             min_swap_frac, max_swap_frac
         );
         
-        // Debug: trace arb decisions with timestamp
-        if (trading::trace_arb_enabled() && dec.do_trade) {
-            std::cerr << "[ARB_EVENT] ts=" << ev.ts << " cex=" << cex_price 
-                      << " i=" << dec.i << " j=" << dec.j 
-                      << " dx=" << dec.dx << " profit=" << dec.profit << "\n";
-        }
-        
         // Track whether any trade happened this event (for idle tick decision)
         bool did_any_trade = false;
         
@@ -310,7 +303,7 @@ EventLoopResult<T> run_event_loop(
         }
         
         // Detailed logging: log pool state AFTER all processing for this event
-        detailed_logger.log_event(pool, ev.ts, ev.candle, m.trades, m.n_rebalances);
+        detailed_logger.log_event(pool, ev.ts, ev.candle, cex_price, m.trades, m.n_rebalances);
     }
     
     // Move logged data into result

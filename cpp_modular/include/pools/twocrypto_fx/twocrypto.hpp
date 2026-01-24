@@ -123,6 +123,7 @@ public:
     T donation_shares = Traits::ZERO();
     T donation_shares_max_ratio = Traits::PRECISION() * 10 / 100; // 10%
     T donation_duration = T(7 * 86400);
+    // T donation_duration = T(600);
     T last_donation_release_ts = Traits::ZERO();
     T donation_protection_expiry_ts = Traits::ZERO();
     T donation_protection_period = T(10 * 60);

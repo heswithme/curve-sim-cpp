@@ -92,6 +92,9 @@ void parse_pool_entry(
     if (auto* v = pool.if_contains("initial_price")) out_pool.initial_price = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("start_timestamp")) {
         out_pool.start_ts = static_cast<uint64_t>(parse_plain_real<T>(*v));
+        if (out_pool.start_ts > 10000000000ULL) {
+            out_pool.start_ts /= 1000ULL;
+        }
     }
     
     // Donation controls
