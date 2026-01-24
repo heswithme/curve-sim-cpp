@@ -92,6 +92,9 @@ void parse_pool_entry(
     if (auto* v = pool.if_contains("initial_price")) out_pool.initial_price = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("start_timestamp")) {
         out_pool.start_ts = static_cast<uint64_t>(parse_plain_real<T>(*v));
+        if (out_pool.start_ts > 10000000000ULL) {
+            out_pool.start_ts /= 1000ULL;
+        }
     }
     
     // Donation controls
@@ -110,6 +113,11 @@ void parse_pool_entry(
         if (auto* v = co.if_contains("gas_coin0")) out_costs.gas_coin0 = parse_plain_real<T>(*v);
         if (auto* v = co.if_contains("use_volume_cap")) out_costs.use_volume_cap = v->as_bool();
         if (auto* v = co.if_contains("volume_cap_mult")) out_costs.volume_cap_mult = parse_plain_real<T>(*v);
+        if (auto* v = co.if_contains("volume_cap_is_coin_1")) {
+            out_costs.volume_cap_is_coin1 = v->is_bool()
+                ? v->as_bool()
+                : (parse_plain_real<T>(*v) != T(0));
+        }
     }
 }
 
@@ -118,9 +126,10 @@ void parse_pool_entry(
 // - { "pools": [ {...}, {...} ] }
 // - { "pool": {...} }
 // - [ {...}, {...} ]
+// Optional: start_idx/end_idx for loading a subset (0-based, end exclusive)
 template <typename T>
 std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> 
-load_pool_configs(const std::string& path) {
+load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx = SIZE_MAX) {
     namespace json = boost::json;
     
     std::ifstream in(path, std::ios::binary);
@@ -151,13 +160,19 @@ load_pool_configs(const std::string& path) {
         throw std::runtime_error("Invalid pools json root type");
     }
     
-    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
-    result.reserve(entries.size());
+    // Apply range bounds
+    if (start_idx >= entries.size()) {
+        return {};  // Empty result if start beyond range
+    }
+    size_t actual_end = std::min(end_idx, entries.size());
     
-    for (const auto& entry : entries) {
+    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
+    result.reserve(actual_end - start_idx);
+    
+    for (size_t i = start_idx; i < actual_end; ++i) {
         PoolInit<T> pool_init{};
         arb::trading::Costs<T> costs{};
-        parse_pool_entry(entry, pool_init, costs);
+        parse_pool_entry(entries[i], pool_init, costs);
         result.emplace_back(std::move(pool_init), std::move(costs));
     }
     

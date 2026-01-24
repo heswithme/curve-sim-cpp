@@ -16,9 +16,10 @@ void print_usage(const char* prog_name) {
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
               << "       [--dustswapfreq S]\n"
+              << "       [--pool-start N] [--pool-end N]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
               << "       [--apy-period-days D] [--apy-period-cap PCT]\n"
-              << "       [--detailed-log] [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
+              << "       [--detailed-log] [--detailed-interval N] [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
 }
 
 CliArgs parse_cli(int argc, char* argv[]) {
@@ -51,6 +52,10 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.candle_filter_pct = std::stod(argv[++i]);
             } else if (arg == "--dustswapfreq" && i + 1 < argc) {
                 args.dustswap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
+            } else if (arg == "--pool-start" && i + 1 < argc) {
+                args.pool_start = static_cast<size_t>(std::stoll(argv[++i]));
+            } else if (arg == "--pool-end" && i + 1 < argc) {
+                args.pool_end = static_cast<size_t>(std::stoll(argv[++i]));
             } else if (arg == "--userswapfreq" && i + 1 < argc) {
                 args.user_swap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
             } else if (arg == "--userswapsize" && i + 1 < argc) {
@@ -63,6 +68,9 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.apy_period_cap_pct = std::stoi(argv[++i]);
             } else if (arg == "--detailed-log") {
                 args.detailed_log = true;
+            } else if (arg == "--detailed-interval" && i + 1 < argc) {
+                args.detailed_interval = static_cast<size_t>(std::stoll(argv[++i]));
+                if (args.detailed_interval == 0) args.detailed_interval = 1;
             } else if (arg == "--cowswap-trades" && i + 1 < argc) {
                 args.cowswap_path = argv[++i];
             } else if (arg == "--cowswap-fee-bps" && i + 1 < argc) {

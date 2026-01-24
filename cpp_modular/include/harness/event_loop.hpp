@@ -46,6 +46,7 @@ EventLoopResult<T> run_event_loop(
     const ApyConfig<T>& apy_cfg = ApyConfig<T>{},
     bool save_actions = false,
     bool detailed_log = false,
+    size_t detailed_interval = 1,  // log every N-th event (1 = all)
     trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
 ) {
     EventLoopResult<T> result{};
@@ -83,7 +84,7 @@ EventLoopResult<T> run_event_loop(
     
     // Initialize loggers
     ActionLogger<T> action_logger(save_actions);
-    DetailedLogger<T> detailed_logger(detailed_log);
+    DetailedLogger<T> detailed_logger(detailed_log, detailed_interval);
     
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
@@ -124,10 +125,6 @@ EventLoopResult<T> run_event_loop(
     
     for (size_t ev_idx = 0; ev_idx < n_events; ++ev_idx) {
         const auto& ev = events[ev_idx];
-        const bool is_last_event = (ev_idx == n_events - 1);
-        
-        // Detailed logging: log previous candle when candle changes (or final candle at end)
-        detailed_logger.maybe_log_candle_boundary(pool, ev.candle, is_last_event);
         
         // Update pool timestamp
         pool.set_block_timestamp(ev.ts);
@@ -157,6 +154,12 @@ EventLoopResult<T> run_event_loop(
         // Band tracking (>10% deviation from CEX)
         tw.sample_band(ev.ts, pool.cached_price_scale, cex_price);
         
+        // Multi-threshold band tracking (3%, 5%, 10%, 20%, 30%, 1/A)
+        tw.sample_thresholds(ev.ts, pool.cached_price_scale, cex_price, pool.A);
+        
+        // EMA-smoothed correlation tracking
+        tw.sample_correlation(ev.ts, pool.cached_price_scale, cex_price);
+        
         // Try donation before trading
         auto don_res = make_donation_ex(pool, dcfg, ev.ts, m);
         if (don_res.success) {
@@ -171,14 +174,17 @@ EventLoopResult<T> run_event_loop(
         try_user_swap(pool, ucfg, ev.ts, cex_price);
         
         // Decide trade
-        T notional_cap = std::numeric_limits<T>::infinity();
+        T volume_cap = std::numeric_limits<T>::infinity();
         if (costs.use_volume_cap) {
-            notional_cap = static_cast<T>(ev.volume) * costs.volume_cap_mult;
+            volume_cap = static_cast<T>(ev.volume) * costs.volume_cap_mult;
+            if (!costs.volume_cap_is_coin1) {
+                volume_cap *= cex_price;
+            }
         }
         
         auto dec = trading::decide_trade(
             pool, cex_price, costs,
-            notional_cap,
+            volume_cap,
             min_swap_frac, max_swap_frac
         );
         
@@ -295,6 +301,9 @@ EventLoopResult<T> run_event_loop(
                                        xcp_profit_before, vp_before, pool);
             }
         }
+        
+        // Detailed logging: log pool state AFTER all processing for this event
+        detailed_logger.log_event(pool, ev.ts, ev.candle, cex_price, m.trades, m.n_rebalances);
     }
     
     // Move logged data into result

@@ -96,13 +96,36 @@ struct TimeWeightedMetrics {
     bool have_band{false};
     bool last_far{false};
     
+    // Multi-threshold band tracking: time within X% of CEX
+    // Thresholds: 3%, 5%, 10%, 20%, 30%, and dynamic 1/A
+    static constexpr size_t N_THRESH = 6;
+    static constexpr double THRESH_VALUES[N_THRESH] = {0.03, 0.05, 0.10, 0.20, 0.30, 0.0};  // last is dynamic 1/A
+    std::array<long double, N_THRESH> time_within_s{};  // accumulated time within each threshold
+    std::array<bool, N_THRESH> last_within{};
+    uint64_t last_ts_thresh{0};
+    bool have_thresh{false};
+    
+    // EMA-smoothed correlation between cex_price and price_scale
+    // tau_s = smoothing window in seconds (default 1 hour)
+    static constexpr double CORR_TAU_S = 86400.0;
+    long double ema_cex{0.0L};
+    long double ema_ps{0.0L};
+    long double sum_x_dt{0.0L};    // Σ ema_cex * dt
+    long double sum_y_dt{0.0L};    // Σ ema_ps * dt
+    long double sum_xx_dt{0.0L};   // Σ ema_cex² * dt
+    long double sum_yy_dt{0.0L};   // Σ ema_ps² * dt
+    long double sum_xy_dt{0.0L};   // Σ ema_cex * ema_ps * dt
+    long double sum_corr_dt{0.0L}; // Σ dt for correlation
+    uint64_t last_ts_corr{0};
+    bool have_corr{false};
+    
     // Computed metrics
-    double avg_rel_bps() const {
-        return sum_dt > 0.0L ? 1e4 * static_cast<double>(sum_abs_rel_dt / sum_dt) : -1.0;
+    double avg_rel_price_diff() const {
+        return sum_dt > 0.0L ? static_cast<double>(sum_abs_rel_dt / sum_dt) : -1.0;
     }
     
-    double max_rel_bps() const {
-        return 1e4 * static_cast<double>(max_rel_abs);
+    double max_rel_price_diff() const {
+        return static_cast<double>(max_rel_abs);
     }
     
     double tw_avg_pool_fee() const {
@@ -124,6 +147,31 @@ struct TimeWeightedMetrics {
     double cex_follow_time_frac(double duration_s) const {
         if (duration_s <= 0.0) return -1.0;
         return 1.0 - static_cast<double>(time_far_s) / duration_s;
+    }
+    
+    // Get fraction of time within threshold k (0=3%, 1=5%, 2=10%, 3=20%, 4=30%, 5=1/A)
+    double pct_within(size_t k, double duration_s) const {
+        if (k >= N_THRESH || duration_s <= 0.0) return -1.0;
+        return static_cast<double>(time_within_s[k]) / duration_s;
+    }
+    
+    // Get EMA-smoothed correlation between cex_price and price_scale
+    double price_correlation() const {
+        if (sum_corr_dt <= 0.0L) return -2.0;  // not enough data
+        
+        const long double E_x = sum_x_dt / sum_corr_dt;
+        const long double E_y = sum_y_dt / sum_corr_dt;
+        const long double E_xx = sum_xx_dt / sum_corr_dt;
+        const long double E_yy = sum_yy_dt / sum_corr_dt;
+        const long double E_xy = sum_xy_dt / sum_corr_dt;
+        
+        const long double var_x = E_xx - E_x * E_x;
+        const long double var_y = E_yy - E_y * E_y;
+        const long double cov_xy = E_xy - E_x * E_y;
+        
+        if (var_x <= 0.0L || var_y <= 0.0L) return -2.0;  // no variance
+        
+        return static_cast<double>(cov_xy / std::sqrt(var_x * var_y));
     }
     
     // Update methods
@@ -185,6 +233,68 @@ struct TimeWeightedMetrics {
         }
         last_ts_band = ts;
         have_band = true;
+    }
+    
+    // Sample multi-threshold bands: track time within 3%, 5%, 10%, 20%, 30%, and 1/A of CEX
+    void sample_thresholds(uint64_t ts, T price_scale, T p_cex, T A) {
+        // Accumulate time for previous state
+        if (have_thresh && ts > last_ts_thresh) {
+            const long double dt = static_cast<long double>(ts - last_ts_thresh);
+            for (size_t k = 0; k < N_THRESH; ++k) {
+                if (last_within[k]) {
+                    time_within_s[k] += dt;
+                }
+            }
+        }
+        
+        // Update current state
+        if (p_cex > T(0)) {
+            const T rel = std::abs(price_scale / p_cex - T(1));
+            for (size_t k = 0; k < N_THRESH - 1; ++k) {
+                last_within[k] = (static_cast<double>(rel) <= THRESH_VALUES[k]);
+            }
+            // Last threshold is dynamic: 1/A (A is stored with 10000 multiplier, so real A = A/10000)
+            // inv_A = 1 / (A/10000) = 10000/A
+            const double inv_A = (A > T(0)) ? 10000.0 / static_cast<double>(A) : 1.0;
+            last_within[N_THRESH - 1] = (static_cast<double>(rel) <= inv_A);
+        } else {
+            for (size_t k = 0; k < N_THRESH; ++k) {
+                last_within[k] = false;
+            }
+        }
+        last_ts_thresh = ts;
+        have_thresh = true;
+    }
+    
+    // Sample EMA-smoothed correlation between cex_price and price_scale
+    void sample_correlation(uint64_t ts, T price_scale, T p_cex) {
+        if (!(p_cex > T(0))) return;
+        
+        const long double cex_ld = static_cast<long double>(p_cex);
+        const long double ps_ld = static_cast<long double>(price_scale);
+        
+        if (have_corr && ts > last_ts_corr) {
+            const double dt = static_cast<double>(ts - last_ts_corr);
+            const double alpha = 1.0 - std::exp(-dt / CORR_TAU_S);
+            
+            // Update EMAs
+            ema_cex = (1.0L - alpha) * ema_cex + alpha * cex_ld;
+            ema_ps = (1.0L - alpha) * ema_ps + alpha * ps_ld;
+            
+            // Accumulate correlation stats on smoothed values
+            sum_x_dt += ema_cex * dt;
+            sum_y_dt += ema_ps * dt;
+            sum_xx_dt += ema_cex * ema_cex * dt;
+            sum_yy_dt += ema_ps * ema_ps * dt;
+            sum_xy_dt += ema_cex * ema_ps * dt;
+            sum_corr_dt += dt;
+        } else {
+            // Initialize EMAs
+            ema_cex = cex_ld;
+            ema_ps = ps_ld;
+        }
+        last_ts_corr = ts;
+        have_corr = true;
     }
 };
 

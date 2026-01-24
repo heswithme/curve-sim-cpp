@@ -71,6 +71,12 @@ std::vector<Candle> load_candles(const std::string& path,
         }
         out.push_back(c);
     }
+    
+    // Sort candles by timestamp (input may not be ordered)
+    std::sort(out.begin(), out.end(), [](const Candle& a, const Candle& b) {
+        return a.ts < b.ts;
+    });
+    
     return out;
 }
 

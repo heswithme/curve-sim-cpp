@@ -2,7 +2,7 @@
 """
 Plot diffs between a current arb_run_*.json and a reference results.json.
 
-- Uses parsing logic consistent with plot_heatmap.py to build the (X,Y)->Z grid.
+- Uses parsing logic consistent with plot_heatmap.py to build the (x1,x2)->Z grid.
 - Reference loader accepts ref_plot_all-style results.json with:
   { "configuration": [ {"A":..., "mid_fee":..., "Result": { ...metrics... } }, ... ] }
 
@@ -12,6 +12,7 @@ Usage examples:
 
   uv run python/arb_sim/plot_diffs.py --arb path/to/arb_run.json --ref path/to/results.json --relative
 """
+
 from __future__ import annotations
 
 import json
@@ -52,21 +53,31 @@ def _to_float(x: Any) -> float:
             return float("nan")
 
 
-def _extract_grid(data: Dict[str, Any], metric: str, scale_percent: bool, scale_1e18: bool) -> Tuple[str, str, List[float], List[float], np.ndarray]:
+def _extract_grid(
+    data: Dict[str, Any], metric: str, scale_percent: bool, scale_1e18: bool
+) -> Tuple[str, str, List[float], List[float], np.ndarray]:
     runs = data.get("runs", [])
     if not runs:
         raise SystemExit("No runs[] found in arb_run JSON")
 
-    x_name = runs[0].get("x_key") or data.get("metadata", {}).get("grid", {}).get("X", {}).get("name") or "X"
-    y_name = runs[0].get("y_key") or data.get("metadata", {}).get("grid", {}).get("Y", {}).get("name") or "Y"
+    x_name = (
+        runs[0].get("x1_key")
+        or data.get("metadata", {}).get("grid", {}).get("x1", {}).get("name")
+        or "x1"
+    )
+    y_name = (
+        runs[0].get("x2_key")
+        or data.get("metadata", {}).get("grid", {}).get("x2", {}).get("name")
+        or "x2"
+    )
 
     points: Dict[Tuple[float, float], float] = {}
     xs: List[float] = []
     ys: List[float] = []
     for r in runs:
-        # Prefer explicit x_val/y_val; fallback to params.pool using axis names
-        xv_raw = r.get("x_val")
-        yv_raw = r.get("y_val")
+        # Prefer explicit x1_val/x2_val; fallback to params.pool using axis names
+        xv_raw = r.get("x1_val")
+        yv_raw = r.get("x2_val")
         if xv_raw is None or yv_raw is None:
             pool_obj = (r.get("params") or {}).get("pool", {})
             xv_raw = pool_obj.get(x_name) if xv_raw is None else xv_raw
@@ -89,7 +100,9 @@ def _extract_grid(data: Dict[str, Any], metric: str, scale_percent: bool, scale_
             ys.append(yv)
 
     if not points:
-        raise SystemExit("No valid (x,y,z) points found in runs; ensure x_val/y_val and final_state exist.")
+        raise SystemExit(
+            "No valid (x1,x2,z) points found in runs; ensure x1_val/x2_val and final_state exist."
+        )
 
     xs_sorted = sorted(sorted(set(xs)))
     ys_sorted = sorted(sorted(set(ys)))
@@ -105,8 +118,15 @@ def _load_ref_results(path: Path) -> Dict[str, Any]:
     return _load(path)
 
 
-def _build_ref_grid(ref: Dict[str, Any], x_name: str, y_name: str, xs: List[float], ys: List[float],
-                    metric: str, scale_percent: bool) -> np.ndarray:
+def _build_ref_grid(
+    ref: Dict[str, Any],
+    x_name: str,
+    y_name: str,
+    xs: List[float],
+    ys: List[float],
+    metric: str,
+    scale_percent: bool,
+) -> np.ndarray:
     # Map our metric name to ref key variants
     name_map = {
         "apy": "APY",
@@ -118,9 +138,9 @@ def _build_ref_grid(ref: Dict[str, Any], x_name: str, y_name: str, xs: List[floa
         "arb_pnl_coin0": "arb_profit_coin0",
         "n_rebalances": "n_rebalances",
         "vpminusone": "vpminusone",
-        # New relative tracking metrics (bps)
-        "avg_rel_bps": "avg_rel_bps",
-        "max_rel_bps": "max_rel_bps",
+        # New relative tracking metrics
+        "avg_rel_price_diff": "avg_rel_price_diff",
+        "max_rel_price_diff": "max_rel_price_diff",
         "cex_follow_time_frac": "cex_follow_time_frac",
         "xcp_profit": "xcp_profit",
     }
@@ -167,16 +187,16 @@ def _build_ref_grid(ref: Dict[str, Any], x_name: str, y_name: str, xs: List[floa
             yr = yv / sy
             match_val = np.nan
             # Try exact-ish match first
-            for (xa, ya, zv) in pts:
+            for xa, ya, zv in pts:
                 if _close(xa, xr) and _close(ya, yr):
                     match_val = zv
                     break
             if np.isnan(match_val):
                 # Fallback: nearest neighbor by sum of squared distances
                 best = None
-                best_d = float('inf')
-                for (xa, ya, zv) in pts:
-                    d = (xa - xr)**2 + (ya - yr)**2
+                best_d = float("inf")
+                for xa, ya, zv in pts:
+                    d = (xa - xr) ** 2 + (ya - yr) ** 2
                     if d < best_d:
                         best_d = d
                         best = zv
@@ -212,7 +232,8 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
 def _edges_from_centers(centers: List[float]) -> np.ndarray:
     c = np.asarray(centers, dtype=float)
     if c.size == 1:
-        x0 = float(c[0]); d = abs(x0) * 0.5 if x0 != 0 else 0.5
+        x0 = float(c[0])
+        d = abs(x0) * 0.5 if x0 != 0 else 0.5
         return np.array([x0 - d, x0 + d])
     mids = (c[:-1] + c[1:]) / 2.0
     first = c[0] - (mids[0] - c[0])
@@ -235,11 +256,30 @@ def _select_ticks(values: List[float], max_ticks: int) -> List[int]:
 
 def main() -> int:
     import argparse
-    ap = argparse.ArgumentParser(description="Plot diffs between arb_run grid and reference results.json")
-    ap.add_argument("--arb", type=str, default=None, help="Path to arb_run_*.json (default: latest)")
-    ap.add_argument("--ref", type=str, default="results.json", help="Path to reference results.json (ref_plot_all schema)")
-    ap.add_argument("--relative", action="store_true", help="Plot relative diffs: (new-ref)/abs(ref)")
-    ap.add_argument("--cmap", type=str, default="bluepink", help="Matplotlib colormap for diffs (default: bluepink)")
+
+    ap = argparse.ArgumentParser(
+        description="Plot diffs between arb_run grid and reference results.json"
+    )
+    ap.add_argument(
+        "--arb", type=str, default=None, help="Path to arb_run_*.json (default: latest)"
+    )
+    ap.add_argument(
+        "--ref",
+        type=str,
+        default="results.json",
+        help="Path to reference results.json (ref_plot_all schema)",
+    )
+    ap.add_argument(
+        "--relative",
+        action="store_true",
+        help="Plot relative diffs: (new-ref)/abs(ref)",
+    )
+    ap.add_argument(
+        "--cmap",
+        type=str,
+        default="bluepink",
+        help="Matplotlib colormap for diffs (default: bluepink)",
+    )
     ap.add_argument("--out", type=str, default=None, help="Output image path")
     ap.add_argument("--show", action="store_true", help="Show interactive window")
     ap.add_argument("--annot", action="store_true", help="Annotate cells with values")
@@ -281,17 +321,19 @@ def main() -> int:
     base = max(len(xs), len(ys))
     side = max(4.5, min(12.0, 0.35 * max(1, base)))
     fig_w, fig_h = side * cols, side * rows
-    fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h), constrained_layout=True)
+    fig, axes = plt.subplots(
+        rows, cols, figsize=(fig_w, fig_h), constrained_layout=True
+    )
     axes = np.atleast_1d(axes).reshape(rows, cols)
 
     # Build zero-centered diverging colormap
     def _build_bluepink():
-        neg = cm.get_cmap('Blues_r', 128)
-        pos = cm.get_cmap('Reds', 128)
+        neg = cm.get_cmap("Blues_r", 128)
+        pos = cm.get_cmap("Reds", 128)
         colors = np.vstack((neg(np.linspace(0, 1, 128)), pos(np.linspace(0, 1, 128))))
-        return ListedColormap(colors, name='bluepink')
+        return ListedColormap(colors, name="bluepink")
 
-    cmap = _build_bluepink() if args.cmap == 'bluepink' else plt.get_cmap(args.cmap)
+    cmap = _build_bluepink() if args.cmap == "bluepink" else plt.get_cmap(args.cmap)
 
     # Tick labels
     xticks = _select_ticks(xs, args.max_xticks)
@@ -309,7 +351,7 @@ def main() -> int:
         for c in range(cols):
             ax = axes[r, c]
             if idx >= n:
-                ax.axis('off')
+                ax.axis("off")
                 continue
             m = metrics[idx]
             s_perc = metric_scale_percent(m)
@@ -329,18 +371,26 @@ def main() -> int:
                         absdiff = new - refv
                         denom = abs(refv) if abs(refv) > 0 else np.nan
                         reldiff = absdiff / denom if np.isfinite(denom) else np.nan
-                        print(f"x={xv:.6g} y={yv:.6g} new={new:.6g} ref={refv:.6g} abs={absdiff:.6g} rel={reldiff:.6g}")
+                        print(
+                            f"x={xv:.6g} y={yv:.6g} new={new:.6g} ref={refv:.6g} abs={absdiff:.6g} rel={reldiff:.6g}"
+                        )
                     elif np.isfinite(new) and not np.isfinite(refv):
-                        print(f"x={xv:.6g} y={yv:.6g} new={new:.6g} ref=NaN (no ref match)")
+                        print(
+                            f"x={xv:.6g} y={yv:.6g} new={new:.6g} ref=NaN (no ref match)"
+                        )
                     elif not np.isfinite(new) and np.isfinite(refv):
-                        print(f"x={xv:.6g} y={yv:.6g} new=NaN (no new match) ref={refv:.6g}")
+                        print(
+                            f"x={xv:.6g} y={yv:.6g} new=NaN (no new match) ref={refv:.6g}"
+                        )
 
             # Compute diff
             if args.relative:
-                denom = np.where(np.isfinite(Z_ref) & (np.abs(Z_ref) > 0), np.abs(Z_ref), np.nan)
+                denom = np.where(
+                    np.isfinite(Z_ref) & (np.abs(Z_ref) > 0), np.abs(Z_ref), np.nan
+                )
                 Z = (Z_new - Z_ref) / denom
             else:
-                Z = (Z_new - Z_ref)
+                Z = Z_new - Z_ref
 
             # Plot using edges and pcolormesh
             Xedges = _edges_from_centers(xs)
@@ -349,17 +399,19 @@ def main() -> int:
             finite = Z[np.isfinite(Z)]
             vmax = float(np.nanmax(np.abs(finite))) if finite.size else 1.0
             norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
-            im = ax.pcolormesh(Xedges, Yedges, Z, cmap=cmap, norm=norm, shading='auto')
-            ax.set_xscale('log')
-            ax.set_yscale('log')
+            im = ax.pcolormesh(Xedges, Yedges, Z, cmap=cmap, norm=norm, shading="auto")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
             ny, nx = Z.shape
             try:
                 ax.set_box_aspect(ny / nx)
             except Exception:
-                ax.set_aspect('equal', adjustable='box')
+                ax.set_aspect("equal", adjustable="box")
             ax.set_xticks([xs[i] for i in xticks])
             ax.set_yticks([ys[i] for i in yticks])
-            ax.set_xticklabels(xlabels_sel, rotation=45, ha='right', fontsize=args.font_size)
+            ax.set_xticklabels(
+                xlabels_sel, rotation=45, ha="right", fontsize=args.font_size
+            )
             if c == 0:
                 ax.set_yticklabels(ylabels_sel, fontsize=args.font_size)
                 ax.set_ylabel(y_name, fontsize=args.font_size + 2)
@@ -377,14 +429,22 @@ def main() -> int:
                         val = Z[i, j]
                         if not np.isfinite(val):
                             continue
-                        ax.text(xs[j], ys[i], f"{val:.3g}", va='center', ha='center', color='white', fontsize=max(6, args.font_size - 2))
+                        ax.text(
+                            xs[j],
+                            ys[i],
+                            f"{val:.3g}",
+                            va="center",
+                            ha="center",
+                            color="white",
+                            fontsize=max(6, args.font_size - 2),
+                        )
             idx += 1
 
     # Output
     if args.out:
         out_path = Path(args.out)
     else:
-        tag = "_".join(m.replace(' ', '') for m in metrics)
+        tag = "_".join(m.replace(" ", "") for m in metrics)
         mode = "rel" if args.relative else "abs"
         out_path = RUN_DIR / f"diffs_{mode}.png"
     out_path.parent.mkdir(parents=True, exist_ok=True)

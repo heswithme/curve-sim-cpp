@@ -23,23 +23,35 @@ import math
 
 FEE_EQUALIZE = False
 # -------------------- Grid Definition --------------------
-GRID_SIZE = 16
+GRID_SIZE = 1
 N_GRID_X = GRID_SIZE
 N_GRID_Y = GRID_SIZE
 
 # 1. A-mid_fee log
 
-# X_name = "mid_fee"
-# xmin = int(1 / 10_000 * 10**10)
-# xmax = int(500 / 10_000 * 10**10)
-# xlogspace = True
-# FEE_EQUALIZE = True
+X_name = "mid_fee"
+xmin = int(10 / 10_000 * 10**10)
+xmax = int(300 / 10_000 * 10**10)
+xlogspace = False
+FEE_EQUALIZE = True
 
 Y_name = "A"
-ymin = 1 * 10_000
+ymin = 32 * 10_000
 ymax = 100 * 10_000
-ylogspace = True
+ylogspace = False
 
+# # 1a. A-don_apy log
+# FEE_EQUALIZE = False
+
+# X_name = "donation_apy"
+# xmin = 0.001
+# xmax = 0.03
+# xlogspace = False
+
+# Y_name = "A"
+# ymin = 1 * 10_000
+# ymax = 10 * 10_000
+# ylogspace = False
 
 # # 2. A-mid_fee zoom_lin
 
@@ -55,14 +67,16 @@ ylogspace = True
 # ylogspace = False
 
 # # 3. mid_fee-out_fee
+# N_GRID_X = 32
+# N_GRID_Y = 32
 # X_name = "mid_fee"
 # xmin = int(1/10_000*10**10)
-# xmax = int(100/10_000*10**10)
+# xmax = int(150/10_000*10**10)
 # xlogspace = False
-
+# FEE_EQUALIZE = False
 # Y_name = "out_fee"
-# ymin = int(1/10_000*10**10)
-# ymax = int(100/10_000*10**10)
+# ymin = int(150/10_000*10**10)
+# ymax = int(300/10_000*10**10)
 # ylogspace = False
 
 # 4. out_fee-fee_gamma
@@ -96,10 +110,10 @@ ylogspace = True
 # xmax = int(100/10_000*10**10)
 # xlogspace = True
 
-X_name = "donation_apy"
-xmin = 0.01
-xmax = 0.2
-xlogspace = False
+# X_name = "donation_apy"
+# xmin = 0.01
+# xmax = 0.2
+# xlogspace = False
 
 
 # X_name = "fee_gamma"
@@ -143,15 +157,16 @@ else:
 
 # Use absolute path relative to this script
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-up.json")
-DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-2020-latest.json")
+# DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusd-cow.csv")
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0  # Fee in basis points to beat historical execution
 
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
 init_price = _initial_price_from_file(DEFAULT_DATAFILE)
-init_liq = 100_000_000  # in coin0
+init_liq = 10_000_000  # in coin0
 
 
 INVERT_LIQ = False
@@ -166,13 +181,13 @@ BASE_POOL = {
         int(init_liq * 10**18 // 2),
         int(init_liq * 10**18 // 2 / init_price),
     ],
-    "A": 20 * 10_000,
+    "A": 3.5 * 10_000,
     "gamma": 10**14,  # unused in twocrypto
-    "mid_fee": int(150 / 10_000 * 10**10),
-    "out_fee": int(150 / 10_000 * 10**10),
+    "mid_fee": int(100 / 10_000 * 10**10),
+    "out_fee": int(200 / 10_000 * 10**10),
     "fee_gamma": int(0.001 * 10**18),
     "allowed_extra_profit": int(1e-12 * 10**18),
-    "adjustment_step": int(0.02 * 10**18), # 2%
+    "adjustment_step": int(0.01 * 10**18),  # 1%
     "ma_time": 866,  # int(86400 / math.log(2)), #5200,
     "initial_price": int(init_price * 10**18),
     "start_timestamp": START_TS,
@@ -180,13 +195,13 @@ BASE_POOL = {
     # - donation_apy: plain fraction per year (0.05 => 5%).
     # - donation_frequency: seconds between donations.
     # - donation_coins_ratio: fraction of donation in coin1 (0=all coin0, 1=all coin1)
-    "donation_apy": 0.10,
+    "donation_apy": 0.07,
     "donation_frequency": int(7 * 86400),
     "donation_coins_ratio": 0.5,
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 10.0,
+    "arb_fee_bps": 20.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,
@@ -223,13 +238,13 @@ def main():
         "meta": {
             "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "grid": {
-                "X": {
+                "x1": {
                     "name": X_name,
                     "min": X_vals[0],
                     "max": X_vals[-1],
                     "n": len(X_vals),
                 },
-                "Y": {
+                "x2": {
                     "name": Y_name,
                     "min": Y_vals[0],
                     "max": Y_vals[-1],

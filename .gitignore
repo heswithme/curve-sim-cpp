@@ -89,6 +89,11 @@ python/benchmark_pool/data/**.json
 python/arb_sim/run_data/
 python/arb_sim/param_search_results/
 
+# Cluster orchestration outputs
+python/arb_sim/cluster_orchestration/jobs/**/*.json
+python/arb_sim/cluster_orchestration/results/**/*.json
+python/arb_sim/cluster_orchestration/jobs/**/downloads/
+
 # Local scratch directory used by scripts
 python/git
 
@@ -142,3 +147,7 @@ python/benchmark_math/**.json
 
 # Personal notes
 todo.txt
+
+yb-curve-sim-cpp
+comparison-results/
+legacy_sim/

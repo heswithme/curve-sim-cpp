@@ -2,9 +2,10 @@
 """
 Arbitrage runner for the C++ arb_harness (multi-pool, threaded in C++).
 
-- Always reads pools from python/arb_sim/run_data/pool_config.json
+- Reads pools from python/arb_sim/run_data/pool_config.json (or --pool-config).
 - Calls the C++ harness once with all pools; C++ handles internal threading.
-- Emits an aggregated arb_run JSON with x/y keys, per-pool final_state, and result.
+- Emits an aggregated arb_run JSON with per-pool final_state and result.
+- Supports N-dimensional grids via meta.grid.dims (falls back to X/Y).
 """
 
 import argparse
@@ -79,6 +80,7 @@ class ArbHarnessRunner:
         apy_period_days: float | None = None,
         apy_period_cap: int | None = None,
         detailed_log: bool = False,
+        detailed_interval: int | None = None,
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
         candle_filter: float | None = None,
@@ -115,6 +117,8 @@ class ArbHarnessRunner:
             cmd += ["--apy-period-cap", str(int(apy_period_cap))]
         if detailed_log:
             cmd += ["--detailed-log"]
+        if detailed_interval is not None:
+            cmd += ["--detailed-interval", str(int(detailed_interval))]
         if cowswap_trades:
             cmd += ["--cowswap-trades", str(cowswap_trades)]
         if cowswap_fee_bps is not None:
@@ -143,6 +147,17 @@ def main() -> int:
     )
     parser.add_argument(
         "--out", type=str, default=None, help="Aggregated output JSON path"
+    )
+    parser.add_argument(
+        "--pool-config",
+        type=str,
+        default=None,
+        help="Path to pool_config.json (default: run_data/pool_config.json)",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="Skip C++ build if binary exists",
     )
     parser.add_argument(
         "--n-candles",
@@ -230,6 +245,12 @@ def main() -> int:
         help="Write per-candle detailed_log.json next to output file",
     )
     parser.add_argument(
+        "--detailed-interval",
+        type=int,
+        default=None,
+        help="Log every N-th candle in detailed output (default: 1 = all)",
+    )
+    parser.add_argument(
         "--cow",
         action="store_true",
         help="Enable cowswap organic trade replay (uses cowswap_file from pool_config)",
@@ -238,12 +259,20 @@ def main() -> int:
 
     repo_root = Path(__file__).resolve().parents[2]
     runner = ArbHarnessRunner(repo_root, real=args.real)
-    runner.build()
+    if args.skip_build:
+        if not runner.exe_path.exists():
+            runner.build()
+    else:
+        runner.build()
 
     # Load pool_config.json
     pool_config_path = (
-        repo_root / "python" / "arb_sim" / "run_data" / "pool_config.json"
+        Path(args.pool_config)
+        if args.pool_config
+        else (repo_root / "python" / "arb_sim" / "run_data" / "pool_config.json")
     )
+    if not pool_config_path.is_absolute():
+        pool_config_path = repo_root / pool_config_path
     if not pool_config_path.exists():
         raise FileNotFoundError(f"Missing pool config: {pool_config_path}")
     with open(pool_config_path, "r") as f:
@@ -316,6 +345,7 @@ def main() -> int:
         apy_period_days=args.apy_period_days,
         apy_period_cap=args.apy_period_cap,
         detailed_log=args.detailed_log,
+        detailed_interval=args.detailed_interval,
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,
         candle_filter=args.candle_filter,
@@ -324,16 +354,31 @@ def main() -> int:
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])
     print(f"Time taken: {(datetime.now() - ts).total_seconds()} seconds")
 
-    # Derive x/y and base_pool from pool_config meta
+    # Derive grid dimension names from pool_config meta (x1..xn format)
+    def _grid_dim_names(grid: Dict[str, Any]) -> List[str]:
+        if not isinstance(grid, dict):
+            return []
+        # Parse x1, x2, ..., xN keys
+        numbered = []
+        for key, val in grid.items():
+            if not isinstance(key, str):
+                continue
+            if key.lower().startswith("x") and key[1:].isdigit():
+                name = val.get("name") if isinstance(val, dict) else None
+                if name:
+                    numbered.append((int(key[1:]), name))
+        if numbered:
+            return [name for _, name in sorted(numbered)]
+        return []
+
     def get_meta(conf: Dict[str, Any]):
         meta = conf.get("meta", {}) if isinstance(conf, dict) else {}
         grid = meta.get("grid", {}) if isinstance(meta, dict) else {}
-        x_name = (grid.get("X") or {}).get("name") if isinstance(grid, dict) else None
-        y_name = (grid.get("Y") or {}).get("name") if isinstance(grid, dict) else None
+        dim_names = _grid_dim_names(grid)
         base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
-        return x_name, y_name, base_pool
+        return dim_names, base_pool
 
-    x_name, y_name, base_pool_meta = get_meta(cfg)
+    dim_names, base_pool_meta = get_meta(cfg)
 
     # Derive base_pool from actual pools if meta missing
     def pools_list():
@@ -357,7 +402,8 @@ def main() -> int:
             for e in plist[1:]:
                 keys &= set(e.get("pool", {}).keys())
             for k in sorted(keys):
-                if k == x_name or k == y_name:
+                # Exclude all varying dim_names from base_pool
+                if k in dim_names:
                     continue
                 vals = [to_strish(e.get("pool", {}).get(k)) for e in plist]
                 if all(v == vals[0] for v in vals):
@@ -365,13 +411,11 @@ def main() -> int:
     else:
         base_pool = base_pool_meta
 
-    # Enrich runs with x/y keys/values
+    # Enrich runs with x1_key/x1_val, x2_key/x2_val, ..., xN_key/xN_val
     enriched_runs: List[Dict[str, Any]] = []
     total_trades = 0
     for rr in runs_raw:
         pool_obj = rr.get("params", {}).get("pool", {})
-        xv = str(pool_obj.get(x_name)) if x_name and x_name in pool_obj else None
-        yv = str(pool_obj.get(y_name)) if y_name and y_name in pool_obj else None
         # Accumulate total trades for metadata (no duplicate field in result)
         result_obj = rr.get("result", {}) or {}
         try:
@@ -379,14 +423,15 @@ def main() -> int:
         except Exception:
             pass
 
-        enriched = {
-            "x_key": x_name,
-            "x_val": xv,
-            "y_key": y_name,
-            "y_val": yv,
-            "result": result_obj,
-            "final_state": rr.get("final_state", {}),
-        }
+        enriched: Dict[str, Any] = {}
+        # Add x1_key/x1_val, x2_key/x2_val, etc. for each dimension
+        for idx, name in enumerate(dim_names, start=1):
+            val = str(pool_obj.get(name)) if name and name in pool_obj else None
+            enriched[f"x{idx}_key"] = name
+            enriched[f"x{idx}_val"] = val
+
+        enriched["result"] = result_obj
+        enriched["final_state"] = rr.get("final_state", {})
         if "actions" in rr:
             enriched["actions"] = rr.get("actions")
         if "states" in rr:

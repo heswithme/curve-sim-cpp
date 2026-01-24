@@ -2,7 +2,7 @@
 """
 Plot a heatmap from the latest (or given) arb_sim aggregated run JSON.
 
-Assumes a two-parameter grid (X, Y) across runs and uses the final_state
+Assumes a two-parameter grid (x1, x2) across runs and uses the final_state
 metric as Z. By default, Z = virtual_price / 1e18.
 
 Usage:
@@ -18,15 +18,25 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
-# Use non-interactive backend for headless systems (must be before pyplot import)
+# Use interactive backend if --show is passed, otherwise Agg for headless
 import matplotlib
 
-matplotlib.use("Agg")
+if "--show" in sys.argv:
+    # Try interactive backends in order of preference
+    for backend in ["macosx", "TkAgg", "Qt5Agg"]:
+        try:
+            matplotlib.use(backend)
+            break
+        except Exception:
+            continue
+else:
+    matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 
@@ -118,16 +128,16 @@ def _extract_grid(
     if not runs:
         raise SystemExit("No runs[] found in arb_run JSON")
 
-    # Determine axis names
+    # Determine axis names from x1/x2 schema
     x_name = (
-        runs[0].get("x_key")
-        or data.get("metadata", {}).get("grid", {}).get("X", {}).get("name")
-        or "X"
+        runs[0].get("x1_key")
+        or data.get("metadata", {}).get("grid", {}).get("x1", {}).get("name")
+        or "x1"
     )
     y_name = (
-        runs[0].get("y_key")
-        or data.get("metadata", {}).get("grid", {}).get("Y", {}).get("name")
-        or "Y"
+        runs[0].get("x2_key")
+        or data.get("metadata", {}).get("grid", {}).get("x2", {}).get("name")
+        or "x2"
     )
 
     x_transform = _axis_transformer(x_name)
@@ -138,8 +148,8 @@ def _extract_grid(
     xs: List[float] = []
     ys: List[float] = []
     for r in runs:
-        raw_x = r.get("x_val")
-        raw_y = r.get("y_val")
+        raw_x = r.get("x1_val")
+        raw_y = r.get("x2_val")
         xv = _to_float(raw_x) if raw_x is not None else float("nan")
         yv = _to_float(raw_y) if raw_y is not None else float("nan")
         xv = x_transform(xv)
@@ -162,7 +172,7 @@ def _extract_grid(
 
     if not points:
         raise SystemExit(
-            "No valid (x,y,z) points found in runs; ensure x_val/y_val and final_state exist."
+            "No valid (x1,x2,z) points found in runs; ensure x1_val/x2_val and final_state exist."
         )
 
     xs_sorted = sorted(sorted(set(xs)))
@@ -378,6 +388,7 @@ def main() -> int:
             or "apy" in mlow
             or "tw_real_slippage" in mlow
             or "geom_mean" in mlow
+            or "rel_price_diff" in mlow
         )
         return scale_1e18, scale_percent
 
@@ -469,17 +480,19 @@ def main() -> int:
                 ax.set_xticks([xs[i] for i in xticks])
                 ax.set_yticks([ys[i] for i in yticks])
             else:
-                aspect = "auto"
-                im = ax.imshow(Z, origin="lower", aspect=aspect, cmap=args.cmap)
+                # Use pcolormesh for proper coordinate display on hover
+                Xedges = _edges_from_centers(xs, False)
+                Yedges = _edges_from_centers(ys, False)
+                im = ax.pcolormesh(Xedges, Yedges, Z, cmap=args.cmap, shading="auto")
                 if args.square:
                     ny, nx = Z.shape
                     try:
                         ax.set_box_aspect(ny / nx)
                     except Exception:
                         ax.set_aspect("equal", adjustable="box")
-                # Tick placement at index positions
-                ax.set_xticks(xticks)
-                ax.set_yticks(yticks)
+                # Tick placement at data values
+                ax.set_xticks([xs[i] for i in xticks])
+                ax.set_yticks([ys[i] for i in yticks])
             ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
             # Only label y on first column
             if c == 0:
@@ -518,6 +531,43 @@ def main() -> int:
                 cb.set_ticks(tick_vals)
             # Fixed decimal formatter for colorbar ticks
             cb.ax.yaxis.set_major_formatter(FormatStrFormatter("%.3g"))
+
+            # Custom hover format to display x, y, and z values
+            def make_format_coord(xs_local, ys_local, Z_local):
+                """Create a format_coord function with captured data."""
+                xs_arr = np.array(xs_local)
+                ys_arr = np.array(ys_local)
+
+                def format_coord(x, y):
+                    # Find nearest grid cell
+                    if len(xs_arr) == 0 or len(ys_arr) == 0:
+                        return ""
+                    j = int(
+                        np.clip(np.searchsorted(xs_arr, x) - 0.5, 0, len(xs_arr) - 1)
+                    )
+                    i = int(
+                        np.clip(np.searchsorted(ys_arr, y) - 0.5, 0, len(ys_arr) - 1)
+                    )
+                    # Snap to nearest
+                    if j < len(xs_arr) - 1 and abs(x - xs_arr[j + 1]) < abs(
+                        x - xs_arr[j]
+                    ):
+                        j += 1
+                    if i < len(ys_arr) - 1 and abs(y - ys_arr[i + 1]) < abs(
+                        y - ys_arr[i]
+                    ):
+                        i += 1
+                    z_val = (
+                        Z_local[i, j]
+                        if 0 <= i < Z_local.shape[0] and 0 <= j < Z_local.shape[1]
+                        else float("nan")
+                    )
+                    return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
+
+                return format_coord
+
+            ax.format_coord = make_format_coord(xs, ys, Z)
+
             if args.annot:
                 for i in range(Z.shape[0]):
                     for j in range(Z.shape[1]):
@@ -557,6 +607,14 @@ def main() -> int:
     print(f"Saved heatmap(s) to {out_path}")
 
     if args.show:
+        # Adjust figure DPI and size for interactive display
+        fig.set_dpi(80)
+        # Cap figure size to fit on screen
+        max_w, max_h = 20, 14
+        cur_w, cur_h = fig.get_size_inches()
+        if cur_w > max_w or cur_h > max_h:
+            scale = min(max_w / cur_w, max_h / cur_h)
+            fig.set_size_inches(cur_w * scale, cur_h * scale)
         plt.show()
     else:
         plt.close(fig)
