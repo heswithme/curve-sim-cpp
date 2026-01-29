@@ -358,73 +358,6 @@ struct SlippageProbes {
     }
 };
 
-// APY window tracking
-template <typename T>
-struct ApyTracker {
-    uint64_t period_s{0};           // Window length in seconds
-    int cap_pct{100};               // Cap per-window APY at this percent
-    
-    uint64_t win_start_ts{0};
-    uint64_t win_end_ts{0};
-    T lb_win_start{0};              // Locked balance at window start
-    T tg_win_start{0};              // True growth at window start
-    
-    long double apy_win_wsum{0.0L};
-    long double apy_win_w{0.0L};
-    long double tg_win_wsum{0.0L};
-    long double tg_win_w{0.0L};
-    
-    static constexpr double SEC_PER_YEAR = 365.0 * 86400.0;
-    
-    void init(uint64_t start_ts, T lb_initial, T tg_initial, uint64_t period, int cap) {
-        period_s = period;
-        cap_pct = cap;
-        win_start_ts = start_ts;
-        win_end_ts = (period_s > 0) ? (start_ts + period_s) : start_ts;
-        lb_win_start = lb_initial;
-        tg_win_start = tg_initial;
-    }
-    
-    // Call this at each event to check if window ended
-    void update(uint64_t ts, T lb_curr, T tg_curr) {
-        if (period_s == 0 || ts < win_end_ts) return;
-        
-        const uint64_t dt_w = ts > win_start_ts ? (ts - win_start_ts) : 0ULL;
-        if (dt_w > 0) {
-            const long double dt_ld = static_cast<long double>(dt_w);
-            const T cap = static_cast<T>(cap_pct) / T(100);
-            
-            // LB-based APY
-            const T g = (lb_win_start > T(0)) ? (lb_curr / lb_win_start) : T(1);
-            T apy_w = static_cast<T>(std::pow(static_cast<double>(g), SEC_PER_YEAR / static_cast<double>(dt_w)) - 1.0);
-            if (apy_w > cap) apy_w = cap;
-            apy_win_wsum += static_cast<long double>(apy_w) * dt_ld;
-            apy_win_w += dt_ld;
-            
-            // True growth based APY
-            const T tg_ratio = (tg_win_start > T(0)) ? (tg_curr / tg_win_start) : T(1);
-            T gm_w = static_cast<T>(std::pow(static_cast<double>(tg_ratio), SEC_PER_YEAR / static_cast<double>(dt_w)) - 1.0);
-            if (gm_w > cap) gm_w = cap;
-            tg_win_wsum += static_cast<long double>(gm_w) * dt_ld;
-            tg_win_w += dt_ld;
-        }
-        
-        // Start new window
-        win_start_ts = ts;
-        win_end_ts = win_start_ts + period_s;
-        lb_win_start = lb_curr;
-        tg_win_start = tg_curr;
-    }
-    
-    double tw_capped_apy() const {
-        return apy_win_w > 0.0L ? static_cast<double>(apy_win_wsum / apy_win_w) : -1.0;
-    }
-    
-    double tw_geom_mean_apy() const {
-        return tg_win_w > 0.0L ? static_cast<double>(tg_win_wsum / tg_win_w) : -1.0;
-    }
-};
-
 // Complete result from event loop including all metrics
 template <typename T>
 struct EventLoopResult {
@@ -442,12 +375,6 @@ struct EventLoopResult {
     
     // Detailed per-candle log (only populated if detailed logging enabled)
     std::vector<DetailedEntry<T>> detailed_entries{};
-    
-    // APY tracker results (copied out after run)
-    double tw_capped_apy{-1.0};
-    double tw_capped_apy_net{-1.0};
-    double tw_apy_geom_mean{-1.0};
-    double tw_apy_geom_mean_net{-1.0};
     
     // Start/end timestamps for duration calculation
     uint64_t t_start{0};

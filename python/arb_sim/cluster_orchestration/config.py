@@ -145,8 +145,6 @@ class JobConfig:
     # Harness arguments
     threads_per_blade: int = CORES_PER_BLADE
     dustswap_freq: int = 600
-    apy_period_days: float = 1.0
-    apy_period_cap: int = 20
     candle_filter: Optional[float] = None
 
     # Output

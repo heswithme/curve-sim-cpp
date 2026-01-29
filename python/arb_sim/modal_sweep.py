@@ -162,8 +162,6 @@ def load_pools(max_pools: int = 0) -> tuple[list, dict, str]:
 def main(
     max_pools: int = 0,
     dustswapfreq: int = 600,
-    apy_period_days: float = 1.0,
-    apy_period_cap: int = 20,
     candle_filter: float = None,
     skip_upload: bool = False,
 ):
@@ -183,8 +181,6 @@ def main(
 
     harness_args = {
         "dustswapfreq": dustswapfreq,
-        "apy_period_days": apy_period_days,
-        "apy_period_cap": apy_period_cap,
     }
     if candle_filter is not None:
         harness_args["candle_filter"] = candle_filter

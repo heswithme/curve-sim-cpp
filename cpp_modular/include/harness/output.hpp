@@ -55,6 +55,7 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
         apy["apy"] = -1.0;
         apy["apy_net"] = -1.0;
         apy["apy_xcp"] = -1.0;
+        apy["apy_xcp_net"] = -1.0;
         apy["apy_coin0"] = -1.0;
         apy["apy_coin0_boost"] = -1.0;
         apy["apy_coin0_raw"] = -1.0;
@@ -65,15 +66,25 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     }
     
     const double exponent = SEC_PER_YEAR / duration_s;
+    const double donation_apy = static_cast<double>(r.donation_apy);
+    const double donation_growth = (donation_apy > -1.0)
+        ? std::pow(1.0 + donation_apy, duration_s / SEC_PER_YEAR)
+        : -1.0;
+    auto net_apy_from_growth = [&](double gross_growth) -> double {
+        if (!(gross_growth > 0.0) || !(donation_growth > 0.0)) return -1.0;
+        const double net_growth = gross_growth / donation_growth;
+        return (net_growth > 0.0) ? std::pow(net_growth, exponent) - 1.0 : -1.0;
+    };
     
     // Virtual price based APY
     const double vp_end = static_cast<double>(r.virtual_price);
     double apy_vp = (vp_end > 0.0) ? std::pow(vp_end, exponent) - 1.0 : -1.0;
     
-    double apy_net = apy_vp - static_cast<double>(r.donation_apy);
+    double apy_net = net_apy_from_growth(vp_end);
     // xcp_profit based APY
     const double xcp_end = static_cast<double>((r.xcp_profit + T(1)) / T(2));
     double apy_xcp = (xcp_end > 0.0) ? std::pow(xcp_end, exponent) - 1.0 : -1.0;
+    double apy_xcp_net = net_apy_from_growth(xcp_end);
     
     // TVL based APYs
     const T tvl_end = r.balances[0] + r.balances[1] * r.price_scale;
@@ -108,12 +119,13 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     if (r.true_growth_initial > T(0) && true_growth_end > T(0)) {
         const double ratio = static_cast<double>(true_growth_end / r.true_growth_initial);
         apy_geom_mean = std::pow(ratio, exponent) - 1.0;
-        apy_geom_mean_net = apy_geom_mean - static_cast<double>(r.donation_apy);
+        apy_geom_mean_net = net_apy_from_growth(ratio);
     }
     
     apy["apy"] = apy_vp;
     apy["apy_net"] = apy_net;
     apy["apy_xcp"] = apy_xcp;
+    apy["apy_xcp_net"] = apy_xcp_net;
     apy["apy_coin0"] = apy_coin0;
     apy["apy_coin0_boost"] = apy_coin0_boost;
     apy["apy_coin0_raw"] = apy_coin0_raw;
@@ -201,12 +213,6 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     // EMA-smoothed price correlation (1hr window)
     const double corr = tw.price_correlation();
     summary["price_correlation"] = corr;
-    
-    // Time-weighted APY from tracker
-    summary["tw_capped_apy"] = r.tw_capped_apy;
-    summary["tw_capped_apy_net"] = r.tw_capped_apy_net;
-    summary["tw_apy_geom_mean"] = r.tw_apy_geom_mean;
-    summary["tw_apy_geom_mean_net"] = r.tw_apy_geom_mean_net;
     
     // Timestamps and duration
     summary["t_start"] = r.t_start;

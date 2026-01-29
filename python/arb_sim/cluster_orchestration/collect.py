@@ -227,8 +227,6 @@ def collect(
             "blade_stats": blade_stats,
             "harness_args": {
                 "dustswapfreq": cfg.get("dustswap_freq"),
-                "apy_period_days": cfg.get("apy_period_days"),
-                "apy_period_cap": cfg.get("apy_period_cap"),
                 "candle_filter": cfg.get("candle_filter"),
             },
             # Include grid metadata for visualization compatibility
@@ -255,10 +253,10 @@ def collect(
         if r.get("result", {}).get("vp") is not None
     ]
     apys = [
-        r.get("result", {}).get("tw_capped_apy")
+        r.get("result", {}).get("apy")
         for r in all_runs
-        if r.get("result", {}).get("tw_capped_apy") is not None
-        and r.get("result", {}).get("tw_capped_apy") >= 0
+        if r.get("result", {}).get("apy") is not None
+        and r.get("result", {}).get("apy") >= 0
     ]
 
     merged["summary"] = {

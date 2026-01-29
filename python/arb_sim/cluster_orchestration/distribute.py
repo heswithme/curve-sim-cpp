@@ -107,8 +107,6 @@ def distribute(
     candles_file: Optional[Path] = None,
     threads_per_blade: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
-    apy_period_days: float = 1.0,
-    apy_period_cap: int = 20,
     candle_filter: Optional[float] = None,
     output_prefix: str = "cluster_sweep",
 ) -> dict:
@@ -210,8 +208,6 @@ def distribute(
         "config": {
             "threads_per_blade": threads_per_blade,
             "dustswap_freq": dustswap_freq,
-            "apy_period_days": apy_period_days,
-            "apy_period_cap": apy_period_cap,
             "candle_filter": candle_filter,
             "output_prefix": output_prefix,
         },

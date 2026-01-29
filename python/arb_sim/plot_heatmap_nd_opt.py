@@ -93,8 +93,6 @@ INSPECT_POOL_FILENAME = "inspect_pool.json"
 INSPECT_OUTPUT_FILENAME = "inspect_output.json"
 INSPECT_REAL = "double"
 INSPECT_DUSTSWAPFREQ = 600
-INSPECT_APY_PERIOD_DAYS = 1
-INSPECT_APY_PERIOD_CAP = 20
 INSPECT_THREADS = 10
 INSPECT_DETAILED_INTERVAL = 1000
 
@@ -1083,10 +1081,6 @@ class NDHeatmapExplorerOpt:
                 INSPECT_REAL,
                 "--dustswapfreq",
                 str(INSPECT_DUSTSWAPFREQ),
-                "--apy-period-days",
-                str(INSPECT_APY_PERIOD_DAYS),
-                "--apy-period-cap",
-                str(INSPECT_APY_PERIOD_CAP),
                 "-n",
                 str(INSPECT_THREADS),
                 "--detailed-log",

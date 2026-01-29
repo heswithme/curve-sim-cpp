@@ -77,8 +77,6 @@ class ArbHarnessRunner:
         userswapfreq: int | None = None,
         userswapsize: float | None = None,
         userswapthresh: float | None = None,
-        apy_period_days: float | None = None,
-        apy_period_cap: int | None = None,
         detailed_log: bool = False,
         detailed_interval: int | None = None,
         cowswap_trades: str | None = None,
@@ -111,10 +109,6 @@ class ArbHarnessRunner:
             cmd += ["--userswapsize", str(userswapsize)]
         if userswapthresh is not None:
             cmd += ["--userswapthresh", str(userswapthresh)]
-        if apy_period_days is not None:
-            cmd += ["--apy-period-days", str(apy_period_days)]
-        if apy_period_cap is not None:
-            cmd += ["--apy-period-cap", str(int(apy_period_cap))]
         if detailed_log:
             cmd += ["--detailed-log"]
         if detailed_interval is not None:
@@ -228,18 +222,6 @@ def main() -> int:
         help="Max relative deviation vs CEX to allow user swap",
     )
     parser.add_argument(
-        "--apy-period-days",
-        type=float,
-        default=None,
-        help="Rolling APY window length in days (forwarded to arb_harness)",
-    )
-    parser.add_argument(
-        "--apy-period-cap",
-        type=int,
-        default=None,
-        help="Cap per-window annualized APY percent (forwarded to arb_harness)",
-    )
-    parser.add_argument(
         "--detailed-log",
         action="store_true",
         help="Write per-candle detailed_log.json next to output file",
@@ -342,8 +324,6 @@ def main() -> int:
         userswapfreq=args.userswapfreq,
         userswapsize=args.userswapsize,
         userswapthresh=args.userswapthresh,
-        apy_period_days=args.apy_period_days,
-        apy_period_cap=args.apy_period_cap,
         detailed_log=args.detailed_log,
         detailed_interval=args.detailed_interval,
         cowswap_trades=cowswap_path,

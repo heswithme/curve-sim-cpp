@@ -44,12 +44,6 @@ struct PoolResult {
     // Slippage probes
     SlippageProbes<T> slippage_probes{};
     
-    // APY tracker results
-    double tw_capped_apy{-1.0};
-    double tw_capped_apy_net{-1.0};
-    double tw_apy_geom_mean{-1.0};
-    double tw_apy_geom_mean_net{-1.0};
-    
     // Start/end timestamps
     uint64_t t_start{0};
     uint64_t t_end{0};
@@ -106,10 +100,6 @@ struct RunConfig {
     uint64_t user_swap_freq_s{0};
     T user_swap_size_frac{T(0.01)};
     T user_swap_thresh{T(0.05)};
-    
-    // APY tracking
-    uint64_t apy_period_s{0};  // 0 = disabled
-    int apy_cap_pct{100};
     
     // Action recording
     bool save_actions{false};
@@ -209,11 +199,6 @@ PoolResult<T> run_single_pool(
             ucfg.init(init_ts);
         }
         
-        // APY config
-        ApyConfig<T> apy_cfg{};
-        apy_cfg.period_s = cfg.apy_period_s;
-        apy_cfg.cap_pct = cfg.apy_cap_pct;
-        
         // Cowswap trader: create from shared trades pointer, initialize at first event timestamp
         trading::CowswapTrader<T> cowswap_trader;
         trading::CowswapTrader<T>* cowswap_ptr = nullptr;
@@ -227,7 +212,7 @@ PoolResult<T> run_single_pool(
         auto loop_result = run_event_loop(
             pool, events, costs, dcfg, icfg, ucfg,
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
-            apy_cfg, cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
+            cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
             cowswap_ptr
         );
         
@@ -235,10 +220,6 @@ PoolResult<T> run_single_pool(
         result.metrics = loop_result.metrics;
         result.tw_metrics = loop_result.tw_metrics;
         result.slippage_probes = loop_result.slippage_probes;
-        result.tw_capped_apy = loop_result.tw_capped_apy;
-        result.tw_capped_apy_net = loop_result.tw_capped_apy_net;
-        result.tw_apy_geom_mean = loop_result.tw_apy_geom_mean;
-        result.tw_apy_geom_mean_net = loop_result.tw_apy_geom_mean_net;
         result.t_start = loop_result.t_start;
         result.t_end = loop_result.t_end;
         result.tvl_start = loop_result.tvl_start;

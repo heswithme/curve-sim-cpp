@@ -32,10 +32,6 @@ struct CliArgs {
     double user_swap_size_frac{0.01};
     double user_swap_thresh{0.05};   // max relative deviation vs CEX
     
-    // APY window settings
-    double apy_period_days{7.0};
-    int apy_period_cap_pct{100};
-    
     // Detailed logging
     bool detailed_log{false};  // write detailed_log.json next to output
     size_t detailed_interval{1};  // log every N-th event (1 = all)

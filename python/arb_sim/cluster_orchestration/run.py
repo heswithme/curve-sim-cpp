@@ -74,8 +74,6 @@ def run_blade_job(
     pool_end: int,
     threads: int,
     dustswap_freq: int,
-    apy_period_days: float,
-    apy_period_cap: int,
     candle_filter: Optional[float],
     stream_output: bool = False,
     line_buffered: bool = False,
@@ -110,10 +108,6 @@ def run_blade_job(
                 str(pool_end),
                 f"--dustswapfreq",
                 str(dustswap_freq),
-                f"--apy-period-days",
-                str(apy_period_days),
-                f"--apy-period-cap",
-                str(apy_period_cap),
             ]
             if candle_filter is not None:
                 cmd_parts.extend(["--candle-filter", str(candle_filter)])
@@ -215,8 +209,6 @@ def run_parallel(
                 pool_end=info["pool_end"],
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
                 dustswap_freq=cfg.get("dustswap_freq", 600),
-                apy_period_days=cfg.get("apy_period_days", 1.0),
-                apy_period_cap=cfg.get("apy_period_cap", 20),
                 candle_filter=cfg.get("candle_filter"),
                 stream_output=stream_blade == blade,
                 line_buffered=False,

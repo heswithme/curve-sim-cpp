@@ -112,8 +112,6 @@ def sweep(
     candles_file: Optional[Path] = None,
     threads: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
-    apy_period_days: float = 1.0,
-    apy_period_cap: int = 20,
     candle_filter: Optional[float] = None,
     output_prefix: str = "cluster_sweep",
     stream_blade: Optional[str] = None,
@@ -164,8 +162,6 @@ def sweep(
         candles_file=candles_file,
         threads_per_blade=threads,
         dustswap_freq=dustswap_freq,
-        apy_period_days=apy_period_days,
-        apy_period_cap=apy_period_cap,
         candle_filter=candle_filter,
         output_prefix=output_prefix,
     )
@@ -270,8 +266,6 @@ def main():
     # Harness parameters
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
     parser.add_argument("--dustswap-freq", type=int, default=600)
-    parser.add_argument("--apy-period-days", type=float, default=1.0)
-    parser.add_argument("--apy-period-cap", type=int, default=20)
     parser.add_argument("--candle-filter", type=float)
     parser.add_argument("--output-prefix", default="cluster_sweep")
 
@@ -318,8 +312,6 @@ def main():
         candles_file=args.candles,
         threads=args.threads,
         dustswap_freq=args.dustswap_freq,
-        apy_period_days=args.apy_period_days,
-        apy_period_cap=args.apy_period_cap,
         candle_filter=args.candle_filter,
         output_prefix=args.output_prefix,
         stream_blade=args.stream_blade,

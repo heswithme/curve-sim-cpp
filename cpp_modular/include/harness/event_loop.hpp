@@ -23,13 +23,6 @@
 namespace arb {
 namespace harness {
 
-// Configuration for APY tracking
-template <typename T>
-struct ApyConfig {
-    uint64_t period_s{0};    // 0 = disabled
-    int cap_pct{100};        // Cap per-window APY at this percent
-};
-
 // Process events and execute trades with full metrics sampling.
 // Returns EventLoopResult with all metrics.
 template <typename T, typename Pool>
@@ -43,7 +36,6 @@ EventLoopResult<T> run_event_loop(
     T min_swap_frac = T(1e-6),
     T max_swap_frac = T(1.0),
     size_t max_events = 0,  // 0 = all events
-    const ApyConfig<T>& apy_cfg = ApyConfig<T>{},
     bool save_actions = false,
     bool detailed_log = false,
     size_t detailed_interval = 1,  // log every N-th event (1 = all)
@@ -71,15 +63,6 @@ EventLoopResult<T> run_event_loop(
     std::array<T, SlippageProbes<T>::N_SIZES> probe_sizes_coin0{};
     for (size_t k = 0; k < SlippageProbes<T>::N_SIZES; ++k) {
         probe_sizes_coin0[k] = result.tvl_start * static_cast<T>(SlippageProbes<T>::SIZE_FRACS[k]);
-    }
-    
-    // APY tracker
-    ApyTracker<T> apy_tracker{};
-    if (apy_cfg.period_s > 0) {
-        // Use (xcp_profit + 1) / 2 to match old harness exactly
-        T lb_initial = (pool.xcp_profit + T(1)) / T(2);
-        apy_tracker.init(result.t_start, lb_initial, result.true_growth_initial, 
-                         apy_cfg.period_s, apy_cfg.cap_pct);
     }
     
     // Initialize loggers
@@ -130,14 +113,6 @@ EventLoopResult<T> run_event_loop(
         pool.set_block_timestamp(ev.ts);
         
         const T cex_price = static_cast<T>(ev.p_cex);
-        
-        // APY window tracking
-        if (apy_cfg.period_s > 0) {
-            // Use (xcp_profit + 1) / 2 to match old harness exactly
-            T lb_curr = (pool.xcp_profit + T(1)) / T(2);
-            T tg_curr = pools::twocrypto_fx::true_growth(pool);
-            apy_tracker.update(ev.ts, lb_curr, tg_curr);
-        }
         
         // ---- Time-weighted sampling at start of event (pre-trade) ----
         
@@ -309,17 +284,6 @@ EventLoopResult<T> run_event_loop(
     // Move logged data into result
     result.actions = action_logger.take_actions();
     result.detailed_entries = detailed_logger.take_entries();
-    
-    // Copy out APY tracker results
-    result.tw_capped_apy = apy_tracker.tw_capped_apy();
-    result.tw_apy_geom_mean = apy_tracker.tw_geom_mean_apy();
-    if (result.tw_capped_apy >= 0.0) {
-        result.tw_capped_apy_net = result.tw_capped_apy - static_cast<double>(dcfg.apy);
-    }
-    // tw_apy_geom_mean_net: always compute if tw_apy_geom_mean was set (can be negative)
-    if (result.tw_apy_geom_mean > -1.0) {
-        result.tw_apy_geom_mean_net = result.tw_apy_geom_mean - static_cast<double>(dcfg.apy);
-    }
     
     return result;
 }

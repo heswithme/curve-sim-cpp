@@ -166,10 +166,6 @@ int main(int argc, char* argv[]) {
         run_cfg.user_swap_size_frac = static_cast<RealT>(args.user_swap_size_frac);
         run_cfg.user_swap_thresh = static_cast<RealT>(args.user_swap_thresh);
         
-        // Wire APY window flags (matches old harness rounding: 7.0 days -> 604800 seconds)
-        run_cfg.apy_period_s = static_cast<uint64_t>(std::max(0.0, args.apy_period_days) * 86400.0 + 0.5);
-        run_cfg.apy_cap_pct = args.apy_period_cap_pct;
-        
         // Wire save_actions flag
         run_cfg.save_actions = args.save_actions;
         
