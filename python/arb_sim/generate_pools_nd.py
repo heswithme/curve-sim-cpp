@@ -37,8 +37,8 @@ MANUAL_GRID = None
 N_DENSE = 16
 N_SPARSE = 4
 MANUAL_GRID = {
-    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
-    "donation_apy": np.linspace(0.0, 5.0, N_DENSE),
+    "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
+    "donation_apy": np.linspace(0.0, 0.1, N_DENSE),
     "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),
     "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
 
@@ -48,7 +48,7 @@ MANUAL_GRID = {
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
     # "ma_time": [int(a / np.log(2)) for a in [10*60, 1*3600, 4*3600]],
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
-    # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
+    "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.002, 0.003]],
 
