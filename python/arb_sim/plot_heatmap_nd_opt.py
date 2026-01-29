@@ -20,6 +20,11 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
+try:
+    import orjson
+except Exception:
+    orjson = None
+
 # Force interactive backend
 import matplotlib
 
@@ -103,6 +108,8 @@ def _latest_arb_run() -> Path:
 
 
 def _load(path: Path) -> Dict[str, Any]:
+    if orjson is not None:
+        return orjson.loads(path.read_bytes())
     with path.open("r") as f:
         return json.load(f)
 

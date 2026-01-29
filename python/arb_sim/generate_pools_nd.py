@@ -16,7 +16,7 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
 # -------------------- Grid Definition --------------------
 # Each dimension: (name, min, max, count, log_scale, as_int)
-# DIMS = [
+DIMS = []
 #     # ("donation_apy", 0.00, 0.1, 10, False, False),
 #     ("A", 10 * 10_000, 200 * 10_000, 24, False, True),
 #     # ("mid_fee", 1 / 10_000 * 10**10, 10 / 10_000 * 10**10, 3, False, True),
@@ -34,19 +34,23 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 #     "donation_apy": [0.0, 0.05, 0.1],
 # }
 MANUAL_GRID = None
-N_DENSE = 32
+N_DENSE = 64
+N_SPARSE = 4
 MANUAL_GRID = {
-    "out_fee": np.linspace(100 / 10_000 * 10**10, 500 / 10_000 * 10**10, N_DENSE),
-    "A": np.linspace(1 * 10_000, 10 * 10_000, N_DENSE),
-    # "mid_fee": [int(a / 10_000 * 10**10) for a in [20, 30, 40, 50, 60]],
-    # "mid_fee": np.linspace(1 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
+    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
+    "donation_apy": np.linspace(0.0, 5.0, N_DENSE),
+    "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_SPARSE),
+    "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_SPARSE),
+
+    # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
+    # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],
+    # "out_fee": [int(a / 10_000 * 10**10) for a in [200, 300]],
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
     # "ma_time": [int(a / np.log(2)) for a in [10*60, 1*3600, 4*3600]],
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
-    # "donation_apy": np.linspace(0.0, 0.1, 11),
-    # # "fee_gamma": np.geomspace(0.001 * 10**18, 0.5 * 10**18, 8),
+    # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    # "fee_gamma": [int(a*10**18) for a in [0.002, 0.003, 0.01, 0.3]],
+    # "fee_gamma": [int(a*10**18) for a in [0.001, 0.002, 0.003]],
 
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
@@ -85,7 +89,7 @@ BASE_POOL = {
     ],
     "A": int(3.5 * 10_000),
     "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(1 / 10_000 * 1e10),
+    "mid_fee": int(42 / 10_000 * 1e10),
     "out_fee": int(240 / 10_000 * 1e10),
     "fee_gamma": int(0.003 * 1e18),
     # "allowed_extra_profit": int(1e-12 * 10**18),
