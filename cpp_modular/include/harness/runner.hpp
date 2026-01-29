@@ -53,6 +53,7 @@ struct PoolResult {
     T true_growth_initial{0};
     std::array<T, 2> initial_liq{T(0), T(0)};
     T donation_apy{0};
+    T donation_frequency{0};
     
     // Final pool state
     std::array<T, 2> balances{T(0), T(0)};
@@ -226,6 +227,7 @@ PoolResult<T> run_single_pool(
         result.true_growth_initial = loop_result.true_growth_initial;
         result.initial_liq = loop_result.initial_liq;
         result.donation_apy = loop_result.donation_apy;
+        result.donation_frequency = pool_init.donation_frequency;
         
         // Copy actions if recorded
         if (cfg.save_actions) {

@@ -34,13 +34,13 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 #     "donation_apy": [0.0, 0.05, 0.1],
 # }
 MANUAL_GRID = None
-N_DENSE = 32
+N_DENSE = 16
 N_SPARSE = 4
 MANUAL_GRID = {
     "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
     "donation_apy": np.linspace(0.0, 5.0, N_DENSE),
-    # "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_SPARSE),
-    # "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_SPARSE),
+    "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),
+    "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
 
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],

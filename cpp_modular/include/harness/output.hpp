@@ -67,9 +67,20 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     
     const double exponent = SEC_PER_YEAR / duration_s;
     const double donation_apy = static_cast<double>(r.donation_apy);
-    const double donation_growth = (donation_apy > -1.0)
-        ? std::pow(1.0 + donation_apy, duration_s / SEC_PER_YEAR)
-        : -1.0;
+    const double donation_freq_s = static_cast<double>(r.donation_frequency);
+    double donation_growth = 1.0;
+    if (donation_apy > 0.0) {
+        if (donation_freq_s > 0.0) {
+            const double period_rate = donation_apy * donation_freq_s / SEC_PER_YEAR;
+            if (period_rate <= -1.0) {
+                donation_growth = -1.0;
+            } else {
+                donation_growth = std::pow(1.0 + period_rate, duration_s / donation_freq_s);
+            }
+        } else {
+            donation_growth = std::pow(1.0 + donation_apy, duration_s / SEC_PER_YEAR);
+        }
+    }
     auto net_apy_from_growth = [&](double gross_growth) -> double {
         if (!(gross_growth > 0.0) || !(donation_growth > 0.0)) return -1.0;
         const double net_growth = gross_growth / donation_growth;
