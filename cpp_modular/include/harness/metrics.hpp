@@ -253,9 +253,11 @@ struct TimeWeightedMetrics {
             for (size_t k = 0; k < N_THRESH - 1; ++k) {
                 last_within[k] = (static_cast<double>(rel) <= THRESH_VALUES[k]);
             }
-            // Last threshold is dynamic: 1/A (A is stored with 10000 multiplier, so real A = A/10000)
-            // inv_A = 1 / (A/10000) = 10000/A
-            const double inv_A = (A > T(0)) ? 10000.0 / static_cast<double>(A) : 1.0;
+            // Last threshold is dynamic: 1/A percent (A is stored with 10000 multiplier)
+            const double A_real = static_cast<double>(A) / 10000.0;
+            // 1/A percent threshold: divide by 100 to convert percent -> fraction.
+            const double inv_A_raw = (A_real > 0.0) ? ((1.0 / A_real) / 100.0) : 1.0;
+            const double inv_A = std::min(inv_A_raw, 0.001);  // cap at 0.1%
             last_within[N_THRESH - 1] = (static_cast<double>(rel) <= inv_A);
         } else {
             for (size_t k = 0; k < N_THRESH; ++k) {

@@ -248,18 +248,37 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
         summary[kv.key()] = kv.value();
     }
     
-    // Masked APY metrics: apy_net * frac_within_X
+    // Masked APY metrics: reduce positives only (avoid improving negative APY)
     const double apy_net_val = apy_metrics["apy_net"].as_double();
-    summary["apy_mask_3"] = apy_net_val * frac_3;
-    summary["apy_mask_5"] = apy_net_val * frac_5;
-    summary["apy_mask_10"] = apy_net_val * frac_10;
-    summary["apy_mask_20"] = apy_net_val * frac_20;
-    summary["apy_mask_30"] = apy_net_val * frac_30;
-    summary["apy_mask_inv_A"] = apy_net_val * frac_inv_A;
+    auto mask_positive = [&](double frac) -> double {
+        return (apy_net_val > 0.0) ? (apy_net_val * frac) : apy_net_val;
+    };
+    summary["apy_mask_3"] = mask_positive(frac_3);
+    summary["apy_mask_5"] = mask_positive(frac_5);
+    summary["apy_mask_10"] = mask_positive(frac_10);
+    summary["apy_mask_20"] = mask_positive(frac_20);
+    summary["apy_mask_30"] = mask_positive(frac_30);
+    summary["apy_mask_inv_A"] = mask_positive(frac_inv_A);
     
-    // Correlation-adjusted APY: full credit at corr >= 0.75, linear penalty below
-    const double corr_factor = (corr > 0.0) ? std::min(1.0, corr / 0.75) : 0.0;
-    summary["apy_corr"] = apy_net_val * corr_factor;
+    // Correlation-adjusted APY: full credit at corr >= threshold,
+    // linear penalty to -1x at corr <= 0 for positive APY.
+    auto corr_adjust = [&](double threshold) -> double {
+        if (!(apy_net_val > 0.0)) return apy_net_val;
+        if (!(threshold > 0.0) || !std::isfinite(corr)) return -apy_net_val;
+        double factor = 1.0;
+        if (corr <= 0.0) {
+            factor = -1.0;
+        } else if (corr < threshold) {
+            factor = 2.0 * (corr / threshold) - 1.0;
+        }
+        return apy_net_val * factor;
+    };
+    summary["apy_corr"] = corr_adjust(0.75);
+    summary["apy_corr_50"] = corr_adjust(0.50);
+    summary["apy_corr_60"] = corr_adjust(0.60);
+    summary["apy_corr_70"] = corr_adjust(0.70);
+    summary["apy_corr_80"] = corr_adjust(0.80);
+    summary["apy_corr_90"] = corr_adjust(0.90);
     
     // Additional end-state metrics
     summary["vp"] = static_cast<double>(r.virtual_price);

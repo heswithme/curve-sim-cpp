@@ -53,6 +53,22 @@ uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10 --cow
 uv run python/arb_sim/generate_pools_generic.py && uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10 && uv run python/arb_sim/plot_heatmap.py --metrics apy,apy_net,apy_geom_mean,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,avg_rel_price_diff,tw_slippage,tw_liq_density --ncol 5
 ```
 
+**Cluster sweep (orchestration + analysis):**
+
+```bash
+# 1. Generate N-dimensional pool grid
+uv run python/arb_sim/generate_pools_nd.py
+
+# 2. Run cluster sweep (streams one blade)
+uv run python/arb_sim/cluster_orchestration/orchestrate.py --pools python/arb_sim/run_data/pool_config.json --stream-blade blade-a5
+
+# 3. Plot optimized N-d heatmaps from merged results
+uv run python/arb_sim/plot_heatmap_nd_opt.py --metrics apy_mask_3,apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,tw_real_slippage_5pct --ncol 4 --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json
+
+# 4. Enumerate local maxima for a metric
+uv run python/arb_sim/find_local_maxima_orjson.py --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json --metric apy_mask_3 --local --top 100 --enumerate
+```
+
 ## Key CLI Flags
 
 | Flag | Description |

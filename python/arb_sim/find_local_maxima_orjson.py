@@ -8,6 +8,8 @@ Use the streamed script if you need lower memory usage.
 Examples:
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --arb arb_sim/run_data/arb_run_1.json
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_mask_5 --local --top 10 --enumerate
+  uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_masked --pricethr 100 --local
+  uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric tw_real_slippage_5pct --min --local
 """
 
 from __future__ import annotations
@@ -141,6 +143,7 @@ def _build_metric_grid(
     x_keys: List[str],
     grid_values: List[List[float]],
     metric_key: str,
+    price_thr_bps: float,
 ) -> np.ndarray:
     arrays = [np.asarray(v, dtype=float) for v in grid_values]
     shape = [len(a) for a in arrays]
@@ -156,9 +159,19 @@ def _build_metric_grid(
         for i, arr in enumerate(arrays):
             idx.append(_index_for_value(arr, coord_vals[i]))
         env = _build_env(run)
-        if metric_key not in env:
-            raise KeyError(f"Metric '{metric_key}' not found in run data")
-        metric[tuple(idx)] = env[metric_key]
+        if metric_key == "apy_masked":
+            apy_net = env.get("apy_net")
+            avg_rel = env.get("avg_rel_price_diff")
+            if apy_net is None or avg_rel is None:
+                raise KeyError(
+                    "Metric 'apy_masked' requires apy_net and avg_rel_price_diff"
+                )
+            thr = price_thr_bps / 10000.0
+            metric[tuple(idx)] = apy_net if avg_rel <= thr else np.nan
+        else:
+            if metric_key not in env:
+                raise KeyError(f"Metric '{metric_key}' not found in run data")
+            metric[tuple(idx)] = env[metric_key]
 
     return metric
 
@@ -206,7 +219,16 @@ def main() -> None:
     parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON")
     parser.add_argument("--metric", type=str, default="apy_mask_3", help="Metric key")
     parser.add_argument(
+        "--pricethr",
+        type=float,
+        default=100.0,
+        help="Max avg_rel_price_diff in bps for apy_masked",
+    )
+    parser.add_argument(
         "--local", action="store_true", help="Report local maxima on grid"
+    )
+    parser.add_argument(
+        "--min", action="store_true", help="Find minima instead of maxima"
     )
     parser.add_argument(
         "--top",
@@ -236,28 +258,55 @@ def main() -> None:
         raise SystemExit("No runs found in JSON")
 
     names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
-    metric = _build_metric_grid(runs, names, x_keys, grid_values, args.metric)
-    metric = np.where(np.isfinite(metric), metric, -np.inf)
-    if not np.isfinite(metric).any():
+    metric = _build_metric_grid(
+        runs, names, x_keys, grid_values, args.metric, args.pricethr
+    )
+    finite_metric = np.where(np.isfinite(metric), metric, np.nan)
+    if not np.isfinite(finite_metric).any():
         raise SystemExit("No finite metric values found")
 
-    max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
-    max_val = float(metric[max_idx])
-    max_coord = _coord_dict(max_idx, names, grid_values)
-    print(f"global_max {args.metric}={max_val:.6f} coords={max_coord}")
+    if args.min:
+        search_metric = np.where(np.isfinite(metric), -metric, -np.inf)
+        min_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
+        min_val = float(metric[min_idx])
+        min_coord = _coord_dict(min_idx, names, grid_values)
+        print(f"global_min {args.metric}={min_val:.6f} coords={min_coord}")
 
-    if args.local:
-        coords = _local_maxima(metric, args.connectivity)
-        coords_sorted = sorted(coords, key=lambda c: metric[c], reverse=True)
-        print(f"local_maxima_count {len(coords_sorted)}")
-        limit = len(coords_sorted) if args.top <= 0 else args.top
-        for rank, coord in enumerate(coords_sorted[:limit], start=1):
-            val = float(metric[coord])
-            coord_dict = _coord_dict(coord, names, grid_values)
-            if args.enumerate:
-                print(f"local_max #{rank} {args.metric}={val:.6f} coords={coord_dict}")
-            else:
-                print(f"local_max {args.metric}={val:.6f} coords={coord_dict}")
+        if args.local:
+            coords = _local_maxima(search_metric, args.connectivity)
+            coords_sorted = sorted(coords, key=lambda c: metric[c])
+            print(f"local_minima_count {len(coords_sorted)}")
+            limit = len(coords_sorted) if args.top <= 0 else args.top
+            for rank, coord in enumerate(coords_sorted[:limit], start=1):
+                val = float(metric[coord])
+                coord_dict = _coord_dict(coord, names, grid_values)
+                if args.enumerate:
+                    print(
+                        f"local_min #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                    )
+                else:
+                    print(f"local_min {args.metric}={val:.6f} coords={coord_dict}")
+    else:
+        metric = np.where(np.isfinite(metric), metric, -np.inf)
+        max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
+        max_val = float(metric[max_idx])
+        max_coord = _coord_dict(max_idx, names, grid_values)
+        print(f"global_max {args.metric}={max_val:.6f} coords={max_coord}")
+
+        if args.local:
+            coords = _local_maxima(metric, args.connectivity)
+            coords_sorted = sorted(coords, key=lambda c: metric[c], reverse=True)
+            print(f"local_maxima_count {len(coords_sorted)}")
+            limit = len(coords_sorted) if args.top <= 0 else args.top
+            for rank, coord in enumerate(coords_sorted[:limit], start=1):
+                val = float(metric[coord])
+                coord_dict = _coord_dict(coord, names, grid_values)
+                if args.enumerate:
+                    print(
+                        f"local_max #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                    )
+                else:
+                    print(f"local_max {args.metric}={val:.6f} coords={coord_dict}")
 
 
 if __name__ == "__main__":
