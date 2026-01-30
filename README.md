@@ -67,6 +67,12 @@ uv run python/arb_sim/plot_heatmap_nd_opt.py --metrics apy_mask_3,apy,apy_net,vp
 
 # 4. Enumerate local maxima for a metric
 uv run python/arb_sim/find_local_maxima_orjson.py --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json --metric apy_mask_3 --local --top 100 --enumerate
+
+# 5. Rank grid points by multiple metrics (rank aggregation)
+uv run --with orjson python/arb_sim/find_ranked_maxima.py \
+  --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json \
+  --desc-metrics apy_net --asc-metrics avg_rel_price_diff,tw_real_slippage_5pct \
+  --weights apy_net=1 --top 20
 ```
 
 ## Key CLI Flags
