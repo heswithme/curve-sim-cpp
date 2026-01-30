@@ -9,6 +9,9 @@ Examples:
   uv run --with orjson python arb_sim/find_ranked_maxima.py \
     --desc-metrics apy_net --asc-metrics avg_rel_price_diff,tw_slippage_5pct \
     --weights apy_net=2
+  uv run --with orjson python arb_sim/find_ranked_maxima.py \
+    --desc-metrics apy_net --asc-metrics avg_rel_price_diff,tw_slippage_5pct \
+    --asc-thr avg_rel_price_diff=0.001,tw_slippage_5pct=0.002
 """
 
 from __future__ import annotations
@@ -149,21 +152,37 @@ def _format_coord(name: str, val: float) -> str | float:
     return val
 
 
-def _rank_values(values: List[float], descending: bool) -> List[int]:
+def _rank_values(
+    values: List[float],
+    descending: bool,
+    good_threshold: float | None,
+    good_when_low: bool,
+) -> List[int]:
+    ranks: List[int] = [0] * len(values)
+    good_flags = [False] * len(values)
+
+    if good_threshold is not None:
+        for i, v in enumerate(values):
+            if not math.isfinite(v):
+                continue
+            if good_when_low and v <= good_threshold:
+                good_flags[i] = True
+            if not good_when_low and v >= good_threshold:
+                good_flags[i] = True
+
     valid: List[Tuple[int, float]] = [
-        (i, v) for i, v in enumerate(values) if math.isfinite(v)
+        (i, v) for i, v in enumerate(values) if math.isfinite(v) and not good_flags[i]
     ]
     valid.sort(key=lambda item: item[1], reverse=descending)
 
-    ranks: List[int] = [0] * len(values)
     current_rank = 1
     for idx, _ in valid:
         ranks[idx] = current_rank
         current_rank += 1
 
-    worst_rank = current_rank
-    for i in range(len(values)):
-        if ranks[i] == 0:
+    worst_rank = current_rank if current_rank > 1 else 1
+    for i, v in enumerate(values):
+        if not math.isfinite(v):
             ranks[i] = worst_rank
     return ranks
 
@@ -199,6 +218,29 @@ def _parse_weights(raw: str | None) -> Dict[str, float]:
     return weights
 
 
+def _parse_thresholds(raw: str | None) -> Dict[str, float]:
+    if not raw:
+        return {}
+    thresholds: Dict[str, float] = {}
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise SystemExit(f"Invalid threshold '{part}'. Use metric=value")
+        name, val = part.split("=", 1)
+        name = name.strip()
+        val = val.strip()
+        if not name:
+            raise SystemExit(f"Invalid threshold '{part}'. Use metric=value")
+        try:
+            thr = float(val)
+        except ValueError:
+            raise SystemExit(f"Invalid threshold '{part}'. Use metric=value")
+        thresholds[name] = thr
+    return thresholds
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON")
@@ -223,6 +265,20 @@ def main() -> None:
         help="Comma-separated metric=weight (default weight 1.0)",
     )
     parser.add_argument(
+        "--asc-thr",
+        "--asc_thr",
+        type=str,
+        default="",
+        help="Comma-separated metric=threshold (good if <= threshold)",
+    )
+    parser.add_argument(
+        "--desc-thr",
+        "--desc_thr",
+        type=str,
+        default="",
+        help="Comma-separated metric=threshold (good if >= threshold)",
+    )
+    parser.add_argument(
         "--top",
         type=int,
         default=0,
@@ -242,6 +298,8 @@ def main() -> None:
         raise SystemExit(f"Metrics cannot be in both asc and desc: {sorted(overlap)}")
 
     weights = _parse_weights(args.weights)
+    asc_thresholds = _parse_thresholds(args.asc_thr)
+    desc_thresholds = _parse_thresholds(args.desc_thr)
 
     arb_path = args.arb or _latest_arb_run()
     print(f"Loading {arb_path}")
@@ -284,6 +342,16 @@ def main() -> None:
         raise SystemExit(
             f"Weights provided for unknown metrics: {sorted(unknown_weights)}"
         )
+    unknown_asc_thr = set(asc_thresholds) - set(asc_metrics)
+    if unknown_asc_thr:
+        raise SystemExit(
+            f"Thresholds provided for unknown asc metrics: {sorted(unknown_asc_thr)}"
+        )
+    unknown_desc_thr = set(desc_thresholds) - set(desc_metrics)
+    if unknown_desc_thr:
+        raise SystemExit(
+            f"Thresholds provided for unknown desc metrics: {sorted(unknown_desc_thr)}"
+        )
     metric_weights = {m: weights.get(m, 1.0) for m in metric_names}
     values_by_metric: Dict[str, List[float]] = {m: [] for m in metric_names}
 
@@ -299,9 +367,19 @@ def main() -> None:
 
     ranks_by_metric: Dict[str, List[int]] = {}
     for m in asc_metrics:
-        ranks_by_metric[m] = _rank_values(values_by_metric[m], descending=False)
+        ranks_by_metric[m] = _rank_values(
+            values_by_metric[m],
+            descending=False,
+            good_threshold=asc_thresholds.get(m),
+            good_when_low=True,
+        )
     for m in desc_metrics:
-        ranks_by_metric[m] = _rank_values(values_by_metric[m], descending=True)
+        ranks_by_metric[m] = _rank_values(
+            values_by_metric[m],
+            descending=True,
+            good_threshold=desc_thresholds.get(m),
+            good_when_low=False,
+        )
 
     ranked = []
     for i, entry in enumerate(entries):
@@ -322,6 +400,8 @@ def main() -> None:
     print(f"asc_metrics={asc_metrics}")
     print(f"desc_metrics={desc_metrics}")
     print(f"weights={metric_weights}")
+    print(f"asc_thresholds={asc_thresholds}")
+    print(f"desc_thresholds={desc_thresholds}")
     print(f"runs={len(ranked)}")
 
     limit = len(ranked) if args.top <= 0 else min(args.top, len(ranked))
