@@ -303,6 +303,7 @@ def _extract_coord(run: Dict[str, Any], dim_names: List[str]) -> List[float] | N
 def _extract_nd_arrays(
     data: Dict[str, Any],
     metrics: List[str],
+    price_thr_bps: float,
 ) -> Tuple[
     List[str],
     Dict[str, List[float]],
@@ -346,6 +347,20 @@ def _extract_nd_arrays(
     metric_scale: Dict[str, float] = {m: _metric_scale_info(m)[0] for m in metrics}
     pool_configs: Dict[Tuple[int, ...], Dict[str, Any]] = {}
 
+    def compute_metric_value(metric: str, metrics_dict: Dict[str, Any]) -> float | None:
+        if metric == "apy_masked":
+            apy_net = _to_float(metrics_dict.get("apy_net"))
+            if not math.isfinite(apy_net):
+                return None
+            avg_rel = _to_float(metrics_dict.get("avg_rel_price_diff"))
+            if not math.isfinite(avg_rel):
+                return None
+            thr = price_thr_bps / 10000.0
+            if avg_rel > thr:
+                return float("nan")
+            return apy_net
+        return None
+
     metric_items = [(m, metric_arrays[m], metric_scale[m]) for m in metrics]
 
     for r in runs:
@@ -370,8 +385,12 @@ def _extract_nd_arrays(
         for metric, arr, factor in metric_items:
             val = metrics_dict.get(metric)
             if val is None:
-                continue
-            v = _to_float(val)
+                derived = compute_metric_value(metric, metrics_dict)
+                if derived is None:
+                    continue
+                v = derived
+            else:
+                v = _to_float(val)
             if math.isfinite(v):
                 arr[idx_tuple] = v * factor
 
@@ -389,15 +408,22 @@ def _extract_nd_arrays(
 
 def _compute_global_clims(
     metric_arrays: Dict[str, np.ndarray],
+    clamp: bool = False,
 ) -> Dict[str, Tuple[float, float]]:
     clims: Dict[str, Tuple[float, float]] = {}
     for metric, arr in metric_arrays.items():
         if arr.size == 0:
             clims[metric] = (0.0, 1.0)
             continue
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            clims[metric] = (0.0, 1.0)
+            continue
+        if clamp:
+            finite = np.where(finite < 0.0, 0.0, finite)
         try:
-            zmin = float(np.nanmin(arr))
-            zmax = float(np.nanmax(arr))
+            zmin = float(np.min(finite))
+            zmax = float(np.max(finite))
         except ValueError:
             clims[metric] = (0.0, 1.0)
             continue
@@ -421,12 +447,15 @@ class NDHeatmapExplorerOpt:
         ncol: int,
         cmap: str,
         max_ticks: int,
+        clamp: bool,
+        price_thr_bps: float,
     ):
         self.data = data
         self.metrics = metrics
         self.ncol = ncol
         self.cmap = cmap
         self.max_ticks = max_ticks
+        self.clamp = clamp
 
         (
             self.dim_names,
@@ -434,7 +463,11 @@ class NDHeatmapExplorerOpt:
             self.metric_arrays,
             self.metric_scale,
             self.pool_configs,
-        ) = _extract_nd_arrays(data, metrics)
+        ) = _extract_nd_arrays(
+            data,
+            metrics,
+            price_thr_bps,
+        )
         self.n_dims = len(self.dim_names)
 
         if self.n_dims < 2:
@@ -446,7 +479,7 @@ class NDHeatmapExplorerOpt:
         self.slider_indices: Dict[str, int] = {}
         self._init_slider_indices()
 
-        self.global_clim = _compute_global_clims(self.metric_arrays)
+        self.global_clim = _compute_global_clims(self.metric_arrays, clamp=self.clamp)
 
         meta = data.get("metadata", {}) if isinstance(data, dict) else {}
         self.base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
@@ -1187,6 +1220,8 @@ def main() -> int:
     ap.add_argument("--cmap", type=str, default="turbo")
     ap.add_argument("--max-ticks", type=int, default=12)
     ap.add_argument("--ncol", type=int, default=3)
+    ap.add_argument("--clamp", action="store_true", default=False)
+    ap.add_argument("--pricethr", type=float, default=100.0)
     args = ap.parse_args()
 
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
@@ -1204,6 +1239,8 @@ def main() -> int:
         ncol=args.ncol,
         cmap=args.cmap,
         max_ticks=args.max_ticks,
+        clamp=args.clamp,
+        price_thr_bps=args.pricethr,
     )
     explorer.show()
 

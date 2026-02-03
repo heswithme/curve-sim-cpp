@@ -34,13 +34,31 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 #     "donation_apy": [0.0, 0.05, 0.1],
 # }
 MANUAL_GRID = None
-N_DENSE = 16
-N_SPARSE = 4
+N_DENSE = 32
+SPARSE_FX_GRID = {
+    # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
+    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE), # 2-200
+    "donation_apy": np.linspace(0.0, 0.2, N_DENSE), # 0-20%
+    "mid_fee": np.linspace(1 / 10_000 * 10**10, 1 / 10_000 * 10**10, 1), # 1
+    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
+    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
+}
+
+
+ZOOM_FX_GRID = {
+    # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
+    "A": np.linspace(10 * 10_000, 100 * 10_000, N_DENSE), # 
+    "donation_apy": np.linspace(0.0, 0.05, 11), # 
+    "mid_fee": np.linspace(1 / 10_000 * 10**10, 20 / 10_000 * 10**10, 5), # 1
+    "out_fee": np.linspace(20 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE), # 
+    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 
+}
+
 MANUAL_GRID = {
-    "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
+    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
     "donation_apy": np.linspace(0.0, 0.1, N_DENSE),
-    "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),
-    "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
+    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 40),
+    # "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, 10),
 
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],
@@ -48,31 +66,29 @@ MANUAL_GRID = {
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
     # "ma_time": [int(a / np.log(2)) for a in [10*60, 1*3600, 4*3600]],
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
-    "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
+    # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    # "fee_gamma": [int(a*10**18) for a in [0.001, 0.002, 0.003]],
+    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03]],
+    # "fee_gamma": [int(a*10**18) for a in [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]],
 
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
-# DIMS = [
-#     ("A", 100*10_000, 500*10_000, 1, False, True),
-#     ("mid_fee", 1 / 10_000 * 10**10, 500 / 10_000 * 10**10, 1, False, True),
-# ]
-# FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
-
+MANUAL_GRID = ZOOM_FX_GRID
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 # DEFAULT_DATAFILE = str(
 #     _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
 # )
-# DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-20180101-20251231.json"
-# )
+DEFAULT_DATAFILE = str(
+    _SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-20180101-20251231.json"
+)
 # DEFAULT_DATAFILE = str(
 #     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20251231.json"
 # )
-# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json")
+DEFAULT_DATAFILE = str(
+    _SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json"
+)
 
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
@@ -80,7 +96,8 @@ DEFAULT_COWSWAP_FEE_BPS = 0.0
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
 INIT_PRICE = _initial_price_from_file(DEFAULT_DATAFILE)
 INIT_LIQ = 10_000_000  # in coin0
-
+print(f"START_TS: {START_TS}")
+print(f"INIT_PRICE: {INIT_PRICE}")
 # -------------------- Base Templates --------------------
 BASE_POOL = {
     "initial_liquidity": [
@@ -89,7 +106,7 @@ BASE_POOL = {
     ],
     "A": int(3.5 * 10_000),
     "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(100 / 10_000 * 1e10),
+    "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(101 / 10_000 * 1e10),
     "fee_gamma": int(0.003 * 1e18),
     # "allowed_extra_profit": int(1e-12 * 10**18),
@@ -104,7 +121,7 @@ BASE_POOL = {
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 1.0,
+    "arb_fee_bps": 10.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,

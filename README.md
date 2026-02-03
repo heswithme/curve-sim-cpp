@@ -63,7 +63,7 @@ uv run python/arb_sim/generate_pools_nd.py
 uv run python/arb_sim/cluster_orchestration/orchestrate.py --pools python/arb_sim/run_data/pool_config.json --stream-blade blade-a5
 
 # 3. Plot optimized N-d heatmaps from merged results
-uv run python/arb_sim/plot_heatmap_nd_opt.py --metrics apy_mask_3,apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,tw_real_slippage_5pct --ncol 4 --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json
+uv run python/arb_sim/plot_heatmap_nd_opt.py --metrics apy_masked,apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,tw_real_slippage_5pct --ncol 4 --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json --pricethr 50
 
 # 4. Enumerate local maxima for a metric
 uv run python/arb_sim/find_local_maxima_orjson.py --arb python/arb_sim/cluster_orchestration/results/cluster_sweep_latest.json --metric apy_mask_3 --local --top 100 --enumerate
