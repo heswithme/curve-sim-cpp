@@ -341,10 +341,17 @@ def _extract_nd_arrays(
     }
 
     shape = tuple(len(dim_values_sorted[name]) for name in dim_names)
+    metrics_to_build = list(metrics)
+    if "apy_masked" in metrics_to_build:
+        for req in ("apy_net", "avg_rel_price_diff"):
+            if req not in metrics_to_build:
+                metrics_to_build.append(req)
     metric_arrays: Dict[str, np.ndarray] = {
-        m: np.full(shape, np.nan, dtype=float) for m in metrics
+        m: np.full(shape, np.nan, dtype=float) for m in metrics_to_build
     }
-    metric_scale: Dict[str, float] = {m: _metric_scale_info(m)[0] for m in metrics}
+    metric_scale: Dict[str, float] = {
+        m: _metric_scale_info(m)[0] for m in metrics_to_build
+    }
     pool_configs: Dict[Tuple[int, ...], Dict[str, Any]] = {}
 
     def compute_metric_value(metric: str, metrics_dict: Dict[str, Any]) -> float | None:
@@ -361,7 +368,7 @@ def _extract_nd_arrays(
             return apy_net
         return None
 
-    metric_items = [(m, metric_arrays[m], metric_scale[m]) for m in metrics]
+    metric_items = [(m, metric_arrays[m], metric_scale[m]) for m in metrics_to_build]
 
     for r in runs:
         coords = _extract_coord(r, dim_names)
@@ -456,6 +463,8 @@ class NDHeatmapExplorerOpt:
         self.cmap = cmap
         self.max_ticks = max_ticks
         self.clamp = clamp
+        self.price_thr_bps = max(1.0, float(price_thr_bps))
+        self.has_price_thr_slider = "apy_masked" in self.metrics
 
         (
             self.dim_names,
@@ -469,6 +478,14 @@ class NDHeatmapExplorerOpt:
             price_thr_bps,
         )
         self.n_dims = len(self.dim_names)
+
+        self.price_thr_max_bps = (
+            self._compute_price_thr_max_bps()
+            if self.has_price_thr_slider
+            else max(1.0, self.price_thr_bps)
+        )
+        if self.price_thr_bps > self.price_thr_max_bps:
+            self.price_thr_bps = self.price_thr_max_bps
 
         if self.n_dims < 2:
             raise SystemExit("Need at least 2 dimensions for a heatmap")
@@ -509,6 +526,9 @@ class NDHeatmapExplorerOpt:
         self.slider_axes = []
         self.slider_labels = []
         self.slider_value_texts = []
+        self.price_thr_slider = None
+        self.price_thr_label = None
+        self.price_thr_value_text = None
         self.x_radio = None
         self.y_radio = None
         self._updating_radios = False
@@ -528,8 +548,10 @@ class NDHeatmapExplorerOpt:
             if name not in (self.x_name, self.y_name)
         ]
 
-    def _slice_metric(self, metric: str) -> np.ndarray:
-        arr = self.metric_arrays[metric]
+    def _slice_raw(self, metric: str) -> np.ndarray | None:
+        arr = self.metric_arrays.get(metric)
+        if arr is None:
+            return None
         x_idx = self.dim_names.index(self.x_name)
         y_idx = self.dim_names.index(self.y_name)
 
@@ -545,6 +567,26 @@ class NDHeatmapExplorerOpt:
         if x_idx < y_idx:
             slice_arr = slice_arr.T
 
+        return slice_arr
+
+    def _slice_metric(self, metric: str) -> np.ndarray:
+        if metric == "apy_masked":
+            apy_slice = self._slice_raw("apy_net")
+            rel_slice = self._slice_raw("avg_rel_price_diff")
+            if apy_slice is None or rel_slice is None:
+                xs = self.dim_values[self.x_name]
+                ys = self.dim_values[self.y_name]
+                return np.full((len(ys), len(xs)), np.nan, dtype=float)
+            thr_pct = self.price_thr_bps / 100.0
+            masked = np.array(apy_slice, copy=True)
+            masked[rel_slice > thr_pct] = np.nan
+            return masked
+
+        slice_arr = self._slice_raw(metric)
+        if slice_arr is None:
+            xs = self.dim_values[self.x_name]
+            ys = self.dim_values[self.y_name]
+            return np.full((len(ys), len(xs)), np.nan, dtype=float)
         return slice_arr
 
     def _attach_format_coord(self, ax, xs, ys, mesh):
@@ -683,13 +725,15 @@ class NDHeatmapExplorerOpt:
         slider_dims = self._get_slider_dims()
         n_sliders = len(slider_dims)
         n_dims = len(self.dim_names)
+        extra_sliders = 1 if self.has_price_thr_slider else 0
+        n_sliders_total = n_sliders + extra_sliders
 
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
         total_content = (
             0.03
             + 2 * (RADIO_LABEL_GAP + radio_box_height + RADIO_GROUP_GAP)
-            + n_sliders * SLIDER_HEIGHT
+            + n_sliders_total * SLIDER_HEIGHT
             + SLIDER_TOP_GAP
         )
         height_mult = CTRL_HEIGHT_MULT + max(0, n_dims - 5) * 0.3
@@ -809,7 +853,74 @@ class NDHeatmapExplorerOpt:
             slider.on_changed(make_update(dim_name, vals, val_text))
             self.sliders.append((dim_name, slider))
 
+        if self.has_price_thr_slider:
+            slider_y = slider_start_y - n_sliders * SLIDER_HEIGHT
+            lbl = self.fig_controls.text(
+                0.05,
+                slider_y + SLIDER_LABEL_OFFSET,
+                "price thr (bps):",
+                ha="left",
+                va="bottom",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.price_thr_label = lbl
+            self.slider_labels.append(lbl)
+
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
+            self.slider_axes.append(slider_ax)
+
+            slider_max = max(1.0, self.price_thr_max_bps)
+            slider = Slider(
+                slider_ax,
+                "",
+                1,
+                slider_max,
+                valinit=self.price_thr_bps,
+                valstep=1,
+            )
+            slider.valtext.set_visible(False)
+            self.price_thr_slider = slider
+
+            val_text = self.fig_controls.text(
+                SLIDER_VALUE_X,
+                slider_y,
+                f"{int(self.price_thr_bps)}",
+                ha="left",
+                va="center",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.price_thr_value_text = val_text
+            self.slider_value_texts.append(val_text)
+
+            def update_price_thr(val):
+                self.price_thr_bps = float(val)
+                if self.price_thr_value_text is not None:
+                    self.price_thr_value_text.set_text(f"{int(self.price_thr_bps)}")
+                self._refresh_heatmaps()
+
+            slider.on_changed(update_price_thr)
+
         self.fig_controls.canvas.draw_idle()
+
+    def _compute_price_thr_max_bps(self) -> float:
+        arr = self.metric_arrays.get("avg_rel_price_diff")
+        if arr is None:
+            return max(1.0, self.price_thr_bps)
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return max(1.0, self.price_thr_bps)
+        max_percent = float(np.nanmax(finite))
+        max_bps = max_percent * 100.0
+        if not math.isfinite(max_bps) or max_bps <= 0.0:
+            return max(1.0, self.price_thr_bps)
+        return max_bps
 
     def _on_x_changed(self, label: str):
         if self._updating_radios:
@@ -862,6 +973,9 @@ class NDHeatmapExplorerOpt:
         self.slider_axes = []
         self.slider_labels = []
         self.slider_value_texts = []
+        self.price_thr_slider = None
+        self.price_thr_label = None
+        self.price_thr_value_text = None
 
         new_slider_indices = {}
         for name in self.dim_names:
@@ -874,6 +988,7 @@ class NDHeatmapExplorerOpt:
 
         slider_dims = self._get_slider_dims()
         n_dims = len(self.dim_names)
+        n_sliders = len(slider_dims)
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
         x_label_y = RADIO_X_LABEL_Y
@@ -938,6 +1053,60 @@ class NDHeatmapExplorerOpt:
 
             slider.on_changed(make_update(dim_name, vals, val_text))
             self.sliders.append((dim_name, slider))
+
+        if self.has_price_thr_slider:
+            slider_y = slider_start_y - n_sliders * SLIDER_HEIGHT
+            lbl = self.fig_controls.text(
+                0.05,
+                slider_y + SLIDER_LABEL_OFFSET,
+                "price thr (bps):",
+                ha="left",
+                va="bottom",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.price_thr_label = lbl
+            self.slider_labels.append(lbl)
+
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
+            self.slider_axes.append(slider_ax)
+
+            slider_max = max(1.0, self.price_thr_max_bps)
+            slider = Slider(
+                slider_ax,
+                "",
+                1,
+                slider_max,
+                valinit=self.price_thr_bps,
+                valstep=1,
+            )
+            slider.valtext.set_visible(False)
+            self.price_thr_slider = slider
+
+            val_text = self.fig_controls.text(
+                SLIDER_VALUE_X,
+                slider_y,
+                f"{int(self.price_thr_bps)}",
+                ha="left",
+                va="center",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.price_thr_value_text = val_text
+            self.slider_value_texts.append(val_text)
+
+            def update_price_thr(val):
+                self.price_thr_bps = float(val)
+                if self.price_thr_value_text is not None:
+                    self.price_thr_value_text.set_text(f"{int(self.price_thr_bps)}")
+                self._refresh_heatmaps()
+
+            slider.on_changed(update_price_thr)
 
         self.fig_controls.canvas.draw_idle()
 

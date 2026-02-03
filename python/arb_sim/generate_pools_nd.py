@@ -56,9 +56,9 @@ ZOOM_FX_GRID = {
 
 MANUAL_GRID = {
     "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
-    "donation_apy": np.linspace(0.0, 0.1, N_DENSE),
-    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 40),
-    # "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, 10),
+    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
+    "out_fee": np.linspace(101 / 10_000 * 10**10, 200 / 10_000 * 10**10, 11),
+    "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, 11),
 
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],
@@ -68,15 +68,14 @@ MANUAL_GRID = {
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
     # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03]],
+    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
     # "fee_gamma": [int(a*10**18) for a in [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]],
 
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
-MANUAL_GRID = ZOOM_FX_GRID
+MANUAL_GRID = MANUAL_GRID
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
-# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 # DEFAULT_DATAFILE = str(
 #     _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
 # )
@@ -89,6 +88,8 @@ DEFAULT_DATAFILE = str(
 DEFAULT_DATAFILE = str(
     _SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json"
 )
+
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
@@ -121,7 +122,7 @@ BASE_POOL = {
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 10.0,
+    "arb_fee_bps": 1.0,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,
