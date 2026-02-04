@@ -118,6 +118,13 @@ EventLoopResult<T> run_event_loop(
         
         // Price error sampling
         tw.sample_price_error(ev.ts, pool.cached_price_scale, cex_price);
+
+        // Disbalance sampling (x' normalized by cex_price)
+        {
+            const T x0p = pool.balances[0];
+            const T x1p = pool.balances[1] * cex_price;
+            tw.sample_imbalance(ev.ts, x0p, x1p);
+        }
         
         // Fee sampling
         {

@@ -205,6 +205,7 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     summary["avg_rel_price_diff"] = tw.avg_rel_price_diff();
     summary["max_rel_price_diff"] = tw.max_rel_price_diff();
     summary["cex_follow_time_frac"] = tw.cex_follow_time_frac(r.duration_s());
+    summary["avg_imbalance"] = tw.avg_imbalance();
     
     // Multi-threshold price tracking: fraction of time within X% of CEX
     const double frac_3 = tw.pct_within(0, r.duration_s());

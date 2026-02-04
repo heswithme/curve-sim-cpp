@@ -271,6 +271,7 @@ def _metric_scale_flags(metric: str) -> Tuple[bool, bool]:
         or "geom_mean" in mlow
         or "rel_price_diff" in mlow
         or "tw_avg_pool_fee" in mlow
+        or "imbalance" in mlow
     )
     return scale_1e18, scale_percent
 
@@ -304,11 +305,13 @@ def _extract_nd_arrays(
     data: Dict[str, Any],
     metrics: List[str],
     price_thr_bps: float,
+    imbalance_thr_pct: float,
 ) -> Tuple[
     List[str],
     Dict[str, List[float]],
     Dict[str, np.ndarray],
     Dict[str, float],
+    Dict[Tuple[int, ...], Dict[str, Any]],
     Dict[Tuple[int, ...], Dict[str, Any]],
 ]:
     runs = data.get("runs", [])
@@ -342,8 +345,8 @@ def _extract_nd_arrays(
 
     shape = tuple(len(dim_values_sorted[name]) for name in dim_names)
     metrics_to_build = list(metrics)
-    if "apy_masked" in metrics_to_build:
-        for req in ("apy_net", "avg_rel_price_diff"):
+    if "apy_masked" in metrics_to_build or "apy_masked_imbalance" in metrics_to_build:
+        for req in ("apy_net", "avg_rel_price_diff", "avg_imbalance"):
             if req not in metrics_to_build:
                 metrics_to_build.append(req)
     metric_arrays: Dict[str, np.ndarray] = {
@@ -353,17 +356,22 @@ def _extract_nd_arrays(
         m: _metric_scale_info(m)[0] for m in metrics_to_build
     }
     pool_configs: Dict[Tuple[int, ...], Dict[str, Any]] = {}
+    metrics_lookup: Dict[Tuple[int, ...], Dict[str, Any]] = {}
 
     def compute_metric_value(metric: str, metrics_dict: Dict[str, Any]) -> float | None:
-        if metric == "apy_masked":
+        if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_net = _to_float(metrics_dict.get("apy_net"))
             if not math.isfinite(apy_net):
                 return None
             avg_rel = _to_float(metrics_dict.get("avg_rel_price_diff"))
             if not math.isfinite(avg_rel):
                 return None
-            thr = price_thr_bps / 10000.0
-            if avg_rel > thr:
+            avg_imb = _to_float(metrics_dict.get("avg_imbalance"))
+            if not math.isfinite(avg_imb):
+                return None
+            thr_rel = price_thr_bps / 10000.0
+            thr_imb = imbalance_thr_pct / 100.0
+            if avg_rel > thr_rel or avg_imb < thr_imb:
                 return float("nan")
             return apy_net
         return None
@@ -401,6 +409,8 @@ def _extract_nd_arrays(
             if math.isfinite(v):
                 arr[idx_tuple] = v * factor
 
+        metrics_lookup[idx_tuple] = metrics_dict
+
         params = r.get("params", {})
         pool = params.get("pool") or r.get("pool")
         costs = params.get("costs")
@@ -410,7 +420,14 @@ def _extract_nd_arrays(
             else:
                 pool_configs[idx_tuple] = {"pool": pool}
 
-    return dim_names, dim_values_sorted, metric_arrays, metric_scale, pool_configs
+    return (
+        dim_names,
+        dim_values_sorted,
+        metric_arrays,
+        metric_scale,
+        pool_configs,
+        metrics_lookup,
+    )
 
 
 def _compute_global_clims(
@@ -456,6 +473,7 @@ class NDHeatmapExplorerOpt:
         max_ticks: int,
         clamp: bool,
         price_thr_bps: float,
+        imbalance_thr_pct: float,
     ):
         self.data = data
         self.metrics = metrics
@@ -464,7 +482,13 @@ class NDHeatmapExplorerOpt:
         self.max_ticks = max_ticks
         self.clamp = clamp
         self.price_thr_bps = max(1.0, float(price_thr_bps))
-        self.has_price_thr_slider = "apy_masked" in self.metrics
+        self.imbalance_thr_pct = max(0.0, float(imbalance_thr_pct))
+        self.has_price_thr_slider = (
+            "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
+        )
+        self.has_imbalance_thr_slider = (
+            "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
+        )
 
         (
             self.dim_names,
@@ -472,10 +496,12 @@ class NDHeatmapExplorerOpt:
             self.metric_arrays,
             self.metric_scale,
             self.pool_configs,
+            self.metrics_lookup,
         ) = _extract_nd_arrays(
             data,
             metrics,
             price_thr_bps,
+            imbalance_thr_pct,
         )
         self.n_dims = len(self.dim_names)
 
@@ -484,8 +510,16 @@ class NDHeatmapExplorerOpt:
             if self.has_price_thr_slider
             else max(1.0, self.price_thr_bps)
         )
-        if self.price_thr_bps > self.price_thr_max_bps:
+        if self.has_price_thr_slider:
             self.price_thr_bps = self.price_thr_max_bps
+
+        self.imbalance_thr_max_pct = (
+            self._compute_imbalance_thr_max_pct()
+            if self.has_imbalance_thr_slider
+            else max(0.0, self.imbalance_thr_pct)
+        )
+        if self.imbalance_thr_pct > self.imbalance_thr_max_pct:
+            self.imbalance_thr_pct = self.imbalance_thr_max_pct
 
         if self.n_dims < 2:
             raise SystemExit("Need at least 2 dimensions for a heatmap")
@@ -519,6 +553,8 @@ class NDHeatmapExplorerOpt:
 
         self.fig_main = None
         self.fig_controls = None
+        self.fig_metrics = None
+        self.metrics_text = None
         self.axes = []
         self.meshes = []
         self.colorbars = []
@@ -529,11 +565,18 @@ class NDHeatmapExplorerOpt:
         self.price_thr_slider = None
         self.price_thr_label = None
         self.price_thr_value_text = None
+        self.imbalance_thr_slider = None
+        self.imbalance_thr_label = None
+        self.imbalance_thr_value_text = None
+        self.imbalance_thr_slider = None
+        self.imbalance_thr_label = None
+        self.imbalance_thr_value_text = None
         self.x_radio = None
         self.y_radio = None
         self._updating_radios = False
 
         self._setup_figures()
+        self._setup_metrics_window()
 
     def _init_slider_indices(self):
         self.slider_indices = {}
@@ -570,16 +613,18 @@ class NDHeatmapExplorerOpt:
         return slice_arr
 
     def _slice_metric(self, metric: str) -> np.ndarray:
-        if metric == "apy_masked":
+        if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_slice = self._slice_raw("apy_net")
             rel_slice = self._slice_raw("avg_rel_price_diff")
-            if apy_slice is None or rel_slice is None:
+            imb_slice = self._slice_raw("avg_imbalance")
+            if apy_slice is None or rel_slice is None or imb_slice is None:
                 xs = self.dim_values[self.x_name]
                 ys = self.dim_values[self.y_name]
                 return np.full((len(ys), len(xs)), np.nan, dtype=float)
-            thr_pct = self.price_thr_bps / 100.0
+            thr_rel_pct = self.price_thr_bps / 100.0
             masked = np.array(apy_slice, copy=True)
-            masked[rel_slice > thr_pct] = np.nan
+            masked[rel_slice > thr_rel_pct] = np.nan
+            masked[imb_slice < self.imbalance_thr_pct] = np.nan
             return masked
 
         slice_arr = self._slice_raw(metric)
@@ -725,7 +770,11 @@ class NDHeatmapExplorerOpt:
         slider_dims = self._get_slider_dims()
         n_sliders = len(slider_dims)
         n_dims = len(self.dim_names)
-        extra_sliders = 1 if self.has_price_thr_slider else 0
+        extra_sliders = 0
+        if self.has_price_thr_slider:
+            extra_sliders += 1
+        if self.has_imbalance_thr_slider:
+            extra_sliders += 1
         n_sliders_total = n_sliders + extra_sliders
 
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
@@ -853,8 +902,10 @@ class NDHeatmapExplorerOpt:
             slider.on_changed(make_update(dim_name, vals, val_text))
             self.sliders.append((dim_name, slider))
 
+        slider_offset = n_sliders
+
         if self.has_price_thr_slider:
-            slider_y = slider_start_y - n_sliders * SLIDER_HEIGHT
+            slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
@@ -906,8 +957,152 @@ class NDHeatmapExplorerOpt:
                 self._refresh_heatmaps()
 
             slider.on_changed(update_price_thr)
+            slider_offset += 1
+
+        if self.has_imbalance_thr_slider:
+            slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
+            lbl = self.fig_controls.text(
+                0.05,
+                slider_y + SLIDER_LABEL_OFFSET,
+                "imbalance thr (%):",
+                ha="left",
+                va="bottom",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.imbalance_thr_label = lbl
+            self.slider_labels.append(lbl)
+
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
+            self.slider_axes.append(slider_ax)
+
+            slider_max = max(1.0, self.imbalance_thr_max_pct)
+            slider = Slider(
+                slider_ax,
+                "",
+                0,
+                slider_max,
+                valinit=self.imbalance_thr_pct,
+                valstep=1,
+            )
+            slider.valtext.set_visible(False)
+            self.imbalance_thr_slider = slider
+
+            val_text = self.fig_controls.text(
+                SLIDER_VALUE_X,
+                slider_y,
+                f"{self.imbalance_thr_pct:.0f}",
+                ha="left",
+                va="center",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.imbalance_thr_value_text = val_text
+            self.slider_value_texts.append(val_text)
+
+            def update_imbalance_thr(val):
+                self.imbalance_thr_pct = float(val)
+                if self.imbalance_thr_value_text is not None:
+                    self.imbalance_thr_value_text.set_text(
+                        f"{self.imbalance_thr_pct:.0f}"
+                    )
+                self._refresh_heatmaps()
+
+            slider.on_changed(update_imbalance_thr)
 
         self.fig_controls.canvas.draw_idle()
+
+    def _setup_metrics_window(self):
+        if self.fig_metrics is not None:
+            return
+        self.fig_metrics = plt.figure(figsize=(6.5, 9.0), num="Metrics")
+        self.fig_metrics.text(
+            0.02,
+            0.98,
+            "Metrics (left click a heatmap cell)",
+            ha="left",
+            va="top",
+            fontsize=10,
+            fontweight="bold",
+        )
+        self.metrics_text = self.fig_metrics.text(
+            0.02,
+            0.94,
+            "",
+            ha="left",
+            va="top",
+            fontsize=8,
+            family="monospace",
+        )
+        self.fig_metrics.canvas.draw_idle()
+
+    def _format_metric_value(self, value: Any) -> str:
+        if isinstance(value, (int, float, np.floating)):
+            return f"{float(value):.6g}"
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "[" + ", ".join(self._format_metric_value(v) for v in value) + "]"
+        if isinstance(value, dict):
+            try:
+                return json.dumps(value, sort_keys=True)
+            except Exception:
+                return str(value)
+        return str(value)
+
+    def _metric_display_value(self, metric: str, metrics: Dict[str, Any] | None) -> str:
+        if metrics is None:
+            return "missing"
+
+        if metric in {"apy_masked", "apy_masked_imbalance"}:
+            apy_net = _to_float(metrics.get("apy_net"))
+            avg_rel = _to_float(metrics.get("avg_rel_price_diff"))
+            avg_imb = _to_float(metrics.get("avg_imbalance"))
+            if (
+                not math.isfinite(apy_net)
+                or not math.isfinite(avg_rel)
+                or not math.isfinite(avg_imb)
+            ):
+                return "nan"
+            thr_rel = self.price_thr_bps / 10000.0
+            thr_imb = self.imbalance_thr_pct / 100.0
+            if avg_rel > thr_rel or avg_imb < thr_imb:
+                return "nan"
+            scale, _ = _metric_scale_info(metric)
+            return self._format_metric_value(apy_net * scale)
+
+        raw = metrics.get(metric)
+        if raw is None:
+            return "missing"
+
+        if isinstance(raw, (int, float, np.floating)):
+            scale, _ = _metric_scale_info(metric)
+            return self._format_metric_value(float(raw) * scale)
+        return self._format_metric_value(raw)
+
+    def _update_metrics_window(
+        self, idx_tuple: Tuple[int, ...], coords: Dict[str, float]
+    ):
+        if self.metrics_text is None or self.fig_metrics is None:
+            return
+        metrics = self.metrics_lookup.get(idx_tuple)
+        lines = ["coords:"]
+        for name in self.dim_names:
+            lines.append(f"  {name}: {coords[name]}")
+        lines.append("")
+        lines.append("metrics:")
+        for metric in self.metrics:
+            _, suffix = _metric_scale_info(metric)
+            label = f"{metric}{suffix}" if suffix else metric
+            val = self._metric_display_value(metric, metrics)
+            lines.append(f"  {label}: {val}")
+        self.metrics_text.set_text("\n".join(lines))
+        self.fig_metrics.canvas.draw_idle()
 
     def _compute_price_thr_max_bps(self) -> float:
         arr = self.metric_arrays.get("avg_rel_price_diff")
@@ -921,6 +1116,18 @@ class NDHeatmapExplorerOpt:
         if not math.isfinite(max_bps) or max_bps <= 0.0:
             return max(1.0, self.price_thr_bps)
         return max_bps
+
+    def _compute_imbalance_thr_max_pct(self) -> float:
+        arr = self.metric_arrays.get("avg_imbalance")
+        if arr is None:
+            return max(1.0, self.imbalance_thr_pct)
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return max(1.0, self.imbalance_thr_pct)
+        max_pct = float(np.nanmax(finite))
+        if not math.isfinite(max_pct) or max_pct <= 0.0:
+            return max(1.0, self.imbalance_thr_pct)
+        return max_pct
 
     def _on_x_changed(self, label: str):
         if self._updating_radios:
@@ -1054,8 +1261,10 @@ class NDHeatmapExplorerOpt:
             slider.on_changed(make_update(dim_name, vals, val_text))
             self.sliders.append((dim_name, slider))
 
+        slider_offset = n_sliders
+
         if self.has_price_thr_slider:
-            slider_y = slider_start_y - n_sliders * SLIDER_HEIGHT
+            slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
@@ -1107,6 +1316,63 @@ class NDHeatmapExplorerOpt:
                 self._refresh_heatmaps()
 
             slider.on_changed(update_price_thr)
+            slider_offset += 1
+
+        if self.has_imbalance_thr_slider:
+            slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
+            lbl = self.fig_controls.text(
+                0.05,
+                slider_y + SLIDER_LABEL_OFFSET,
+                "imbalance thr (%):",
+                ha="left",
+                va="bottom",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.imbalance_thr_label = lbl
+            self.slider_labels.append(lbl)
+
+            slider_ax = self.fig_controls.add_axes(
+                [
+                    SLIDER_BOX_LEFT,
+                    slider_y - SLIDER_BOX_Y_OFFSET,
+                    SLIDER_BOX_WIDTH,
+                    SLIDER_BOX_HEIGHT,
+                ]
+            )
+            self.slider_axes.append(slider_ax)
+
+            slider_max = max(1.0, self.imbalance_thr_max_pct)
+            slider = Slider(
+                slider_ax,
+                "",
+                0,
+                slider_max,
+                valinit=self.imbalance_thr_pct,
+                valstep=1,
+            )
+            slider.valtext.set_visible(False)
+            self.imbalance_thr_slider = slider
+
+            val_text = self.fig_controls.text(
+                SLIDER_VALUE_X,
+                slider_y,
+                f"{self.imbalance_thr_pct:.0f}",
+                ha="left",
+                va="center",
+                fontsize=SLIDER_FONTSIZE,
+            )
+            self.imbalance_thr_value_text = val_text
+            self.slider_value_texts.append(val_text)
+
+            def update_imbalance_thr(val):
+                self.imbalance_thr_pct = float(val)
+                if self.imbalance_thr_value_text is not None:
+                    self.imbalance_thr_value_text.set_text(
+                        f"{self.imbalance_thr_pct:.0f}"
+                    )
+                self._refresh_heatmaps()
+
+            slider.on_changed(update_imbalance_thr)
 
         self.fig_controls.canvas.draw_idle()
 
@@ -1319,7 +1585,8 @@ class NDHeatmapExplorerOpt:
     def _on_click(self, event):
         is_shift_click = event.button == 1 and event.key == "shift"
         is_right_click = event.button == 3
-        if not (is_shift_click or is_right_click):
+        is_left_click = event.button == 1 and not is_shift_click
+        if not (is_left_click or is_shift_click or is_right_click):
             return
         if event.inaxes not in self.axes:
             return
@@ -1347,6 +1614,10 @@ class NDHeatmapExplorerOpt:
             coords[name] = val
 
         idx_tuple = tuple(indices)
+        if is_left_click:
+            self._update_metrics_window(idx_tuple, coords)
+            return
+
         pool_config = self._build_inspect_pool_config(coords, idx_tuple)
 
         print("\nSelected point:")
@@ -1370,8 +1641,9 @@ class NDHeatmapExplorerOpt:
         slider_dims = self._get_slider_dims()
         if slider_dims:
             print(f"Sliders: {[name for _, name in slider_dims]}")
-        print("\nShift+click or right-click to run inspect sim.")
-        print("Close both windows to exit.")
+        print("\nLeft click updates metrics window.")
+        print("Shift+click or right-click to run inspect sim.")
+        print("Close all windows to exit.")
         plt.show()
 
 
@@ -1391,6 +1663,7 @@ def main() -> int:
     ap.add_argument("--ncol", type=int, default=3)
     ap.add_argument("--clamp", action="store_true", default=False)
     ap.add_argument("--pricethr", type=float, default=100.0)
+    ap.add_argument("--imbalancethr", type=float, default=0.0)
     args = ap.parse_args()
 
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
@@ -1410,6 +1683,7 @@ def main() -> int:
         max_ticks=args.max_ticks,
         clamp=args.clamp,
         price_thr_bps=args.pricethr,
+        imbalance_thr_pct=args.imbalancethr,
     )
     explorer.show()
 

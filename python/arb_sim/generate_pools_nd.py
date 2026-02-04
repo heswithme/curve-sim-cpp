@@ -35,6 +35,7 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 # }
 MANUAL_GRID = None
 N_DENSE = 32
+ARB_FEE_BPS = 10
 SPARSE_FX_GRID = {
     # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
     "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE), # 2-200
@@ -55,10 +56,10 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),
+    "A": np.linspace(2 * 10_000, 50 * 10_000, N_DENSE),
     "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
-    "out_fee": np.linspace(101 / 10_000 * 10**10, 200 / 10_000 * 10**10, 11),
-    "mid_fee": np.linspace(10 / 10_000 * 10**10, 100 / 10_000 * 10**10, 11),
+    "out_fee": np.linspace(151 / 10_000 * 10**10, 300 / 10_000 * 10**10, 16),
+    "mid_fee": np.linspace(10 / 10_000 * 10**10, 150 / 10_000 * 10**10, 16),
 
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],
@@ -73,7 +74,7 @@ MANUAL_GRID = {
 
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
-MANUAL_GRID = MANUAL_GRID
+MANUAL_GRID = SPARSE_FX_GRID
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 # DEFAULT_DATAFILE = str(
@@ -89,7 +90,7 @@ DEFAULT_DATAFILE = str(
     _SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json"
 )
 
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
@@ -122,7 +123,7 @@ BASE_POOL = {
 }
 
 BASE_COSTS = {
-    "arb_fee_bps": 1.0,
+    "arb_fee_bps": ARB_FEE_BPS,
     "gas_coin0": 0.0,
     "use_volume_cap": False,
     "volume_cap_mult": 1,

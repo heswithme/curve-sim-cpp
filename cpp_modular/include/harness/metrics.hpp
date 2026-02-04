@@ -72,6 +72,13 @@ struct TimeWeightedMetrics {
     T last_rel_abs{0};                   // |ps/p_cex - 1| at previous event
     uint64_t last_ts_err{0};
     bool have_err{false};
+
+    // Time-weighted imbalance: 4*x0'*x1'/(x0'+x1')^2
+    long double sum_imbalance_dt{0.0L};
+    long double imbalance_dt{0.0L};
+    T last_imbalance{0};
+    uint64_t last_ts_imbalance{0};
+    bool have_imbalance{false};
     
     // Time-weighted pool fee (fraction) across time
     long double tw_fee_sum_dt{0.0L};
@@ -126,6 +133,12 @@ struct TimeWeightedMetrics {
     
     double max_rel_price_diff() const {
         return static_cast<double>(max_rel_abs);
+    }
+
+    double avg_imbalance() const {
+        return imbalance_dt > 0.0L
+            ? static_cast<double>(sum_imbalance_dt / imbalance_dt)
+            : -1.0;
     }
     
     double tw_avg_pool_fee() const {
@@ -194,6 +207,24 @@ struct TimeWeightedMetrics {
         last_rel_abs = cur_rel_abs;
         last_ts_err = ts;
         have_err = true;
+    }
+
+    void sample_imbalance(uint64_t ts, T x0p, T x1p) {
+        T cur = T(0);
+        const T denom = x0p + x1p;
+        if (denom > T(0)) {
+            cur = (T(4) * x0p * x1p) / (denom * denom);
+        }
+
+        if (have_imbalance && ts > last_ts_imbalance) {
+            const long double dt = static_cast<long double>(ts - last_ts_imbalance);
+            sum_imbalance_dt += static_cast<long double>(last_imbalance) * dt;
+            imbalance_dt += dt;
+        }
+
+        last_imbalance = cur;
+        last_ts_imbalance = ts;
+        have_imbalance = true;
     }
     
     void sample_fee(uint64_t ts, T fee_frac) {
