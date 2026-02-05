@@ -15,31 +15,14 @@ import numpy as np
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
 # -------------------- Grid Definition --------------------
-# Each dimension: (name, min, max, count, log_scale, as_int)
-DIMS = []
-#     # ("donation_apy", 0.00, 0.1, 10, False, False),
-#     ("A", 10 * 10_000, 200 * 10_000, 24, False, True),
-#     # ("mid_fee", 1 / 10_000 * 10**10, 10 / 10_000 * 10**10, 3, False, True),
-#     ("out_fee", 10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 24, False, True),
-#     # ("fee_gamma", 0.001 * 10**18, 0.5 * 10**18, 8, True, True),
-#     # ("ma_time", 866, 3600 * 4 / np.log(2), 6, False, True),
-# ]
 FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 
-# Manual grid override: if set, uses these exact values instead of DIMS
-# Format: {"param_name": [val1, val2, ...], ...}
-# Example:
-# MANUAL_GRID = {
-#     "A": [100_000, 200_000, 500_000],
-#     "donation_apy": [0.0, 0.05, 0.1],
-# }
-MANUAL_GRID = None
 N_DENSE = 16
 ARB_FEE_BPS = 10
 SPARSE_FX_GRID = {
     # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
-    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE), # 2-200
-    "donation_apy": np.linspace(0.0, 0.2, N_DENSE), # 0-20%
+    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),  # 2-200
+    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),  # 0-20%
     # "mid_fee": np.linspace(1 / 10_000 * 10**10, 1 / 10_000 * 10**10, 1), # 1
     # "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
     # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
@@ -48,11 +31,11 @@ SPARSE_FX_GRID = {
 
 ZOOM_FX_GRID = {
     # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
-    "A": np.linspace(10 * 10_000, 100 * 10_000, N_DENSE), # 
-    "donation_apy": np.linspace(0.0, 0.05, 11), # 
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 20 / 10_000 * 10**10, 5), # 1
-    "out_fee": np.linspace(20 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE), # 
-    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 
+    "A": np.linspace(10 * 10_000, 100 * 10_000, N_DENSE),  #
+    "donation_apy": np.linspace(0.0, 0.05, 11),  #
+    "mid_fee": np.linspace(1 / 10_000 * 10**10, 20 / 10_000 * 10**10, 5),  # 1
+    "out_fee": np.linspace(20 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),  #
+    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], #
 }
 
 MANUAL_GRID = {
@@ -60,7 +43,6 @@ MANUAL_GRID = {
     "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
     "out_fee": np.linspace(151 / 10_000 * 10**10, 300 / 10_000 * 10**10, 16),
     "mid_fee": np.linspace(10 / 10_000 * 10**10, 150 / 10_000 * 10**10, 16),
-
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [30, 60]],
     # "out_fee": [int(a / 10_000 * 10**10) for a in [200, 300]],
@@ -69,9 +51,8 @@ MANUAL_GRID = {
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
     # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
+    "fee_gamma": [int(a * 10**18) for a in [0.0003, 0.003, 0.03, 0.3]],  # 0.0003-0.3
     # "fee_gamma": [int(a*10**18) for a in [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03]],
-
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
 MANUAL_GRID = SPARSE_FX_GRID
@@ -130,39 +111,24 @@ BASE_COSTS = {
 }
 
 
-def build_axis(min_v: float, max_v: float, n: int, log: bool, as_int: bool) -> list:
-    """Build axis values using numpy linspace/logspace."""
-    if n <= 0:
-        raise ValueError("grid size must be positive")
-    vals = np.geomspace(min_v, max_v, n) if log else np.linspace(min_v, max_v, n)
-    return [int(round(v)) if as_int else float(v) for v in vals]
-
-
 def build_grid() -> tuple[list, dict]:
-    """Build all pool configurations from grid dimensions.
+    """Build all pool configurations from manual grid.
 
     Returns:
         (pools, grid_meta) tuple
     """
-    # Use MANUAL_GRID if set, otherwise generate from DIMS
-    if MANUAL_GRID is not None:
-        names = list(MANUAL_GRID.keys())
-        # Convert numpy arrays to lists for JSON serialization
-        axes = [
-            list(v) if isinstance(v, np.ndarray) else list(v)
-            for v in MANUAL_GRID.values()
-        ]
-        grid_meta = {
-            f"x{i}": {"name": name, "values": [float(x) for x in vals]}
-            for i, (name, vals) in enumerate(zip(names, axes), 1)
-        }
-    else:
-        names = [dim[0] for dim in DIMS]
-        axes = [build_axis(*dim[1:]) for dim in DIMS]
-        grid_meta = {
-            f"x{i}": {"name": d[0], "min": d[1], "max": d[2], "n": d[3], "log": d[4]}
-            for i, d in enumerate(DIMS, 1)
-        }
+    if MANUAL_GRID is None:
+        raise ValueError("MANUAL_GRID is not set")
+
+    names = list(MANUAL_GRID.keys())
+    # Convert numpy arrays to lists for JSON serialization
+    axes = [
+        list(v) if isinstance(v, np.ndarray) else list(v) for v in MANUAL_GRID.values()
+    ]
+    grid_meta = {
+        f"x{i}": {"name": name, "values": [float(x) for x in vals]}
+        for i, (name, vals) in enumerate(zip(names, axes), 1)
+    }
 
     pools = []
     for coords in itertools.product(*axes):

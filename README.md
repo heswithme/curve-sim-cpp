@@ -32,13 +32,13 @@ Run parameter sweeps over historical candle data to evaluate pool configurations
 
 ```bash
 # 1. Generate pool parameter grid
-uv run python/arb_sim/generate_pools_generic.py
+uv run python/arb_sim/generate_pools_nd.py
 
 # 2. Run simulation
 uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10
 
 # 3. Plot results
-uv run python/arb_sim/plot_heatmap.py --metrics apy,apy_net,apy_xcp,apy_xcp_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5
+uv run python/arb_sim/plot_heatmap.py --metrics apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5
 ```
 
 **With CoWSwap replay (add `--cow`):**
@@ -50,7 +50,7 @@ uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10 --cow
 **One-liner:**
 
 ```bash
-uv run python/arb_sim/generate_pools_generic.py && uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10 && uv run python/arb_sim/plot_heatmap.py --metrics apy,apy_net,apy_xcp,apy_xcp_net,vp,tw_avg_pool_fee,n_rebalances,trades,total_notional_coin0,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5
+uv run python/arb_sim/generate_pools_nd.py && uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 10 && uv run python/arb_sim/plot_heatmap.py --metrics apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5
 ```
 
 **Cluster sweep (orchestration + analysis):**
