@@ -34,13 +34,18 @@ def main():
     timestamps = np.array([entry["t"] for entry in data])
     price_scale = np.array([entry["price_scale"] for entry in data])
     midpoints = np.array([(entry["open"] + entry["close"]) / 2 for entry in data])
+    p_cex = np.array([entry.get("p_cex", mp) for entry, mp in zip(data, midpoints)])
     token0 = np.array([entry["token0"] for entry in data])
     token1 = np.array([entry["token1"] for entry in data])
 
-    # Pool imbalance: val0 / (val0 + val1) where val1 = token1 * midpoint
+    # Pool imbalance: 4*x*y/(x+y)^2 where y = token1 * p_cex
     val0 = token0
-    val1 = token1 * midpoints
-    pool_balance = val0 / (val0 + val1) * 100  # as percentage
+    val1 = token1 * p_cex
+    denom = val0 + val1
+    imbalance = np.zeros_like(denom, dtype=float)
+    mask = denom > 0
+    imbalance[mask] = 4.0 * val0[mask] * val1[mask] / (denom[mask] ** 2)
+    imbalance *= 100.0  # as percentage
 
     # Convert timestamps to datetime
     dates = [datetime.utcfromtimestamp(t) for t in timestamps]
@@ -76,18 +81,18 @@ def main():
     ax2.legend(loc="upper left")
     ax2.grid(True, alpha=0.3)
 
-    # Secondary y-axis for pool balance
+    # Secondary y-axis for pool imbalance
     ax3 = ax2.twinx()
     ax3.plot(
         dates,
-        pool_balance,
+        imbalance,
         linewidth=0.8,
         color="blue",
         alpha=0.6,
-        label="Pool balance",
+        label="Pool imbalance",
     )
-    ax3.axhline(50, color="blue", linestyle=":", linewidth=0.5, alpha=0.5)
-    ax3.set_ylabel("Pool balance (%)", color="blue")
+    ax3.axhline(100, color="blue", linestyle=":", linewidth=0.5, alpha=0.5)
+    ax3.set_ylabel("Pool imbalance (%)", color="blue")
     ax3.tick_params(axis="y", labelcolor="blue")
     ax3.set_ylim(0, 100)
     ax3.legend(loc="upper right")

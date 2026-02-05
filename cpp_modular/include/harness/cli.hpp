@@ -35,6 +35,9 @@ struct CliArgs {
     // Detailed logging
     bool detailed_log{false};  // write detailed_log.json next to output
     size_t detailed_interval{1};  // log every N-th event (1 = all)
+
+    // Slippage probe sampling
+    bool disable_slippage_probes{false};
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)

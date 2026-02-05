@@ -34,15 +34,15 @@ FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 #     "donation_apy": [0.0, 0.05, 0.1],
 # }
 MANUAL_GRID = None
-N_DENSE = 32
+N_DENSE = 16
 ARB_FEE_BPS = 10
 SPARSE_FX_GRID = {
     # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
     "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE), # 2-200
     "donation_apy": np.linspace(0.0, 0.2, N_DENSE), # 0-20%
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 1 / 10_000 * 10**10, 1), # 1
-    "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
-    "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
+    # "mid_fee": np.linspace(1 / 10_000 * 10**10, 1 / 10_000 * 10**10, 1), # 1
+    # "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
+    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
 }
 
 

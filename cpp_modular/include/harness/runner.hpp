@@ -50,8 +50,6 @@ struct PoolResult {
     
     // Initial state (for APY calculations)
     T tvl_start{0};
-    T true_growth_initial{0};
-    std::array<T, 2> initial_liq{T(0), T(0)};
     T donation_apy{0};
     T donation_frequency{0};
     
@@ -108,6 +106,9 @@ struct RunConfig {
     // Detailed per-event logging
     bool detailed_log{false};
     size_t detailed_interval{1};  // log every N-th event (1 = all)
+
+    // Slippage probe sampling
+    bool enable_slippage_probes{true};
     
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
@@ -213,6 +214,7 @@ PoolResult<T> run_single_pool(
         auto loop_result = run_event_loop(
             pool, events, costs, dcfg, icfg, ucfg,
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
+            cfg.enable_slippage_probes,
             cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
             cowswap_ptr
         );
@@ -224,8 +226,6 @@ PoolResult<T> run_single_pool(
         result.t_start = loop_result.t_start;
         result.t_end = loop_result.t_end;
         result.tvl_start = loop_result.tvl_start;
-        result.true_growth_initial = loop_result.true_growth_initial;
-        result.initial_liq = loop_result.initial_liq;
         result.donation_apy = loop_result.donation_apy;
         result.donation_frequency = pool_init.donation_frequency;
         

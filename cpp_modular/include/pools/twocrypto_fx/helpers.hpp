@@ -94,37 +94,6 @@ inline std::pair<T, T> post_trade_price_and_fee(
     return {p_new, fee_pool};
 }
 
-// -----------------------------------------------------------------------------
-// Derived signals
-// -----------------------------------------------------------------------------
-template <typename T>
-inline bool instantaneous_dr(const PoolT<T>& pool, T& out_d, T& out_r) {
-    const auto xp_now = pool_xp_current(pool);
-    const T p_now = MathOps<T>::get_p(xp_now, pool.D, {pool.A, pool.gamma}) * pool.cached_price_scale;
-    const T x_b   = pool.balances[1];
-    if (!(p_now > T(0)) || !(x_b > T(0))) return false;
-
-    T eps = static_cast<T>(1e-6);
-    for (int attempt = 0; attempt < 3; ++attempt) {
-        const T dx_tokens = std::max(eps * x_b, std::numeric_limits<T>::min());
-        auto pr = post_trade_price_and_fee(pool, /*i=*/1, /*j=*/0, dx_tokens);
-        const T p_new = pr.first;
-        const T p_avg = (p_now + p_new) / static_cast<T>(2);
-        const T dp_abs = std::abs(p_new - p_now);
-        if (p_avg > T(0) && dp_abs > T(0)) {
-            const T rel = dp_abs / p_avg;
-            const T d = (dx_tokens / x_b) / rel;
-            if (d > T(0) && std::isfinite(static_cast<double>(d))) {
-                out_d = d;
-                out_r = static_cast<T>(1) / d;
-                return true;
-            }
-        }
-        eps *= static_cast<T>(10);
-    }
-    return false;
-}
-
 template <typename T>
 inline T balance_indicator(const PoolT<T>& pool) {
     const T ps = pool.cached_price_scale;
@@ -134,24 +103,6 @@ inline T balance_indicator(const PoolT<T>& pool) {
         return T(0);
     }
     return static_cast<T>(4) * xp[0] * xp[1] / (denom * denom);
-}
-
-template <typename T>
-inline T true_growth(const PoolT<T>& pool, T price_ref = static_cast<T>(-1)) {
-    const T price_in = (price_ref > T(0)) ? price_ref : pool.cached_price_scale;
-    const auto xp = pool_xp_from(pool, pool.balances, price_in);
-    const T product = xp[0] * xp[1];
-    return (product > T(0)) ? std::sqrt(product) : T(0);
-}
-
-// Standalone version without pool object (for end-state metrics)
-// For floating types, precisions are 1.0
-template <typename T>
-inline T true_growth_from_balances(const std::array<T, 2>& balances, const T& price_scale) {
-    const T xp0 = balances[0];
-    const T xp1 = balances[1] * price_scale;
-    const T product = xp0 * xp1;
-    return (product > T(0)) ? std::sqrt(product) : T(0);
 }
 
 // -----------------------------------------------------------------------------

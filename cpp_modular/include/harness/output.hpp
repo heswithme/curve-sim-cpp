@@ -12,7 +12,6 @@
 
 #include "core/json_utils.hpp"
 #include "harness/runner.hpp"
-#include "pools/twocrypto_fx/helpers.hpp"
 
 namespace json = boost::json;
 
@@ -56,12 +55,6 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
         apy["apy_net"] = -1.0;
         apy["apy_xcp"] = -1.0;
         apy["apy_xcp_net"] = -1.0;
-        apy["apy_coin0"] = -1.0;
-        apy["apy_coin0_boost"] = -1.0;
-        apy["apy_coin0_raw"] = -1.0;
-        apy["apy_coin0_boost_raw"] = -1.0;
-        apy["apy_geom_mean"] = -1.0;
-        apy["apy_geom_mean_net"] = -1.0;
         return apy;
     }
     
@@ -97,82 +90,36 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     double apy_xcp = (xcp_end > 0.0) ? std::pow(xcp_end, exponent) - 1.0 : -1.0;
     double apy_xcp_net = net_apy_from_growth(xcp_end);
     
-    // TVL based APYs
-    const T tvl_end = r.balances[0] + r.balances[1] * r.price_scale;
-    const T v_hold_end = r.initial_liq[0] + r.initial_liq[1] * r.price_scale;
-    
-    // Raw (non-baseline) APYs
-    double apy_coin0_raw = (tvl_end > T(0)) 
-        ? std::pow(static_cast<double>(tvl_end / r.tvl_start), exponent) - 1.0 
-        : -1.0;
-    
-    const double tvl_end_adj_raw = static_cast<double>(tvl_end) - static_cast<double>(r.metrics.donation_coin0_total);
-    double apy_coin0_boost_raw = (tvl_end_adj_raw > 0.0)
-        ? std::pow(tvl_end_adj_raw / static_cast<double>(r.tvl_start), exponent) - 1.0
-        : -1.0;
-    
-    // Baseline-subtracted (excess) APYs: compare to HODL valued at end price
-    double apy_coin0 = -1.0;
-    double apy_coin0_boost = -1.0;
-    if (v_hold_end > T(0)) {
-        apy_coin0 = std::pow(static_cast<double>(tvl_end / v_hold_end), exponent) - 1.0;
-        const double tvl_end_adj = static_cast<double>(tvl_end) - static_cast<double>(r.metrics.donation_coin0_total);
-        apy_coin0_boost = (tvl_end_adj > 0.0)
-            ? std::pow(tvl_end_adj / static_cast<double>(v_hold_end), exponent) - 1.0
-            : -1.0;
-    }
-    
-    // True growth based APY
-    const T true_growth_end = pools::twocrypto_fx::true_growth_from_balances<T>(
-        r.balances, r.price_scale);
-    double apy_geom_mean = -1.0;
-    double apy_geom_mean_net = -1.0;
-    if (r.true_growth_initial > T(0) && true_growth_end > T(0)) {
-        const double ratio = static_cast<double>(true_growth_end / r.true_growth_initial);
-        apy_geom_mean = std::pow(ratio, exponent) - 1.0;
-        apy_geom_mean_net = net_apy_from_growth(ratio);
-    }
-    
     apy["apy"] = apy_vp;
     apy["apy_net"] = apy_net;
     apy["apy_xcp"] = apy_xcp;
     apy["apy_xcp_net"] = apy_xcp_net;
-    apy["apy_coin0"] = apy_coin0;
-    apy["apy_coin0_boost"] = apy_coin0_boost;
-    apy["apy_coin0_raw"] = apy_coin0_raw;
-    apy["apy_coin0_boost_raw"] = apy_coin0_boost_raw;
-    apy["apy_geom_mean"] = apy_geom_mean;
-    apy["apy_geom_mean_net"] = apy_geom_mean_net;
     
     return apy;
 }
 
 // Convert all metrics to summary JSON object (matches original harness format)
 template <typename T>
-json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
-    json::object summary;
+void append_core_metrics(
+    json::object& summary,
+    const PoolResult<T>& r,
+    size_t n_events,
+    const TimeWeightedSummary& tw_summary
+) {
     const auto& m = r.metrics;
-    const auto& tw = r.tw_metrics;
-    const auto& sp = r.slippage_probes;
-    
-    // Core metrics
     summary["events"] = static_cast<uint64_t>(n_events);
     summary["trades"] = static_cast<uint64_t>(m.trades);
     summary["total_notional_coin0"] = static_cast<double>(m.notional);
     summary["lp_fee_coin0"] = static_cast<double>(m.lp_fee_coin0);
     summary["avg_pool_fee"] = static_cast<double>(m.avg_pool_fee());
-    summary["tw_avg_pool_fee"] = tw.tw_avg_pool_fee();
+    summary["tw_avg_pool_fee"] = tw_summary.tw_avg_pool_fee;
     summary["arb_pnl_coin0"] = static_cast<double>(m.arb_pnl_coin0);
-    
-    // Fee capture rate: fraction of gross LVR recovered by fees
-    // fee_capture_rate = lp_fee / (lp_fee + arb_pnl), -1 if no arb activity
-    {
-        const double gross_lvr = static_cast<double>(m.lp_fee_coin0 + m.arb_pnl_coin0);
-        summary["fee_capture_rate"] = (gross_lvr > 0.0) 
-            ? static_cast<double>(m.lp_fee_coin0) / gross_lvr 
-            : -1.0;
-    }
-    
+
+    const double gross_lvr = static_cast<double>(m.lp_fee_coin0 + m.arb_pnl_coin0);
+    summary["fee_capture_rate"] = (gross_lvr > 0.0)
+        ? static_cast<double>(m.lp_fee_coin0) / gross_lvr
+        : -1.0;
+
     summary["n_rebalances"] = static_cast<uint64_t>(m.n_rebalances);
     summary["donations"] = static_cast<uint64_t>(m.donations);
     summary["donation_coin0_total"] = static_cast<double>(m.donation_coin0_total);
@@ -185,116 +132,64 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
     summary["cowswap_notional_coin0"] = static_cast<double>(m.cowswap_notional_coin0);
     summary["cowswap_lp_fee_coin0"] = static_cast<double>(m.cowswap_lp_fee_coin0);
     summary["pool_exec_ms"] = r.elapsed_ms;
-    
-    // Time-weighted latent slippage/liquidity density (normalized vs xy=k)
-    summary["tw_slippage"] = tw.tw_slippage();
-    summary["tw_liq_density"] = tw.tw_liq_density();
-    
-    // Real slippage probes
-    summary["tw_real_slippage_1pct_01"] = sp.tw_slippage_01(0);
-    summary["tw_real_slippage_1pct_10"] = sp.tw_slippage_10(0);
-    summary["tw_real_slippage_5pct_01"] = sp.tw_slippage_01(1);
-    summary["tw_real_slippage_5pct_10"] = sp.tw_slippage_10(1);
-    summary["tw_real_slippage_10pct_01"] = sp.tw_slippage_01(2);
-    summary["tw_real_slippage_10pct_10"] = sp.tw_slippage_10(2);
+}
+
+template <typename T>
+void append_slippage_metrics(json::object& summary, const PoolResult<T>& r) {
+    const auto& sp = r.slippage_probes;
     summary["tw_real_slippage_1pct"] = sp.tw_slippage(0);
     summary["tw_real_slippage_5pct"] = sp.tw_slippage(1);
     summary["tw_real_slippage_10pct"] = sp.tw_slippage(2);
-    
-    // Price follow metrics
-    summary["avg_rel_price_diff"] = tw.avg_rel_price_diff();
-    summary["max_rel_price_diff"] = tw.max_rel_price_diff();
-    summary["cex_follow_time_frac"] = tw.cex_follow_time_frac(r.duration_s());
-    summary["avg_imbalance"] = tw.avg_imbalance();
-    
-    // Multi-threshold price tracking: fraction of time within X% of CEX
-    const double frac_3 = tw.pct_within(0, r.duration_s());
-    const double frac_5 = tw.pct_within(1, r.duration_s());
-    const double frac_10 = tw.pct_within(2, r.duration_s());
-    const double frac_20 = tw.pct_within(3, r.duration_s());
-    const double frac_30 = tw.pct_within(4, r.duration_s());
-    const double frac_inv_A = tw.pct_within(5, r.duration_s());
-    
-    summary["frac_within_3pct"] = frac_3;
-    summary["frac_within_5pct"] = frac_5;
-    summary["frac_within_10pct"] = frac_10;
-    summary["frac_within_20pct"] = frac_20;
-    summary["frac_within_30pct"] = frac_30;
-    summary["frac_within_inv_A"] = frac_inv_A;
-    
-    // EMA-smoothed price correlation (1hr window)
-    const double corr = tw.price_correlation();
-    summary["price_correlation"] = corr;
-    
-    // Timestamps and duration
+}
+
+inline void append_price_follow_metrics(
+    json::object& summary,
+    const TimeWeightedSummary& tw_summary
+) {
+    summary["avg_rel_price_diff"] = tw_summary.avg_rel_price_diff;
+    summary["max_rel_price_diff"] = tw_summary.max_rel_price_diff;
+    summary["avg_imbalance"] = tw_summary.avg_imbalance;
+}
+
+template <typename T>
+void append_tvl_metrics(json::object& summary, const PoolResult<T>& r) {
     summary["t_start"] = r.t_start;
     summary["t_end"] = r.t_end;
     summary["duration_s"] = r.duration_s();
     summary["tvl_coin0_start"] = static_cast<double>(r.tvl_start);
-    
-    // End-state TVL
+
     const T tvl_end = r.balances[0] + r.balances[1] * r.price_scale;
     summary["tvl_coin0_end"] = static_cast<double>(tvl_end);
-    
-    // TVL growth
     summary["tvl_growth"] = static_cast<double>(tvl_end / r.tvl_start);
-    
-    // Baseline HODL value at end price
-    const T v_hold_end = r.initial_liq[0] + r.initial_liq[1] * r.price_scale;
-    summary["baseline_hold_end_coin0"] = static_cast<double>(v_hold_end);
-    
-    // Compute and merge APY metrics
+}
+
+template <typename T>
+void append_apy_metrics(json::object& summary, const PoolResult<T>& r) {
     auto apy_metrics = compute_apy_metrics(r);
     for (const auto& kv : apy_metrics) {
         summary[kv.key()] = kv.value();
     }
-    
-    // Masked APY metrics: reduce positives only (avoid improving negative APY)
-    const double apy_net_val = apy_metrics["apy_net"].as_double();
-    auto mask_positive = [&](double frac) -> double {
-        return (apy_net_val > 0.0) ? (apy_net_val * frac) : apy_net_val;
-    };
-    summary["apy_mask_3"] = mask_positive(frac_3);
-    summary["apy_mask_5"] = mask_positive(frac_5);
-    summary["apy_mask_10"] = mask_positive(frac_10);
-    summary["apy_mask_20"] = mask_positive(frac_20);
-    summary["apy_mask_30"] = mask_positive(frac_30);
-    summary["apy_mask_inv_A"] = mask_positive(frac_inv_A);
-    
-    // Correlation-adjusted APY: full credit at corr >= threshold,
-    // linear penalty to -1x at corr <= 0 for positive APY.
-    auto corr_adjust = [&](double threshold) -> double {
-        if (!(apy_net_val > 0.0)) return apy_net_val;
-        if (!(threshold > 0.0) || !std::isfinite(corr)) return -apy_net_val;
-        double factor = 1.0;
-        if (corr <= 0.0) {
-            factor = -1.0;
-        } else if (corr < threshold) {
-            factor = 2.0 * (corr / threshold) - 1.0;
-        }
-        return apy_net_val * factor;
-    };
-    summary["apy_corr"] = corr_adjust(0.75);
-    summary["apy_corr_50"] = corr_adjust(0.50);
-    summary["apy_corr_60"] = corr_adjust(0.60);
-    summary["apy_corr_70"] = corr_adjust(0.70);
-    summary["apy_corr_80"] = corr_adjust(0.80);
-    summary["apy_corr_90"] = corr_adjust(0.90);
-    
-    // Additional end-state metrics
+}
+
+template <typename T>
+void append_end_state_metrics(json::object& summary, const PoolResult<T>& r) {
     summary["vp"] = static_cast<double>(r.virtual_price);
     summary["vp_boosted"] = static_cast<double>(r.vp_boosted);
     summary["vpminusone"] = static_cast<double>(r.virtual_price - T(1));
-    
-    // True growth
-    const T true_growth_end = pools::twocrypto_fx::true_growth_from_balances<T>(
-        r.balances, r.price_scale);
-    if (r.true_growth_initial > T(0)) {
-        summary["true_growth"] = static_cast<double>(true_growth_end / r.true_growth_initial);
-    } else {
-        summary["true_growth"] = -1.0;
-    }
-    
+}
+
+template <typename T>
+json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
+    json::object summary;
+    const auto tw_summary = r.tw_metrics.summarize();
+
+    append_core_metrics(summary, r, n_events, tw_summary);
+    append_slippage_metrics(summary, r);
+    append_price_follow_metrics(summary, tw_summary);
+    append_tvl_metrics(summary, r);
+    append_apy_metrics(summary, r);
+    append_end_state_metrics(summary, r);
+
     return summary;
 }
 

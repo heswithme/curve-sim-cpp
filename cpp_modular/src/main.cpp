@@ -165,6 +165,7 @@ int main(int argc, char* argv[]) {
         run_cfg.user_swap_freq_s = args.user_swap_freq_s;
         run_cfg.user_swap_size_frac = static_cast<RealT>(args.user_swap_size_frac);
         run_cfg.user_swap_thresh = static_cast<RealT>(args.user_swap_thresh);
+        run_cfg.enable_slippage_probes = !args.disable_slippage_probes;
         
         // Wire save_actions flag
         run_cfg.save_actions = args.save_actions;

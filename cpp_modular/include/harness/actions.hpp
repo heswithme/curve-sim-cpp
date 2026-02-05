@@ -98,8 +98,6 @@ struct ExchangeAction {
     T xcp_profit_after{0};
     T vp_before{0};
     T vp_after{0};
-    T slippage{0};
-    T liq_density{0};
     T balance_indicator{0};
     
     json::object to_json() const {
@@ -128,8 +126,6 @@ struct ExchangeAction {
         o["xcp_profit_after"] = static_cast<double>(xcp_profit_after);
         o["vp_before"] = static_cast<double>(vp_before);
         o["vp_after"] = static_cast<double>(vp_after);
-        o["slippage"] = static_cast<double>(slippage);
-        o["liq_density"] = static_cast<double>(liq_density);
         o["balance_indicator"] = static_cast<double>(balance_indicator);
         return o;
     }

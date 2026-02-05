@@ -71,6 +71,7 @@ public:
                       T xcp_profit_before, T vp_before,
                       const Pool& pool, const TW& tw) {
         if (!enabled_) return;
+        (void)tw;
         ExchangeAction<T> act;
         act.ts = ts;
         act.i = i;
@@ -94,8 +95,6 @@ public:
         act.xcp_profit_after = pool.xcp_profit;
         act.vp_before = vp_before;
         act.vp_after = pool.get_vp_boosted();
-        act.slippage = tw.last_r_inst;
-        act.liq_density = tw.last_d_inst;
         act.balance_indicator = pools::twocrypto_fx::balance_indicator(pool);
         actions_.push_back(std::move(act));
     }

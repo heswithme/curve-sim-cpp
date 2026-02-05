@@ -18,7 +18,8 @@ void print_usage(const char* prog_name) {
               << "       [--dustswapfreq S]\n"
               << "       [--pool-start N] [--pool-end N]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
-              << "       [--detailed-log] [--detailed-interval N] [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
+              << "       [--detailed-log] [--detailed-interval N] [--disable-slippage-probes]\n"
+              << "       [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
 }
 
 CliArgs parse_cli(int argc, char* argv[]) {
@@ -66,6 +67,8 @@ CliArgs parse_cli(int argc, char* argv[]) {
             } else if (arg == "--detailed-interval" && i + 1 < argc) {
                 args.detailed_interval = static_cast<size_t>(std::stoll(argv[++i]));
                 if (args.detailed_interval == 0) args.detailed_interval = 1;
+            } else if (arg == "--disable-slippage-probes") {
+                args.disable_slippage_probes = true;
             } else if (arg == "--cowswap-trades" && i + 1 < argc) {
                 args.cowswap_path = argv[++i];
             } else if (arg == "--cowswap-fee-bps" && i + 1 < argc) {

@@ -26,7 +26,7 @@ Usage examples:
 
   # Also plot time-series metrics per run (from actions), one figure per metric
   uv run python python/arb_sim/compare_plots.py --arb-dir python/arb_sim/run_data \
-      --metrics inst_slippage,inst_liq_density --out python/arb_sim/plots/compare.png
+      --metrics metric_a,metric_b --out python/arb_sim/plots/compare.png
 """
 
 import argparse
@@ -78,11 +78,16 @@ def _load_arb_series(path: Path) -> Dict[str, List[Tuple[int, float, float]]]:
             continue
         # Build a short label: prefer pool name; else use x/y or index
         pool_name = None
-        pool_obj = (r.get("params") or {}).get("pool") if isinstance(r.get("params"), dict) else None
+        pool_obj = (
+            (r.get("params") or {}).get("pool")
+            if isinstance(r.get("params"), dict)
+            else None
+        )
         if isinstance(pool_obj, dict):
             pool_name = pool_obj.get("name")
         if not pool_name:
-            xv = r.get("x_val"); yv = r.get("y_val")
+            xv = r.get("x_val")
+            yv = r.get("y_val")
             if xv is not None and yv is not None:
                 pool_name = f"x={xv},y={yv}"
         if not pool_name:
@@ -203,7 +208,9 @@ def _load_trades_series_json(path: Path) -> List[Tuple[int, float, float]]:
     return series
 
 
-def _align_and_validate_cex(all_series: Dict[str, List[Tuple[int, float, float]]], rtol: float, atol: float) -> Tuple[List[int], List[float]]:
+def _align_and_validate_cex(
+    all_series: Dict[str, List[Tuple[int, float, float]]], rtol: float, atol: float
+) -> Tuple[List[int], List[float]]:
     """Return canonical (timestamps, cex_prices) intersected across all series.
     Assert that per-timestamp CEX prices match within tolerance across series.
     """
@@ -241,10 +248,12 @@ def _align_and_validate_cex(all_series: Dict[str, List[Tuple[int, float, float]]
     return ts_sorted, cex_series
 
 
-def _extract_metric_series_from_arb(path: Path, metric: str) -> Dict[str, List[Tuple[int, float]]]:
+def _extract_metric_series_from_arb(
+    path: Path, metric: str
+) -> Dict[str, List[Tuple[int, float]]]:
     """Return per-run time series for an action-level metric.
 
-    Expects metric to be a numeric field on actions, e.g., inst_slippage, inst_liq_density.
+    Expects metric to be a numeric field on actions.
     Labeling mirrors _load_arb_series: uses pool name if present, else x/y, else index.
     """
     data = json.loads(path.read_text())
@@ -257,11 +266,16 @@ def _extract_metric_series_from_arb(path: Path, metric: str) -> Dict[str, List[T
         if not actions:
             continue
         pool_name = None
-        pool_obj = (r.get("params") or {}).get("pool") if isinstance(r.get("params"), dict) else None
+        pool_obj = (
+            (r.get("params") or {}).get("pool")
+            if isinstance(r.get("params"), dict)
+            else None
+        )
         if isinstance(pool_obj, dict):
             pool_name = pool_obj.get("name")
         if not pool_name:
-            xv = r.get("x_val"); yv = r.get("y_val")
+            xv = r.get("x_val")
+            yv = r.get("y_val")
             if xv is not None and yv is not None:
                 pool_name = f"x={xv},y={yv}"
         if not pool_name:
@@ -271,15 +285,9 @@ def _extract_metric_series_from_arb(path: Path, metric: str) -> Dict[str, List[T
         # Build preferred key order: exact metric, alias variants
         keys = [metric]
         if metric.startswith("inst_"):
-            keys.append(metric[len("inst_"):])
+            keys.append(metric[len("inst_") :])
         else:
             keys.append("inst_" + metric)
-        # Also support historical names
-        if metric == "slippage" and "inst_slippage" not in keys:
-            keys.append("inst_slippage")
-        if metric == "liq_density" and "inst_liq_density" not in keys:
-            keys.append("inst_liq_density")
-
         for a in actions:
             ts = a.get("ts")
             if ts is None:
@@ -302,7 +310,9 @@ def _extract_metric_series_from_arb(path: Path, metric: str) -> Dict[str, List[T
     return out
 
 
-def _align_union_timestamps(series_by_name: Dict[str, List[Tuple[int, float]]]) -> Tuple[List[int], Dict[str, List[float]]]:
+def _align_union_timestamps(
+    series_by_name: Dict[str, List[Tuple[int, float]]],
+) -> Tuple[List[int], Dict[str, List[float]]]:
     """Build a union time grid across runs and carry-forward values per run to align.
 
     Returns (ts_union, aligned_values_by_name)
@@ -326,28 +336,79 @@ def _align_union_timestamps(series_by_name: Dict[str, List[Tuple[int, float]]]) 
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Plot price_scale vs shared CEX price for multiple arb_run_* and trades-* files")
-    ap.add_argument("--arb-dir", type=str, default=None, help="Directory with arb_run_*.json files (default: python/arb_sim/run_data)")
-    ap.add_argument("--trades-dir", type=str, default=None, help="Directory with trades-*.json or trades-*.jsonl files (default: cryptopool-simulator or comparison)")
-    ap.add_argument("--out", type=str, default=None, help="Output image path (png). If not set, shows the plot interactively.")
-    ap.add_argument("--rtol", type=float, default=1e-9, help="Relative tolerance for CEX price equality check")
-    ap.add_argument("--atol", type=float, default=1e-12, help="Absolute tolerance for CEX price equality check")
-    ap.add_argument("--title", type=str, default="price_scale vs CEX", help="Plot title")
-    ap.add_argument("--xlim", type=int, nargs=2, default=None, help="Optional x-axis (timestamp) limits: start end")
-    ap.add_argument("--ylim", type=float, nargs=2, default=None, help="Optional y-axis limits: min max")
-    ap.add_argument("--metrics", type=str, default=None, help="Comma-separated list of action metrics to plot by time (e.g., inst_slippage,inst_liq_density)")
+    ap = argparse.ArgumentParser(
+        description="Plot price_scale vs shared CEX price for multiple arb_run_* and trades-* files"
+    )
+    ap.add_argument(
+        "--arb-dir",
+        type=str,
+        default=None,
+        help="Directory with arb_run_*.json files (default: python/arb_sim/run_data)",
+    )
+    ap.add_argument(
+        "--trades-dir",
+        type=str,
+        default=None,
+        help="Directory with trades-*.json or trades-*.jsonl files (default: cryptopool-simulator or comparison)",
+    )
+    ap.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output image path (png). If not set, shows the plot interactively.",
+    )
+    ap.add_argument(
+        "--rtol",
+        type=float,
+        default=1e-9,
+        help="Relative tolerance for CEX price equality check",
+    )
+    ap.add_argument(
+        "--atol",
+        type=float,
+        default=1e-12,
+        help="Absolute tolerance for CEX price equality check",
+    )
+    ap.add_argument(
+        "--title", type=str, default="price_scale vs CEX", help="Plot title"
+    )
+    ap.add_argument(
+        "--xlim",
+        type=int,
+        nargs=2,
+        default=None,
+        help="Optional x-axis (timestamp) limits: start end",
+    )
+    ap.add_argument(
+        "--ylim",
+        type=float,
+        nargs=2,
+        default=None,
+        help="Optional y-axis limits: min max",
+    )
+    ap.add_argument(
+        "--metrics",
+        type=str,
+        default=None,
+        help="Comma-separated list of action metrics to plot by time",
+    )
     args = ap.parse_args()
 
     root = _repo_root()
 
     # Import matplotlib after parsing so we can decide backend
     import matplotlib as mpl
+
     if args.out:
         mpl.use("Agg")
     import matplotlib.pyplot as plt
 
     # Resolve arb_dir
-    arb_dir = Path(args.arb_dir) if args.arb_dir else (root / "python" / "arb_sim" / "run_data")
+    arb_dir = (
+        Path(args.arb_dir)
+        if args.arb_dir
+        else (root / "python" / "arb_sim" / "run_data")
+    )
     if not arb_dir.exists():
         print(f"Note: arb-dir not found: {arb_dir}")
 
@@ -365,24 +426,31 @@ def main():
             (root / "cryptopool-simulator" / "trades-0.json").resolve(),
             (root / "comparison" / "trades-0.json").resolve(),
         ]
-    
+
     arb_files: List[Path] = []
     if arb_dir and arb_dir.exists():
         arb_files = sorted(p for p in arb_dir.glob("arb_run_*.json"))
 
     trade_files: List[Path] = []
     if trades_dir and trades_dir.exists():
-        trade_files = sorted(list(trades_dir.glob("trades-*.json")) + list(trades_dir.glob("trades-*.jsonl")))
+        trade_files = sorted(
+            list(trades_dir.glob("trades-*.json"))
+            + list(trades_dir.glob("trades-*.jsonl"))
+        )
     else:
         # Use first matching default candidate if present (compare_sims default behavior)
         default_trade = next((p for p in default_trade_candidates if p.exists()), None)
         if default_trade is not None:
             trade_files = [default_trade]
         else:
-            print("Note: No trades-dir provided and no default trades-0.(json|jsonl) found; proceeding without trades.")
+            print(
+                "Note: No trades-dir provided and no default trades-0.(json|jsonl) found; proceeding without trades."
+            )
 
     if not arb_files and not trade_files:
-        raise SystemExit("No input files found. Provide --arb-dir and/or --trades-dir with matching files.")
+        raise SystemExit(
+            "No input files found. Provide --arb-dir and/or --trades-dir with matching files."
+        )
 
     # Load series
     series_by_name: Dict[str, List[Tuple[int, float, float]]] = {}
@@ -409,12 +477,19 @@ def main():
 
     # If metrics provided, create a single figure with subplots: price on top, metrics below.
     if args.metrics:
-        metrics = [m.strip() for m in args.metrics.split(',') if m.strip()]
+        metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
         n_sub = (1 if series_by_name else 0) + len(metrics)
         if n_sub == 0:
             raise SystemExit("No data to plot: no price series and no metrics found.")
         import matplotlib.pyplot as plt
-        fig, axes = plt.subplots(n_sub, 1, figsize=(12, max(4, 3*n_sub)), sharex=True, constrained_layout=True)
+
+        fig, axes = plt.subplots(
+            n_sub,
+            1,
+            figsize=(12, max(4, 3 * n_sub)),
+            sharex=True,
+            constrained_layout=True,
+        )
         if n_sub == 1:
             axes = [axes]
 
@@ -424,7 +499,9 @@ def main():
         ax_idx = 0
         if series_by_name:
             ts, cex = _align_and_validate_cex(series_by_name, args.rtol, args.atol)
-            axes[ax_idx].plot(ts, cex, label="cex price", color="orange", linewidth=1.0, alpha=0.8)
+            axes[ax_idx].plot(
+                ts, cex, label="cex price", color="orange", linewidth=1.0, alpha=0.8
+            )
             for name, s in series_by_name.items():
                 m = {t: ps for (t, _pc, ps) in s}
                 y = [m.get(t) for t in ts]
@@ -442,8 +519,12 @@ def main():
             axes[ax_idx].legend(loc="best")
             axes[ax_idx].grid(True, alpha=0.25)
             if ts:
-                global_min_ts = ts[0] if global_min_ts is None else min(global_min_ts, ts[0])
-                global_max_ts = ts[-1] if global_max_ts is None else max(global_max_ts, ts[-1])
+                global_min_ts = (
+                    ts[0] if global_min_ts is None else min(global_min_ts, ts[0])
+                )
+                global_max_ts = (
+                    ts[-1] if global_max_ts is None else max(global_max_ts, ts[-1])
+                )
             ax_idx += 1
 
         # Metric subplots
@@ -464,8 +545,16 @@ def main():
             ax.legend(loc="best")
             ax.grid(True, alpha=0.25)
             if ts_union:
-                global_min_ts = ts_union[0] if global_min_ts is None else min(global_min_ts, ts_union[0])
-                global_max_ts = ts_union[-1] if global_max_ts is None else max(global_max_ts, ts_union[-1])
+                global_min_ts = (
+                    ts_union[0]
+                    if global_min_ts is None
+                    else min(global_min_ts, ts_union[0])
+                )
+                global_max_ts = (
+                    ts_union[-1]
+                    if global_max_ts is None
+                    else max(global_max_ts, ts_union[-1])
+                )
             ax_idx += 1
 
         # Set shared x limits
@@ -489,14 +578,26 @@ def main():
             print(f"✓ Saved combined plot to {out_path}")
         else:
             backend = plt.get_backend().lower()
-            interactive = {"macosx", "qt5agg", "qtagg", "tkagg", "gtk3agg", "nbagg", "webagg"}
+            interactive = {
+                "macosx",
+                "qt5agg",
+                "qtagg",
+                "tkagg",
+                "gtk3agg",
+                "nbagg",
+                "webagg",
+            }
             if backend in interactive:
                 plt.show()
             else:
-                default_out = root / "python" / "arb_sim" / "plots" / "compare_combined.png"
+                default_out = (
+                    root / "python" / "arb_sim" / "plots" / "compare_combined.png"
+                )
                 default_out.parent.mkdir(parents=True, exist_ok=True)
                 fig.savefig(default_out, dpi=150)
-                print(f"(non-interactive backend: {backend}) Saved plot to {default_out}")
+                print(
+                    f"(non-interactive backend: {backend}) Saved plot to {default_out}"
+                )
         return 0
 
     # No metrics requested: keep price-only behavior
@@ -505,6 +606,7 @@ def main():
         if not ts:
             raise SystemExit("Empty canonical timeline after alignment.")
         import matplotlib.pyplot as plt
+
         plt.figure(figsize=(12, 6))
         plt.plot(ts, cex, label="cex price", color="orange", linewidth=1.0, alpha=0.8)
         for name, s in series_by_name.items():
@@ -532,7 +634,15 @@ def main():
             print(f"✓ Saved plot to {out_path}")
         else:
             backend = plt.get_backend().lower()
-            interactive = {"macosx", "qt5agg", "qtagg", "tkagg", "gtk3agg", "nbagg", "webagg"}
+            interactive = {
+                "macosx",
+                "qt5agg",
+                "qtagg",
+                "tkagg",
+                "gtk3agg",
+                "nbagg",
+                "webagg",
+            }
             if backend in interactive:
                 plt.tight_layout()
                 plt.show()
@@ -541,7 +651,9 @@ def main():
                 default_out.parent.mkdir(parents=True, exist_ok=True)
                 plt.tight_layout()
                 plt.savefig(default_out, dpi=150)
-                print(f"(non-interactive backend: {backend}) Saved plot to {default_out}")
+                print(
+                    f"(non-interactive backend: {backend}) Saved plot to {default_out}"
+                )
     return 0
 
 
