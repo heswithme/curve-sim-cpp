@@ -122,7 +122,8 @@ PoolResult<T> run_single_pool(
     const trading::Costs<T>& costs,
     const std::vector<Event>& events,
     const RunConfig<T>& cfg,
-    const std::vector<trading::CowswapTrade>* cowswap_trades = nullptr
+    const std::vector<trading::CowswapTrade>* cowswap_trades = nullptr,
+    const std::vector<Candle>* candles = nullptr
 ) {
     using Pool = pools::twocrypto_fx::TwoCryptoPool<T>;
     
@@ -216,7 +217,8 @@ PoolResult<T> run_single_pool(
             cfg.min_swap_frac, cfg.max_swap_frac, 0,
             cfg.enable_slippage_probes,
             cfg.save_actions, cfg.detailed_log, cfg.detailed_interval,
-            cowswap_ptr
+            cowswap_ptr,
+            candles
         );
         
         // Copy metrics from event loop result
@@ -292,7 +294,8 @@ std::vector<PoolResult<T>> run_pools_parallel(
     const std::vector<Event>& events,
     const RunConfig<T>& cfg,
     size_t n_threads = 0,
-    bool verbose = true
+    bool verbose = true,
+    const std::vector<Candle>* candles = nullptr
 ) {
     if (n_threads == 0) {
         n_threads = std::thread::hardware_concurrency();
@@ -331,7 +334,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
     if (n_pools == 1 || n_threads == 1) {
         for (size_t i = 0; i < n_pools; ++i) {
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
+            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
             
             size_t done = i + 1;
             if (verbose && (done % log_interval == 0 || done == n_pools)) {
@@ -362,7 +365,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
             if (i >= n_pools) break;
             
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr);
+            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
             
             size_t done = completed.fetch_add(1) + 1;
             

@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include "core/common.hpp"
@@ -40,7 +41,8 @@ EventLoopResult<T> run_event_loop(
     bool save_actions = false,
     bool detailed_log = false,
     size_t detailed_interval = 1,  // log every N-th event (1 = all)
-    trading::CowswapTrader<T>* cowswap = nullptr  // Optional cowswap trader
+    trading::CowswapTrader<T>* cowswap = nullptr,  // Optional cowswap trader
+    const std::vector<Candle>* candles = nullptr   // Optional candle vector for detailed logging
 ) {
     EventLoopResult<T> result{};
     Metrics<T>& m = result.metrics;
@@ -69,6 +71,10 @@ EventLoopResult<T> run_event_loop(
     // Initialize loggers
     ActionLogger<T> action_logger(save_actions);
     DetailedLogger<T> detailed_logger(detailed_log, detailed_interval);
+
+    if (detailed_logger.enabled() && candles == nullptr) {
+        throw std::invalid_argument("detailed_log enabled but candles were not provided");
+    }
     
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
@@ -258,7 +264,20 @@ EventLoopResult<T> run_event_loop(
             did_any_trade = apply_idle_tick(ev.ts, cex_price);
         }
 
-        detailed_logger.log_event(pool, ev.ts, ev.candle, cex_price, m.trades, m.n_rebalances);
+        if (detailed_logger.enabled()) {
+            const size_t candle_idx = static_cast<size_t>(ev.candle_idx);
+            if (candle_idx >= candles->size()) {
+                throw std::out_of_range("event.candle_idx out of range");
+            }
+            detailed_logger.log_event(
+                pool,
+                ev.ts,
+                (*candles)[candle_idx],
+                cex_price,
+                m.trades,
+                m.n_rebalances
+            );
+        }
     }
     
     // Move logged data into result

@@ -138,8 +138,19 @@ int main(int argc, char* argv[]) {
         
         // Load candles and generate events
         auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
+        const size_t n_candles = candles.size();
         auto events = arb::gen_events(candles);
-        std::cout << "loaded " << candles.size() << " candles -> "
+
+        // Candle vector is only required for detailed per-event logging.
+        // Free it eagerly for non-detailed runs to reduce memory footprint.
+        const std::vector<arb::Candle>* candles_ptr = nullptr;
+        if (args.detailed_log) {
+            candles_ptr = &candles;
+        } else {
+            std::vector<arb::Candle>().swap(candles);
+        }
+
+        std::cout << "loaded " << n_candles << " candles -> "
                   << events.size() << " events from " << args.candles_path << "\n" << std::flush;
         
         auto t_read1 = std::chrono::high_resolution_clock::now();
@@ -184,7 +195,8 @@ int main(int argc, char* argv[]) {
         auto results = arb::harness::run_pools_parallel(
             pool_configs, events, run_cfg,
             args.n_threads,
-            true  // verbose - prints progress per pool
+            true,  // verbose - prints progress per pool
+            candles_ptr
         );
         
         auto t_exec1 = std::chrono::high_resolution_clock::now();

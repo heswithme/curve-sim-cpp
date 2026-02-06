@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -81,17 +82,22 @@ std::vector<Candle> load_candles(const std::string& path,
 }
 
 std::vector<Event> gen_events(const std::vector<Candle>& cs) {
+    if (cs.size() > static_cast<size_t>(std::numeric_limits<uint32_t>::max())) {
+        throw std::runtime_error("Too many candles for 32-bit candle_idx");
+    }
+
     std::vector<Event> evs;
     evs.reserve(cs.size() * 2);
 
-    for (const auto& c : cs) {
+    for (size_t idx = 0; idx < cs.size(); ++idx) {
+        const auto& c = cs[idx];
         // Choose path: "low first" vs "high first" based on which is shorter
         const double path1 = std::abs(c.open - c.low)  + std::abs(c.high - c.close);
         const double path2 = std::abs(c.open - c.high) + std::abs(c.low  - c.close);
         const bool first_low = path1 < path2;
 
-        evs.push_back(Event{c.ts,      first_low ? c.low  : c.high, c.volume / 2.0, c});
-        evs.push_back(Event{c.ts + 10, first_low ? c.high : c.low,  c.volume / 2.0, c});
+        evs.push_back(Event{c.ts,      first_low ? c.low  : c.high, c.volume / 2.0, static_cast<uint32_t>(idx)});
+        evs.push_back(Event{c.ts + 10, first_low ? c.high : c.low,  c.volume / 2.0, static_cast<uint32_t>(idx)});
     }
 
     std::sort(evs.begin(), evs.end(), [](const Event& a, const Event& b) {
