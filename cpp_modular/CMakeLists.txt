@@ -46,6 +46,14 @@ target_compile_definitions(arb_harness_ld PRIVATE ARB_MODE_LD)
 target_link_libraries(arb_harness_ld Boost::json Threads::Threads)
 arb_target_defaults(arb_harness_ld)
 
+# --- arb_eval_server (persistent single-template evaluator) ---
+add_executable(arb_eval_server
+    src/eval_server.cpp
+    src/events.cpp
+)
+target_link_libraries(arb_eval_server Boost::json Threads::Threads)
+arb_target_defaults(arb_eval_server)
+
 # --- stableswap_math_i (C ABI for Python benchmarks) ---
 add_library(stableswap_math_i SHARED src/stableswap_math_i.cpp)
 arb_target_defaults(stableswap_math_i)
