@@ -395,7 +395,8 @@ def main() -> int:
     enriched_runs: List[Dict[str, Any]] = []
     total_trades = 0
     for rr in runs_raw:
-        pool_obj = rr.get("params", {}).get("pool", {})
+        params_obj = rr.get("params", {}) or {}
+        pool_obj = params_obj.get("pool", {}) if isinstance(params_obj, dict) else {}
         # Accumulate total trades for metadata (no duplicate field in result)
         result_obj = rr.get("result", {}) or {}
         try:
@@ -412,6 +413,10 @@ def main() -> int:
 
         enriched["result"] = result_obj
         enriched["final_state"] = rr.get("final_state", {})
+        if params_obj:
+            # Preserve full per-run config so downstream tools (inspect, drill-down)
+            # can reconstruct the exact pool/cost setup for a selected point.
+            enriched["params"] = params_obj
         if "actions" in rr:
             enriched["actions"] = rr.get("actions")
         if "states" in rr:

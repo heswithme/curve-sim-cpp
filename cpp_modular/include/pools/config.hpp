@@ -25,7 +25,7 @@ struct PoolInit {
     T mid_fee{T(3e-4)};
     T out_fee{T(5e-4)};
     T fee_gamma{T(0.23)};
-    T allowed_extra_profit{T(1e-3)};
+    T allowed_extra_profit{T(1e-10)};
     T adjustment_step{T(1e-3)};
     T ma_time{T(600.0)};
     T initial_price{T(1.0)};

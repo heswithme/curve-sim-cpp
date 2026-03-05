@@ -17,15 +17,15 @@ import requests
 # Configuration (edit these values if you need a different dataset)
 # ---------------------------------------------------------------------------
 PAIR = "BTCUSDT"  # Binance trading pair symbol
-START_YEAR = 2025  # First calendar year (inclusive)
-END_YEAR = 2025  # Last calendar year (inclusive)
+START_YEAR = 2023  # First calendar year (inclusive)
+END_YEAR = 2026  # Last calendar year (inclusive)
 START_OVERRIDE = None  # Optional explicit ISO8601 start, e.g. "2021-01-01T00:00:00Z"
 END_OVERRIDE = None  # Optional explicit ISO8601 end, e.g. "2024-06-01T00:00:00Z"
 LIMIT = 1000  # Candles per API request (max 1000)
 WORKERS = 8  # Number of concurrent requests
 RETRIES = 5  # Retry attempts per request on failure
 REQUEST_COOLDOWN = 0.05  # Seconds to pause between API calls per worker
-OUTPUT_FILENAME = "binance_candles.json"  # Output JSON file name
+OUTPUT_FILENAME = f"btcusd-{START_YEAR}-{END_YEAR}.json"  # Output JSON file name
 
 # ---------------------------------------------------------------------------
 API_URL = "https://api.binance.com/api/v3/klines"
