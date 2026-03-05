@@ -18,6 +18,7 @@ dependencies = [
     "scipy>=1.15.3",
     "ijson>=3.4.0.post0",
     "orjson>=3.11.5",
+    "nevergrad>=1.0.12",
 ]
 
 [tool.uv]
