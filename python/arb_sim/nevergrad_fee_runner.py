@@ -76,6 +76,7 @@ SERVER_CONFIG = {
 TEMPLATE_POOL = {
     "A": 6 * 10_000,
     "gamma": 0.0001,
+    "lp_profit_fraction": 0.5,
     "allowed_extra_profit": 1e-10,
     "adjustment_step": 0.005,
     "ma_time": 866.0,
@@ -104,6 +105,7 @@ OPTIMIZABLE_VARS = {
     "fee_gamma": log_scale(1e-6, 0.05),
     "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
     "donation_apy": scalar(0.0, 0.05, step=0.001),
+    # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
 }
 
 LOSS_CONFIG = {
@@ -124,8 +126,8 @@ ROBUST_EVAL = {
 }
 
 OPTIMIZATION = {
-    "optimizer": "NGOpt",
-    "budget": 1000,
+    "optimizer": "TwoPointsDE",
+    "budget": 5000,
     "seed": 0,
     "verbose_every": 10,
     "workers": 16,
@@ -154,6 +156,7 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
         "initial_liquidity": initial_liquidity,
         "A": float(TEMPLATE_POOL["A"]),
         "gamma": float(TEMPLATE_POOL["gamma"]),
+        "lp_profit_fraction": float(TEMPLATE_POOL["lp_profit_fraction"]),
         "mid_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["mid_fee_bps"])),
         "out_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["out_fee_bps"])),
         "fee_gamma": scale_1e18(float(TEMPLATE_POOL["fee_gamma"])),
@@ -181,6 +184,77 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
                 "costs": dict(TEMPLATE_COSTS),
             }
         ],
+    }
+
+
+def build_pool_config_entry(
+    request_params: dict[str, Any], candles_path: Path
+) -> dict[str, Any]:
+    template = build_template_config(candles_path)
+    entry = dict(template["pools"][0])
+    pool = dict(entry["pool"])
+
+    if "A" in request_params:
+        pool["A"] = str(float(request_params["A"]))
+    if "gamma" in request_params:
+        pool["gamma"] = str(float(request_params["gamma"]))
+    if "lp_profit_fraction" in request_params:
+        pool["lp_profit_fraction"] = str(float(request_params["lp_profit_fraction"]))
+    if "mid_fee_bps" in request_params:
+        pool["mid_fee"] = str(fee_bps_to_1e10(float(request_params["mid_fee_bps"])))
+    if "out_fee_bps" in request_params:
+        pool["out_fee"] = str(fee_bps_to_1e10(float(request_params["out_fee_bps"])))
+    if "fee_gamma" in request_params:
+        pool["fee_gamma"] = str(scale_1e18(float(request_params["fee_gamma"])))
+    if "allowed_extra_profit" in request_params:
+        pool["allowed_extra_profit"] = str(
+            scale_1e18(float(request_params["allowed_extra_profit"]))
+        )
+    if "adjustment_step" in request_params:
+        pool["adjustment_step"] = str(
+            scale_1e18(float(request_params["adjustment_step"]))
+        )
+    if "ma_time" in request_params:
+        pool["ma_time"] = str(float(request_params["ma_time"]))
+    if "donation_apy" in request_params:
+        pool["donation_apy"] = str(float(request_params["donation_apy"]))
+    if "donation_frequency" in request_params:
+        pool["donation_frequency"] = str(float(request_params["donation_frequency"]))
+    if "donation_coins_ratio" in request_params:
+        pool["donation_coins_ratio"] = str(
+            float(request_params["donation_coins_ratio"])
+        )
+
+    costs = dict(entry["costs"])
+    if "arb_fee_bps" in request_params:
+        costs["arb_fee_bps"] = float(request_params["arb_fee_bps"])
+    if "gas_coin0" in request_params:
+        costs["gas_coin0"] = float(request_params["gas_coin0"])
+
+    entry["pool"] = pool
+    entry["costs"] = costs
+    return entry
+
+
+def build_saved_pool_payload(
+    which: str,
+    row: dict[str, Any] | None,
+    candles_path: Path,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+
+    request_params = dict(row.get("request", {}))
+    request_params.pop("id", None)
+    return {
+        "which": which,
+        "candles_path": str(candles_path),
+        "server_config": dict(SERVER_CONFIG),
+        "template_pool": dict(TEMPLATE_POOL),
+        "template_costs": dict(TEMPLATE_COSTS),
+        "params_display": dict(row.get("params", {})),
+        "request_params": request_params,
+        "pool_config_entry": build_pool_config_entry(request_params, candles_path),
     }
 
 
@@ -586,6 +660,7 @@ PARAM_LABELS = {
     "spread_bps": "spread",
     "fee_gamma": "gamma",
     "A_units": "A",
+    "lp_profit_fraction": "lpf",
 }
 
 
@@ -598,6 +673,8 @@ def format_value(key: str, value: float) -> str:
         return f"{value:.3e}"
     if key == "A_units":
         return f"{value:.1f}"
+    if key == "lp_profit_fraction":
+        return f"{value:.2f}"
     if key.endswith("_apy") or key.endswith("_rate"):
         return f"{value:.4f}"
     if abs(value) >= 1000 and float(value).is_integer():
@@ -828,6 +905,10 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
         "robust_eval": ROBUST_EVAL,
         "best_seen": best_seen,
         "recommendation": recommendation,
+        "best_pool": build_saved_pool_payload("best_seen", best_seen, candles_path),
+        "recommendation_pool": build_saved_pool_payload(
+            "recommendation", recommendation, candles_path
+        ),
     }
 
 

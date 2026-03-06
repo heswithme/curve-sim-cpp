@@ -104,6 +104,7 @@ public:
     T mid_fee = Traits::ZERO();
     T out_fee = Traits::ZERO();
     T fee_gamma = Traits::ZERO();
+    T lp_profit_fraction = T(0.5);
     T allowed_extra_profit = Traits::ZERO();
     T adjustment_step = Traits::ZERO();
     T ma_time = Traits::ONE();
@@ -140,6 +141,7 @@ public:
         const T& _mid_fee,
         const T& _out_fee,
         const T& _fee_gamma,
+        const T& _lp_profit_fraction,
         const T& _allowed_extra_profit,
         const T& _adjustment_step,
         const T& _ma_time,
@@ -148,6 +150,7 @@ public:
         precisions = _precisions;
         A = _A; gamma = _gamma;
         mid_fee = _mid_fee; out_fee = _out_fee; fee_gamma = _fee_gamma;
+        lp_profit_fraction = _lp_profit_fraction;
         allowed_extra_profit = _allowed_extra_profit;
         adjustment_step = _adjustment_step;
         ma_time = _ma_time;
@@ -579,7 +582,8 @@ public:
 
         T threshold_vp = PoolTraits<T>::max(
             PoolTraits<T>::PRECISION(),
-            (xcp_profit + PoolTraits<T>::PRECISION()) / 2
+            PoolTraits<T>::PRECISION() +
+                (xcp_profit - PoolTraits<T>::PRECISION()) * lp_profit_fraction
         );
 
         T vp_boosted = (locked_supply > PoolTraits<T>::ZERO())

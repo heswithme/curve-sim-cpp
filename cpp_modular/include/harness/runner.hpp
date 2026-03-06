@@ -152,6 +152,7 @@ PoolResult<T> run_single_pool(
             pool_init.mid_fee,
             pool_init.out_fee,
             pool_init.fee_gamma,
+            pool_init.lp_profit_fraction,
             pool_init.allowed_extra_profit,
             pool_init.adjustment_step,
             pool_init.ma_time,

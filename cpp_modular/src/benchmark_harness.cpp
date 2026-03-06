@@ -123,6 +123,9 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
     const T mid_fee = parse_fee<T>(get_str(p, "mid_fee"));
     const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
     const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
+    const T lp_profit_fraction = p.if_contains("lp_profit_fraction")
+        ? parse_raw<T>(get_str(p, "lp_profit_fraction"))
+        : T(0.5);
 
     const T allowed_extra_profit = parse_wad<T>(get_str(p, "allowed_extra_profit"));
     const T adjustment_step = parse_wad<T>(get_str(p, "adjustment_step"));
@@ -137,6 +140,7 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
         mid_fee,
         out_fee,
         fee_gamma,
+        lp_profit_fraction,
         allowed_extra_profit,
         adjustment_step,
         ma_time,
