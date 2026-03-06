@@ -66,7 +66,7 @@ void print_usage(const char* prog) {
         << "  request fields:\n"
         << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
         << "  response fields:\n"
-        << "    ok, vp, apy, apy_net, price_diff, elapsed_ms\n";
+        << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
 }
 
 bool parse_size_t(const std::string& s, std::size_t& out) {
@@ -452,7 +452,8 @@ json::object evaluate_request(
     out["vp"] = get_double_opt(summary, "vp", -1.0);
     out["apy"] = get_double_opt(summary, "apy", -1.0);
     out["apy_net"] = get_double_opt(summary, "apy_net", -1.0);
-    out["price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
+    out["avg_rel_price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
+    out["max_rel_price_diff"] = get_double_opt(summary, "max_rel_price_diff", -1.0);
 
     out["trades"] = get_double_opt(summary, "trades", 0.0);
     out["n_rebalances"] = get_double_opt(summary, "n_rebalances", 0.0);

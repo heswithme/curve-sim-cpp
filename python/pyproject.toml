@@ -19,6 +19,7 @@ dependencies = [
     "ijson>=3.4.0.post0",
     "orjson>=3.11.5",
     "nevergrad>=1.0.12",
+    "pip>=26.0.1",
 ]
 
 [tool.uv]
