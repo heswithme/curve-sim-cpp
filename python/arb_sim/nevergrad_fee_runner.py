@@ -105,7 +105,7 @@ OPTIMIZABLE_VARS = {
     "fee_gamma": log_scale(1e-6, 0.05),
     "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
     "donation_apy": scalar(0.0, 0.05, step=0.001),
-    # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
+    "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
 }
 
 LOSS_CONFIG = {
@@ -771,6 +771,19 @@ def save_result(payload: dict[str, Any]) -> None:
     RESULT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def run_inspect_best() -> None:
+    inspect_script = REPO_ROOT / "python" / "arb_sim" / "inspect_nevergrad_result.py"
+    if not inspect_script.exists():
+        print(f"inspect script not found: {inspect_script}", flush=True)
+        return
+
+    cmd = ["uv", "run", "python", str(inspect_script), "--result", str(RESULT_PATH)]
+    try:
+        subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"inspect replay failed: {exc}", flush=True)
+
+
 def build_optimizer(ng: Any, parametrization: Any) -> Any:
     workers = max(1, int(OPTIMIZATION["workers"]))
     optimizer_name = str(OPTIMIZATION["optimizer"])
@@ -845,6 +858,8 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
 
     started = time.time()
     best_seen: dict[str, Any] | None = None
+    recommendation: dict[str, Any] | None = None
+    interrupted = False
 
     with tempfile.TemporaryDirectory(prefix="arb_eval_template_") as tmp_dir:
         template_path = write_template_file(candles_path, Path(tmp_dir))
@@ -860,34 +875,38 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 next_step = 1
-                while next_step <= budget:
-                    batch_size = min(workers, budget - next_step + 1)
-                    batch_rows = run_parallel_batch(
-                        executor,
-                        optimizer,
-                        clients,
-                        next_step,
-                        batch_size,
+                try:
+                    while next_step <= budget:
+                        batch_size = min(workers, budget - next_step + 1)
+                        batch_rows = run_parallel_batch(
+                            executor,
+                            optimizer,
+                            clients,
+                            next_step,
+                            batch_size,
+                        )
+
+                        for candidate, row in batch_rows:
+                            optimizer.tell(candidate, float(row["loss"]))
+
+                            if best_seen is None or float(row["loss"]) < float(
+                                best_seen["loss"]
+                            ):
+                                best_seen = row
+
+                            step = int(row["step"])
+                            if step == 1 or step == budget or step % verbose_every == 0:
+                                print_progress(step, budget, row, best_seen)
+
+                        next_step += batch_size
+
+                    recommendation_candidate = optimizer.provide_recommendation()
+                    recommendation = evaluate_candidate(
+                        clients[0], budget + 1, recommendation_candidate.kwargs
                     )
-
-                    for candidate, row in batch_rows:
-                        optimizer.tell(candidate, float(row["loss"]))
-
-                        if best_seen is None or float(row["loss"]) < float(
-                            best_seen["loss"]
-                        ):
-                            best_seen = row
-
-                        step = int(row["step"])
-                        if step == 1 or step == budget or step % verbose_every == 0:
-                            print_progress(step, budget, row, best_seen)
-
-                    next_step += batch_size
-
-                recommendation_candidate = optimizer.provide_recommendation()
-                recommendation = evaluate_candidate(
-                    clients[0], budget + 1, recommendation_candidate.kwargs
-                )
+                except KeyboardInterrupt:
+                    interrupted = True
+                    print("\nInterrupted, saving best-so-far...", flush=True)
 
     elapsed_s = time.time() - started
     return {
@@ -903,12 +922,10 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
         "optimizable_vars": OPTIMIZABLE_VARS,
         "loss_config": LOSS_CONFIG,
         "robust_eval": ROBUST_EVAL,
+        "interrupted": interrupted,
         "best_seen": best_seen,
         "recommendation": recommendation,
         "best_pool": build_saved_pool_payload("best_seen", best_seen, candles_path),
-        "recommendation_pool": build_saved_pool_payload(
-            "recommendation", recommendation, candles_path
-        ),
     }
 
 
@@ -920,18 +937,16 @@ def main() -> int:
         raise SystemExit(f"candles file not found: {candles_path}")
 
     payload = run_optimization(ng, binary_path, candles_path)
-    save_result(payload)
-
     best_seen = payload["best_seen"]
     if best_seen is None:
+        save_result(payload)
         raise SystemExit("no evaluations were executed")
 
+    save_result(payload)
+
     print("best_seen:", json.dumps(best_seen, separators=(",", ":"), sort_keys=True))
-    print(
-        "recommendation:",
-        json.dumps(payload["recommendation"], separators=(",", ":"), sort_keys=True),
-    )
     print(f"saved: {RESULT_PATH}")
+    run_inspect_best()
     return 0
 
 

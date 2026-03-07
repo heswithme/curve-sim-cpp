@@ -8,12 +8,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from python.arb_sim import nevergrad_fee_runner as ngf
-
-
-REPO_ROOT = ngf.REPO_ROOT
+REPO_ROOT = Path(__file__).resolve().parents[2]
 PYTHON_DIR = REPO_ROOT / "python"
-DEFAULT_RESULT_PATH = ngf.RESULT_PATH
+DEFAULT_RESULT_PATH = REPO_ROOT / "comparison-results" / "nevergrad_fee_result.json"
 DEFAULT_OUTPUT_PATH = REPO_ROOT / "comparison-results" / "nevergrad_inspect_output.json"
 DEFAULT_POOL_PATH = (
     REPO_ROOT / "python" / "arb_sim" / "run_data" / "inspect_nevergrad_pool.json"
@@ -28,12 +25,6 @@ def parse_args() -> argparse.Namespace:
         description="Replay and inspect best Nevergrad result"
     )
     parser.add_argument("--result", type=Path, default=DEFAULT_RESULT_PATH)
-    parser.add_argument(
-        "--which",
-        choices=("best_pool", "recommendation_pool"),
-        default="best_pool",
-        help="Which saved optimizer point to inspect",
-    )
     parser.add_argument("--out", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument("--pool-config", type=Path, default=DEFAULT_POOL_PATH)
     parser.add_argument("--skip-build", action="store_true")
@@ -52,24 +43,13 @@ def load_result(path: Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def select_saved_pool(
-    result: dict[str, Any], which: str, result_path: Path
-) -> dict[str, Any]:
-    payload = result.get(which)
+def select_best_pool(result: dict[str, Any], result_path: Path) -> dict[str, Any]:
+    payload = result.get("best_pool")
     if isinstance(payload, dict) and "pool_config_entry" in payload:
         return payload
-
-    legacy_key = "best_seen" if which == "best_pool" else "recommendation"
-    legacy_row = result.get(legacy_key)
-    candles_path_raw = result.get("candles_path")
-    if isinstance(legacy_row, dict) and isinstance(candles_path_raw, str):
-        return ngf.build_saved_pool_payload(
-            legacy_key,
-            legacy_row,
-            Path(candles_path_raw),
-        )
-
-    raise SystemExit(f"Missing replayable payload {which} in {result_path}")
+    raise SystemExit(
+        f"Missing replayable payload best_pool in {result_path}. Rerun the optimizer to regenerate the result file."
+    )
 
 
 def write_pool_config(path: Path, saved_pool: dict[str, Any]) -> Path:
@@ -169,7 +149,7 @@ def maybe_plot(output_path: Path, args: argparse.Namespace) -> None:
 def main() -> int:
     args = parse_args()
     result = load_result(args.result)
-    saved_pool = select_saved_pool(result, args.which, args.result)
+    saved_pool = select_best_pool(result, args.result)
 
     candles_path = Path(saved_pool["candles_path"]).resolve()
     if not candles_path.exists():

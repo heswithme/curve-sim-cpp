@@ -396,6 +396,14 @@ json::object evaluate_request(
     if (req.if_contains("gamma")) {
         pool.gamma = static_cast<RealT>(get_double_opt(req, "gamma", static_cast<double>(pool.gamma)));
     }
+    if (req.if_contains("lp_profit_fraction")) {
+        const double fraction = get_double_opt(
+            req,
+            "lp_profit_fraction",
+            static_cast<double>(pool.lp_profit_fraction)
+        );
+        pool.lp_profit_fraction = static_cast<RealT>(std::clamp(fraction, 0.0, 1.0));
+    }
     if (req.if_contains("allowed_extra_profit")) {
         pool.allowed_extra_profit = static_cast<RealT>(
             get_double_opt(req, "allowed_extra_profit", static_cast<double>(pool.allowed_extra_profit))
@@ -446,6 +454,7 @@ json::object evaluate_request(
     out["mid_fee"] = static_cast<double>(pool.mid_fee);
     out["out_fee"] = static_cast<double>(pool.out_fee);
     out["fee_gamma"] = static_cast<double>(pool.fee_gamma);
+    out["lp_profit_fraction"] = static_cast<double>(pool.lp_profit_fraction);
     out["mid_fee_bps"] = static_cast<double>(pool.mid_fee) * 10000.0;
     out["out_fee_bps"] = static_cast<double>(pool.out_fee) * 10000.0;
 
