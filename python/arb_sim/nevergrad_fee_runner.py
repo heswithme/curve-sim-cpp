@@ -268,11 +268,27 @@ def write_template_file(candles_path: Path, directory: Path) -> Path:
 def build_eval_server(repo_root: Path) -> None:
     build_dir = repo_root / "cpp_modular" / "build"
     subprocess.run(
-        ["cmake", "-S", str(repo_root / "cpp_modular"), "-B", str(build_dir)],
+        [
+            "cmake",
+            "-S",
+            str(repo_root / "cpp_modular"),
+            "-B",
+            str(build_dir),
+            "-DCMAKE_BUILD_TYPE=Release",
+        ],
         check=True,
     )
     subprocess.run(
-        ["cmake", "--build", str(build_dir), "--target", "arb_eval_server", "-j8"],
+        [
+            "cmake",
+            "--build",
+            str(build_dir),
+            "--config",
+            "Release",
+            "--target",
+            "arb_eval_server",
+            "-j8",
+        ],
         check=True,
     )
 
