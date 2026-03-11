@@ -99,7 +99,7 @@ BASE_POOL = {
     "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(101 / 10_000 * 1e10),
     "fee_gamma": int(0.003 * 1e18),
-    "allowed_extra_profit": int(1e-7 * 10**18),
+    "allowed_extra_profit": int(1e-12 * 10**18),
     "adjustment_step": int(0.005 * 10**18),
     # "adjustment_step": int(1e-7 * 10**18), # ONLY FOR OLD POOLS
     "ma_time": 866,

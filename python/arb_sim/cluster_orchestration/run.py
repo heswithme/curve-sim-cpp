@@ -76,6 +76,7 @@ def run_blade_job(
     threads: int,
     dustswap_freq: int,
     candle_filter: Optional[float],
+    pool_backend: str,
     stream_output: bool = False,
     line_buffered: bool = False,
     retries: int = 3,
@@ -102,7 +103,7 @@ def run_blade_job(
                 remote_candles,
                 output_file,
                 "--pool-backend",
-                HARNESS_POOL_BACKEND,
+                pool_backend,
                 f"--threads",
                 str(threads),
                 f"--pool-start",
@@ -190,6 +191,7 @@ def run_parallel(
     remote_pools = manifest["remote_pools"]
     job_id = manifest["job_id"]
     cfg = manifest["config"]
+    pool_backend = cfg.get("pool_backend", HARNESS_POOL_BACKEND)
 
     print(f"\n{'=' * 60}")
     print(f"Running on {len(blades_info)} blades in parallel")
@@ -213,6 +215,7 @@ def run_parallel(
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
                 dustswap_freq=cfg.get("dustswap_freq", 600),
                 candle_filter=cfg.get("candle_filter"),
+                pool_backend=pool_backend,
                 stream_output=stream_blade == blade,
                 line_buffered=False,
             )

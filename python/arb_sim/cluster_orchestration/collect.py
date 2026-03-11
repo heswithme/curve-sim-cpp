@@ -228,6 +228,7 @@ def collect(
             "harness_args": {
                 "dustswapfreq": cfg.get("dustswap_freq"),
                 "candle_filter": cfg.get("candle_filter"),
+                "pool_backend": cfg.get("pool_backend"),
             },
             # Include grid metadata for visualization compatibility
             "grid": grid,

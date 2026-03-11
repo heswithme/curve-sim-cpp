@@ -56,7 +56,7 @@ struct PoolTraits<long double> {
     static T PRECISION() { return 1.0L; }
     static T FEE_PRECISION() { return 1.0L; }
     static T A_MULTIPLIER() { return 10000.0L; }
-    static T NOISE_FEE() { return 1e-12L; }
+    static T NOISE_FEE() { return 1e-5L; }
     static T ZERO() { return 0.0L; }
     static T ONE() { return 1.0L; }
     static T ROUNDING_UNIT_XP() { return 0.0L; }

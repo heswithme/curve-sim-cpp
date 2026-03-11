@@ -108,6 +108,8 @@ def distribute(
     threads_per_blade: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
     candle_filter: Optional[float] = None,
+    pool_backend: str = "ld",
+    output_file: Optional[Path] = None,
     output_prefix: str = "cluster_sweep",
 ) -> dict:
     """
@@ -209,6 +211,8 @@ def distribute(
             "threads_per_blade": threads_per_blade,
             "dustswap_freq": dustswap_freq,
             "candle_filter": candle_filter,
+            "pool_backend": pool_backend,
+            "output_file": str(output_file) if output_file is not None else None,
             "output_prefix": output_prefix,
         },
         "local_job_dir": str(local_job_dir),

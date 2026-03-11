@@ -113,6 +113,8 @@ def sweep(
     threads: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
     candle_filter: Optional[float] = None,
+    pool_backend: str = "ld",
+    output_file: Optional[Path] = None,
     output_prefix: str = "cluster_sweep",
     stream_blade: Optional[str] = None,
 ) -> Optional[Path]:
@@ -132,6 +134,7 @@ def sweep(
         f"  Blades:  {len(blades)} ({', '.join(blades[:3])}{'...' if len(blades) > 3 else ''})"
     )
     print(f"  Threads: {threads} per blade")
+    print(f"  Backend: {pool_backend}")
     print(f"{'=' * 70}\n")
 
     # Step 0: Check connectivity
@@ -163,6 +166,8 @@ def sweep(
         threads_per_blade=threads,
         dustswap_freq=dustswap_freq,
         candle_filter=candle_filter,
+        pool_backend=pool_backend,
+        output_file=output_file,
         output_prefix=output_prefix,
     )
 
@@ -183,8 +188,11 @@ def sweep(
 
     # Step 4: Collect
     print("\n[4/4] Collecting results...")
-    LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}.json"
+    if output_file is None:
+        LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}.json"
+    else:
+        output_file.parent.mkdir(parents=True, exist_ok=True)
 
     merged = collect(manifest_path, output_file)
     if not merged:
@@ -219,13 +227,18 @@ def resume(
 
     job_id = manifest["job_id"]
     print(f"\nResuming job: {job_id}")
+    cfg = manifest.get("config", {})
+    output_file_str = cfg.get("output_file")
+    output_prefix = cfg.get("output_prefix", "cluster_sweep")
 
     if collect_only or manifest.get("run_status"):
         # Just collect
-        cfg = manifest.get("config", {})
-        output_prefix = cfg.get("output_prefix", "cluster_sweep")
-        LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+        if output_file_str:
+            output_file = Path(output_file_str)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
 
         merged = collect(manifest_path, output_file)
         return output_file if merged else None
@@ -235,15 +248,34 @@ def resume(
     if not any(r.success for r in results.values()):
         return None
 
-    cfg = manifest.get("config", {})
-    output_prefix = cfg.get("output_prefix", "cluster_sweep")
-    LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+    if output_file_str:
+        output_file = Path(output_file_str)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
     merged = collect(manifest_path, output_file)
     return output_file if merged else None
 
 
 def main():
+    def resolve_pool_backend(args: argparse.Namespace) -> str:
+        if args.double:
+            return "double"
+        if args.longdouble:
+            return "ld"
+        if args.int_backend:
+            return "uint"
+
+        real = args.real.lower()
+        if real == "double":
+            return "double"
+        if real == "longdouble":
+            return "ld"
+        if real == "int":
+            return "uint"
+        raise ValueError(f"Unsupported --real value: {args.real}")
+
     parser = argparse.ArgumentParser(
         description="Cluster sweep orchestration",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -267,6 +299,33 @@ def main():
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
     parser.add_argument("--dustswap-freq", type=int, default=600)
     parser.add_argument("--candle-filter", type=float)
+    parser.add_argument(
+        "--real",
+        choices=["double", "longdouble", "int"],
+        default="longdouble",
+        help="Pool backend for arb_harness (default: longdouble)",
+    )
+    parser.add_argument(
+        "--double",
+        action="store_true",
+        help="Shortcut for --real double",
+    )
+    parser.add_argument(
+        "--longdouble",
+        action="store_true",
+        help="Shortcut for --real longdouble",
+    )
+    parser.add_argument(
+        "--int",
+        dest="int_backend",
+        action="store_true",
+        help="Shortcut for --real int",
+    )
+    parser.add_argument(
+        "--outfile",
+        type=Path,
+        help="Exact local output JSON path for merged results",
+    )
     parser.add_argument("--output-prefix", default="cluster_sweep")
 
     # Workflow control
@@ -305,6 +364,9 @@ def main():
         print(f"Pools not found: {args.pools}")
         sys.exit(1)
 
+    pool_backend = resolve_pool_backend(args)
+    output_file = args.outfile.resolve() if args.outfile else None
+
     result = sweep(
         pools_file=args.pools,
         blades=args.blades,
@@ -313,6 +375,8 @@ def main():
         threads=args.threads,
         dustswap_freq=args.dustswap_freq,
         candle_filter=args.candle_filter,
+        pool_backend=pool_backend,
+        output_file=output_file,
         output_prefix=args.output_prefix,
         stream_blade=args.stream_blade,
     )
