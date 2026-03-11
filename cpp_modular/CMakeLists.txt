@@ -66,11 +66,6 @@ target_compile_definitions(benchmark_harness_d PRIVATE HARNESS_MODE_D)
 target_link_libraries(benchmark_harness_d Boost::json Threads::Threads)
 arb_target_defaults(benchmark_harness_d)
 
-add_executable(benchmark_harness_f src/benchmark_harness.cpp)
-target_compile_definitions(benchmark_harness_f PRIVATE HARNESS_MODE_F)
-target_link_libraries(benchmark_harness_f Boost::json Threads::Threads)
-arb_target_defaults(benchmark_harness_f)
-
 add_executable(benchmark_harness_ld src/benchmark_harness.cpp)
 target_compile_definitions(benchmark_harness_ld PRIVATE HARNESS_MODE_LD)
 target_link_libraries(benchmark_harness_ld Boost::json Threads::Threads)

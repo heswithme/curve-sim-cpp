@@ -43,7 +43,7 @@ Decision<T> decide_trade(
     T min_swap_frac,
     T max_swap_frac
 ) {
-    static_assert(std::is_floating_point_v<T>, "decide_trade is floating-only");
+    static_assert(fx::is_float_like_real_v<T>, "decide_trade is floating-only");
 
     Decision<T> d{};
 
@@ -172,7 +172,7 @@ Decision<T> decide_trade_numeric(
     T min_swap_frac,
     T max_swap_frac
 ) {
-    static_assert(std::is_floating_point_v<T>, "decide_trade is floating-only");
+    static_assert(fx::is_float_like_real_v<T>, "decide_trade is floating-only");
 
     Decision<T> d{};
 

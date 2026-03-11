@@ -406,14 +406,6 @@ int main(int argc, char* argv[]) {
     }
     return run_harness<double>(argv[1], argv[2], argv[3]);
 }
-#elif defined(HARNESS_MODE_F)
-int main(int argc, char* argv[]) {
-    if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << " <pools.json> <sequences.json> <output.json>\n";
-        return 1;
-    }
-    return run_harness<float>(argv[1], argv[2], argv[3]);
-}
 #elif defined(HARNESS_MODE_LD)
 int main(int argc, char* argv[]) {
     if (argc < 4) {
@@ -425,7 +417,7 @@ int main(int argc, char* argv[]) {
 #else
 int main(int argc, char* argv[]) {
     if (argc < 5) {
-        std::cerr << "Usage: " << argv[0] << " <mode:i|d|f|ld> <pools.json> <sequences.json> <output.json>\n";
+        std::cerr << "Usage: " << argv[0] << " <mode:i|d|ld> <pools.json> <sequences.json> <output.json>\n";
         return 1;
     }
 
@@ -436,7 +428,6 @@ int main(int argc, char* argv[]) {
 
     if (mode == "i") return run_harness<uint256>(pools, seq, out);
     if (mode == "d") return run_harness<double>(pools, seq, out);
-    if (mode == "f") return run_harness<float>(pools, seq, out);
     if (mode == "ld") return run_harness<long double>(pools, seq, out);
 
     std::cerr << "Unknown mode: " << mode << "\n";

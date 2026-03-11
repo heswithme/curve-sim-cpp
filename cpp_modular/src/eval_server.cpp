@@ -65,7 +65,7 @@ void print_usage(const char* prog) {
         << "  -h, --help                 Show this help\n\n"
         << "Stdin protocol (JSONL in persistent mode):\n"
         << "  request fields:\n"
-        << "    id (optional, echoed), pool_backend, mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
+        << "    id (optional, echoed), pool_backend (double|ld|uint), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
         << "  response fields:\n"
         << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
 }

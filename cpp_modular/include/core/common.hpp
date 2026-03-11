@@ -1,6 +1,7 @@
 // Common utilities: differs_rel, io_mutex, etc.
 #pragma once
 
+#include <boost/multiprecision/cpp_int.hpp>
 #include <cmath>
 #include <mutex>
 #include <algorithm>
@@ -12,6 +13,7 @@ inline std::mutex io_mu;
 
 template <typename T>
 inline auto abs_value(const T& x) {
+    using boost::multiprecision::abs;
     using std::abs;
     return abs(x);
 }

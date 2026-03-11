@@ -189,7 +189,7 @@ def main() -> int:
         "--real",
         type=str,
         default="double",
-        choices=["double", "ld", "longdouble", "uint", "float"],
+        choices=["double", "ld", "longdouble", "uint"],
         help="Pool backend for C++ harness",
     )
     parser.add_argument(

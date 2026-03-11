@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <boost/multiprecision/cpp_int.hpp>
 
 namespace arb {
@@ -25,6 +26,32 @@ struct MathResultT {
 template <typename T>
 struct MathTraits;
 
+template <typename T>
+struct is_exact_integer_real : std::false_type {};
+
+template <>
+struct is_exact_integer_real<uint256> : std::true_type {};
+
+template <typename T>
+inline constexpr bool is_exact_integer_real_v = is_exact_integer_real<T>::value;
+
+template <typename T>
+inline constexpr bool is_float_like_real_v = !is_exact_integer_real_v<T>;
+
+template <typename T>
+inline T real_sqrt(const T& x) {
+    using boost::multiprecision::sqrt;
+    using std::sqrt;
+    return sqrt(x);
+}
+
+template <typename T>
+inline T real_exp(const T& x) {
+    using boost::multiprecision::exp;
+    using std::exp;
+    return exp(x);
+}
+
 template <>
 struct MathTraits<uint256> {
     static constexpr size_t N = 2;
@@ -39,31 +66,15 @@ struct MathTraits<uint256> {
     }
 };
 
-template <>
-struct MathTraits<double> {
+template <typename T>
+struct MathTraits {
     static constexpr size_t N = 2;
-
-    static double A_MULTIPLIER() {
-        return 10000.0;
+    static T A_MULTIPLIER() {
+        return T(10000);
     }
-
-    static double PRECISION() {
-        return 1.0;
+    static T PRECISION() {
+        return T(1);
     }
-};
-
-template <>
-struct MathTraits<float> {
-    static constexpr size_t N = 2;
-    static float A_MULTIPLIER() { return 10000.0f; }
-    static float PRECISION() { return 1.0f; }
-};
-
-template <>
-struct MathTraits<long double> {
-    static constexpr size_t N = 2;
-    static long double A_MULTIPLIER() { return 10000.0L; }
-    static long double PRECISION() { return 1.0L; }
 };
 
 // Convergence and iteration traits per numeric type
@@ -79,28 +90,24 @@ struct Convergence<uint256> {
     static constexpr size_t MAX_IT = 255;
 };
 
-template <>
-struct Convergence<double> {
-    static bool close(double a, double b) {
-        return std::fabs(a - b) <= 1e-12 * std::max(1.0, a);
+template <typename T>
+struct Convergence {
+    static bool close(const T& a, const T& b) {
+        using boost::multiprecision::abs;
+        using std::abs;
+        const T scale = std::max(T(1), std::max(abs(a), abs(b)));
+        T rel_tol = T(1e-12);
+        if constexpr (std::numeric_limits<T>::digits10 <= 7) {
+            rel_tol = T(1e-6);
+        } else if constexpr (std::numeric_limits<T>::digits10 >= 30) {
+            rel_tol = T(1e-18);
+        } else if constexpr (std::numeric_limits<T>::digits10 >= 18) {
+            rel_tol = T(1e-15);
+        }
+        const T tol = rel_tol * scale;
+        return abs(a - b) <= tol;
     }
 
-    static constexpr size_t MAX_IT = 256;
-};
-
-template <>
-struct Convergence<float> {
-    static bool close(float a, float b) {
-        return std::fabs(a - b) <= 1e-6f * std::max(1.0f, a);
-    }
-    static constexpr size_t MAX_IT = 256;
-};
-
-template <>
-struct Convergence<long double> {
-    static bool close(long double a, long double b) {
-        return fabsl(a - b) <= 1e-12L * std::max<long double>(1.0L, a);
-    }
     static constexpr size_t MAX_IT = 256;
 };
 

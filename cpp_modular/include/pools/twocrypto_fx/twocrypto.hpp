@@ -51,21 +51,6 @@ struct PoolTraits<double> {
 };
 
 template <>
-struct PoolTraits<float> {
-    using T = float;
-    static T PRECISION() { return 1.0f; }
-    static T FEE_PRECISION() { return 1.0f; }
-    static T A_MULTIPLIER() { return 10000.0f; }
-    static T NOISE_FEE() { return 1e-5f; }
-    static T ZERO() { return 0.0f; }
-    static T ONE() { return 1.0f; }
-    static T ROUNDING_UNIT_XP() { return 0.0f; }
-    static bool is_zero(const T& x) { return std::abs(x) <= 0.0f; }
-    static T max(const T& a, const T& b) { return a > b ? a : b; }
-    static T min(const T& a, const T& b) { return a < b ? a : b; }
-};
-
-template <>
 struct PoolTraits<long double> {
     using T = long double;
     static T PRECISION() { return 1.0L; }
@@ -204,12 +189,9 @@ private:
                 Traits::PRECISION() * price_scale
             );
             return _D * Traits::PRECISION() / N_COINS / sqrt_price;
-        } else if constexpr (std::is_same_v<T, long double>) {
-            long double sp = std::sqrt(static_cast<long double>(Traits::PRECISION() * price_scale));
-            return _D * Traits::PRECISION() / T(N_COINS) / T(sp);
         } else {
-            double sp = std::sqrt(static_cast<double>(Traits::PRECISION() * price_scale));
-            return _D * Traits::PRECISION() / T(N_COINS) / T(sp);
+            return _D * Traits::PRECISION() / T(N_COINS) /
+                real_sqrt(Traits::PRECISION() * price_scale);
         }
     }
 
@@ -533,13 +515,10 @@ public:
                     capped * (PoolTraits<T>::PRECISION() - alpha) + price_oracle * alpha
                 ) / PoolTraits<T>::PRECISION();
             } else {
-                auto alpha = std::exp(
-                    - static_cast<double>(dt) / static_cast<double>(ma_time)
-                );
+                auto alpha = real_exp(-(dt / ma_time));
                 T capped = last_prices;
                 if (capped > 2 * price_scale) capped = 2 * price_scale;
-
-                price_oracle = capped * (T(1) - T(alpha)) + price_oracle * T(alpha);
+                price_oracle = capped * (T(1) - alpha) + price_oracle * alpha;
             }
             cached_price_oracle = price_oracle;
             last_timestamp      = block_timestamp;
