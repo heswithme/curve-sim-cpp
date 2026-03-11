@@ -11,16 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
 # -------------------- Grid Definition --------------------
-FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
+FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
 N_DENSE = 16
 
 DEMO_GRID = {
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE), # 1
+    "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
     "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
     "donation_apy": np.linspace(0.036, 0.036, 1),  # 0-20%
 }
@@ -35,7 +34,6 @@ SPARSE_FX_GRID = {
     # "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
     # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
 }
-
 
 
 ZOOM_FX_GRID = {
@@ -60,10 +58,10 @@ MANUAL_GRID = {
     # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
     # "fee_gamma": [int(a * 10**18) for a in [0.0003, 0.003, 0.03, 0.3]],  # 0.0003-0.3
-    "fee_gamma": [int(a*10**18) for a in [4e-3]],
+    "fee_gamma": [int(a * 10**18) for a in [4e-3]],
     # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
 }
-# MANUAL_GRID = DEMO_GRID
+MANUAL_GRID = DEMO_GRID
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 # DEFAULT_DATAFILE = str(

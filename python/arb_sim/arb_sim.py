@@ -200,8 +200,8 @@ def main() -> int:
     parser.add_argument(
         "--candle-filter",
         type=float,
-        default=10.0,
-        help="Filter candles +/- PCT (default: 10.0)",
+        default=99.0,
+        help="Filter candles +/- PCT (default: 99.0)",
     )
     parser.add_argument(
         "--userswapfreq",
