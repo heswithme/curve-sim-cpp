@@ -402,7 +402,7 @@ def print_summary(
 
 
 def _ensure_built_harness():
-    """Build typed C++ harnesses once to avoid rebuilds when switching modes."""
+    """Build the runtime C++ benchmark harness once before running modes."""
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cpp_dir = os.path.abspath(os.path.join(repo_root, "../cpp_modular"))
     build_dir = os.path.abspath(os.path.join(cpp_dir, "build"))
@@ -414,7 +414,7 @@ def _ensure_built_harness():
         check=True,
     )
 
-    # Build typed harnesses
+    # Build runtime harness
     subprocess.run(
         [
             "cmake",
@@ -423,8 +423,7 @@ def _ensure_built_harness():
             "--config",
             "Release",
             "--target",
-            "benchmark_harness_i",
-            "benchmark_harness_d",
+            "benchmark_harness",
         ],
         check=True,
     )

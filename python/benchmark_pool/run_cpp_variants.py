@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run C++ variants (uint256, float, double, long double) on the same dataset and summarize timings.
+Run C++ variants (uint256, double, long double) on the same dataset and summarize timings.
 
 Usage:
   uv run benchmark_pool/run_cpp_variants.py [--pools-file FILE] [--sequences-file FILE]
@@ -8,7 +8,6 @@ Usage:
 
 Writes a timestamped folder under python/benchmark_pool/data/results/run_cpp_variants_<UTC> containing:
   - cpp_i_combined.json
-  - cpp_f_combined.json
   - cpp_d_combined.json
   - cpp_ld_combined.json
   - summary.json (timings and basic counts)
@@ -57,7 +56,7 @@ def _extract_states(results: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _ensure_built_harness():
-    """Build typed C++ harnesses once to avoid rebuilds when switching modes."""
+    """Build the runtime C++ benchmark harness once before running modes."""
     cpp_dir = (REPO_ROOT / "cpp_modular").resolve()
     build_dir = (cpp_dir / "build").resolve()
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -77,9 +76,6 @@ def _ensure_built_harness():
         check=True,
     )
 
-    # Build typed harnesses
-    import subprocess
-
     subprocess.run(
         [
             "cmake",
@@ -88,10 +84,7 @@ def _ensure_built_harness():
             "--config",
             "Release",
             "--target",
-            "benchmark_harness_i",
-            "benchmark_harness_d",
-            "benchmark_harness_f",
-            "benchmark_harness_ld",
+            "benchmark_harness",
         ],
         check=True,
     )
@@ -99,7 +92,7 @@ def _ensure_built_harness():
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Run C++ variants (i vs d) over the same dataset"
+        description="Run C++ variants (i vs d vs ld) over the same dataset"
     )
     ap.add_argument(
         "--pools-file",
@@ -169,7 +162,7 @@ def main() -> int:
         except Exception as e:
             print(f"⚠ Failed to copy inputs into run dir: {e}")
 
-        # Pre-build typed harnesses to avoid sequential rebuilds
+        # Pre-build runtime harness to avoid repeated configure/builds
         try:
             _ensure_built_harness()
         except Exception as e:
@@ -180,12 +173,6 @@ def main() -> int:
         out_i = run_dir / "cpp_i_combined.json"
         res_i = run_cpp("i", str(pools_file), str(sequences_file), str(out_i))
         i_time = res_i.get("metadata", {}).get("harness_time_s")
-
-        # Run float
-        print("\n=== C++ float ===")
-        out_f = run_dir / "cpp_f_combined.json"
-        res_f = run_cpp("f", str(pools_file), str(sequences_file), str(out_f))
-        f_time = res_f.get("metadata", {}).get("harness_time_s")
 
         # Run double
         print("\n=== C++ double ===")
@@ -215,7 +202,6 @@ def main() -> int:
             return abs(a - b) * 100.0 / abs(b)
 
         I_states = _extract_states(res_i)
-        F_states = _extract_states(res_f)
         D_states = _extract_states(res_d)
         LD_states = _extract_states(res_ld)
         metrics = ["balances", "D", "virtual_price", "totalSupply", "price_scale"]
@@ -279,31 +265,28 @@ def main() -> int:
                 st.pop("sum_rel_pct", None)
             return final_rel_errors, final_abs_errors, agg_stats
 
-        rel_f, abs_f, stats_f = _diffs_vs_i(F_states)
         rel_d, abs_d, stats_d = _diffs_vs_i(D_states)
         rel_ld, abs_ld, stats_ld = _diffs_vs_i(LD_states)
 
         _write(
             run_dir / "final_rel_errors_vs_i.json",
-            {"f": rel_f, "d": rel_d, "ld": rel_ld},
+            {"d": rel_d, "ld": rel_ld},
         )
         _write(
             run_dir / "final_abs_errors_vs_i.json",
-            {"f": abs_f, "d": abs_d, "ld": abs_ld},
+            {"d": abs_d, "ld": abs_ld},
         )
         _write(
             run_dir / "final_rel_stats_vs_i.json",
-            {"f": stats_f, "d": stats_d, "ld": stats_ld},
+            {"d": stats_d, "ld": stats_ld},
         )
 
         # Summary
         summary = {
             "i_time_s": i_time,
-            "f_time_s": f_time,
             "d_time_s": d_time,
             "ld_time_s": ld_time,
             "speedup_vs_i": {
-                "f": (i_time / f_time) if (i_time and f_time and f_time > 0) else None,
                 "d": (i_time / d_time) if (i_time and d_time and d_time > 0) else None,
                 "ld": (i_time / ld_time)
                 if (i_time and ld_time and ld_time > 0)
@@ -367,7 +350,6 @@ def main() -> int:
                     f"    balances     : rel={fmt_ratio(per_metric.get('balances'))} abs={fmt_abs(abs_metric.get('balances'))}"
                 )
 
-        print_block("float", rel_f, abs_f)
         print_block("double", rel_d, abs_d)
         print_block("long double", rel_ld, abs_ld)
 

@@ -1,36 +1,44 @@
 #!/usr/bin/env python3
 """
-Unified C++ pool benchmark runner (mode: i | d).
-Builds the templated harness once (Release) and runs with the selected mode.
+Unified C++ pool benchmark runner (mode: i | d | ld).
+
+Prefers the runtime benchmark harness and falls back to typed binaries only when
+the runtime binary is unavailable.
 """
 
+from pathlib import Path
 import json
 import os
 import shutil
 import subprocess
 import sys
 from typing import Dict
-from pathlib import Path
+
+
+SUPPORTED_MODES = ("i", "d", "ld")
+TYPED_TARGETS = {
+    "i": "benchmark_harness_i",
+    "d": "benchmark_harness_d",
+    "ld": "benchmark_harness_ld",
+}
 
 
 class CppPoolRunner:
     def __init__(self, cpp_project_path: str):
-        self.cpp_project_path = cpp_project_path
-        self.build_dir = os.path.join(cpp_project_path, "build")
-        # Unified harness (legacy) and typed binaries
-        self.harness_path = os.path.join(self.build_dir, "benchmark_harness")
-        self.harness_i_path = os.path.join(self.build_dir, "benchmark_harness_i")
-        self.harness_d_path = os.path.join(self.build_dir, "benchmark_harness_d")
-        self.harness_f_path = os.path.join(self.build_dir, "benchmark_harness_f")
-        self.harness_ld_path = os.path.join(self.build_dir, "benchmark_harness_ld")
+        self.cpp_project_path = Path(cpp_project_path)
+        self.build_dir = self.cpp_project_path / "build"
+        self.harness_path = self.build_dir / "benchmark_harness"
+        self.typed_harness_paths = {
+            mode: self.build_dir / target for mode, target in TYPED_TARGETS.items()
+        }
 
     def configure_build(self):
         # If build dir was generated from a different checkout, wipe it.
-        cache_path = os.path.join(self.build_dir, "CMakeCache.txt")
-        if os.path.exists(cache_path):
+        cache_path = self.build_dir / "CMakeCache.txt"
+        if cache_path.exists():
             try:
                 home_dir = None
-                with open(cache_path, "r") as f:
+                with cache_path.open("r") as f:
                     for line in f:
                         if line.startswith("CMAKE_HOME_DIRECTORY:INTERNAL="):
                             home_dir = os.path.realpath(line.split("=", 1)[1].strip())
@@ -43,83 +51,87 @@ class CppPoolRunner:
             except OSError:
                 pass
 
-        os.makedirs(self.build_dir, exist_ok=True)
+        self.build_dir.mkdir(parents=True, exist_ok=True)
         print("Configuring C++ build (Release)...")
         result = subprocess.run(
-            ["cmake", "..", "-DCMAKE_BUILD_TYPE=Release"],
-            cwd=self.build_dir,
+            [
+                "cmake",
+                "-S",
+                str(self.cpp_project_path),
+                "-B",
+                str(self.build_dir),
+                "-DCMAKE_BUILD_TYPE=Release",
+            ],
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
             raise RuntimeError(f"CMake configuration failed: {result.stderr}")
 
-    def build_harness(self):
-        # Always reconfigure to pick up target/name changes cleanly
+    def _build_target(self, target: str):
         self.configure_build()
-        print("Building typed C++ harnesses (i, d, f, ld)...")
-        # Build both typed harnesses so switching modes requires no rebuild
+        print(f"Building C++ target: {target} ...")
         result = subprocess.run(
             [
                 "cmake",
                 "--build",
-                ".",
+                str(self.build_dir),
+                "--config",
+                "Release",
                 "--target",
-                "benchmark_harness_i",
-                "benchmark_harness_d",
-                "benchmark_harness_f",
-                "benchmark_harness_ld",
+                target,
             ],
-            cwd=self.build_dir,
             capture_output=True,
             text=True,
         )
         if result.returncode != 0:
             raise RuntimeError(f"Build failed: {result.stderr}")
-        missing = []
-        if not os.path.exists(self.harness_i_path):
-            missing.append(self.harness_i_path)
-        if not os.path.exists(self.harness_d_path):
-            missing.append(self.harness_d_path)
-        if not os.path.exists(self.harness_f_path):
-            missing.append(self.harness_f_path)
-        if not os.path.exists(self.harness_ld_path):
-            missing.append(self.harness_ld_path)
-        if missing:
-            raise RuntimeError(f"Missing built harness(es): {missing}")
-        print(
-            f"✓ Built C++ harnesses at {self.harness_i_path} and {self.harness_d_path}"
-        )
-        return self.harness_i_path, self.harness_d_path
+        print(f"✓ Built C++ target: {target}")
+
+    def build_runtime_harness(self):
+        self._build_target("benchmark_harness")
+        if not self.harness_path.exists():
+            raise RuntimeError(f"Missing built harness: {self.harness_path}")
+        return self.harness_path
+
+    def build_typed_harness(self, mode: str):
+        path = self.typed_harness_paths[mode]
+        self._build_target(TYPED_TARGETS[mode])
+        if not path.exists():
+            raise RuntimeError(f"Missing built harness: {path}")
+        return path
 
     def run_benchmark(
         self, mode: str, pool_configs_file: str, sequences_file: str, output_file: str
     ) -> Dict:
-        if mode not in ("i", "d", "f", "ld"):
-            raise ValueError("mode must be 'i' or 'd' or 'f' or 'ld'")
-        # Ensure typed harnesses exist; build if needed
-        if not (
-            os.path.exists(self.harness_i_path)
-            and os.path.exists(self.harness_d_path)
-            and os.path.exists(self.harness_f_path)
-            and os.path.exists(self.harness_ld_path)
-        ):
-            self.build_harness()
-        if mode == "i":
-            harness_bin = self.harness_i_path
-        elif mode == "d":
-            harness_bin = self.harness_d_path
-        elif mode == "f":
-            harness_bin = self.harness_f_path
+        if mode not in SUPPORTED_MODES:
+            raise ValueError("mode must be one of: i, d, ld")
+
+        try:
+            harness_bin = self.build_runtime_harness()
+        except RuntimeError as exc:
+            harness_bin = self.build_typed_harness(mode)
+            cmd = [str(harness_bin), pool_configs_file, sequences_file, output_file]
+            print(
+                "Runtime benchmark_harness unavailable, using typed fallback: "
+                f"{harness_bin.name}"
+            )
+            print(f"  runtime build error: {exc}")
         else:
-            harness_bin = self.harness_ld_path
-        print(f"Running C++ harness binary: {os.path.basename(harness_bin)} ...")
+            cmd = [
+                str(harness_bin),
+                mode,
+                pool_configs_file,
+                sequences_file,
+                output_file,
+            ]
+
+        print(f"Running C++ harness binary: {harness_bin.name} ...")
         import time as _time
 
         t0 = _time.perf_counter()
-        # Typed binaries accept 3 args (no mode)
         result = subprocess.run(
-            [harness_bin, pool_configs_file, sequences_file, output_file],
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -155,16 +167,15 @@ def run_cpp_pool(
     repo_root = Path(__file__).resolve().parents[2]
     cpp_project_path = str(repo_root / "cpp_modular")
     runner = CppPoolRunner(cpp_project_path)
-    runner.build_harness()
     results = runner.run_benchmark(mode, pool_configs_file, sequences_file, output_file)
     runner.format_json_output(output_file)
     return results
 
 
 def main():
-    if len(sys.argv) != 5 or sys.argv[1] not in ("i", "d"):
+    if len(sys.argv) != 5 or sys.argv[1] not in SUPPORTED_MODES:
         print(
-            "Usage: python cpp_pool_runner.py <i|d> <pool_configs.json> <sequences.json> <output.json>"
+            "Usage: python cpp_pool_runner.py <i|d|ld> <pool_configs.json> <sequences.json> <output.json>"
         )
         return 1
     mode = sys.argv[1]
