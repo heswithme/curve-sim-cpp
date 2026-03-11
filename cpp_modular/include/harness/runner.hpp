@@ -155,7 +155,8 @@ PoolResult<T> run_single_pool(
             pool_init.allowed_extra_profit,
             pool_init.adjustment_step,
             pool_init.ma_time,
-            initial_price
+            initial_price,
+            pool_init.lp_profit_fraction
         );
         
         // Set initial timestamp

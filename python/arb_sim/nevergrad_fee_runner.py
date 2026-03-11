@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import json
 import math
+import os
 import subprocess
 import tempfile
 import time
@@ -76,6 +76,7 @@ SERVER_CONFIG = {
 TEMPLATE_POOL = {
     "A": 6 * 10_000,
     "gamma": 0.0001,
+    "lp_profit_fraction": 0.5,
     "allowed_extra_profit": 1e-10,
     "adjustment_step": 0.005,
     "ma_time": 866.0,
@@ -95,15 +96,13 @@ TEMPLATE_COSTS = {
     "volume_cap_mult": 1.0,
 }
 
-# Add more request fields here as needed, for example:
-# "A": scalar(2 * 10_000, 20 * 10_000)
-# "donation_rate": scalar(0.0, 0.10, request_key="donation_apy")
 OPTIMIZABLE_VARS = {
     "mid_fee_bps": scalar(1.0, 100.0, step=1),
     "spread_bps": scalar(0.0, 200.0, step=1),
     "fee_gamma": log_scale(1e-6, 0.05),
     "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
     "donation_apy": scalar(0.0, 0.05, step=0.001),
+    # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
 }
 
 LOSS_CONFIG = {
@@ -124,8 +123,8 @@ ROBUST_EVAL = {
 }
 
 OPTIMIZATION = {
-    "optimizer": "NGOpt",
-    "budget": 1000,
+    "optimizer": "TwoPointsDE",
+    "budget": 5000,
     "seed": 0,
     "verbose_every": 10,
     "workers": 16,
@@ -154,6 +153,7 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
         "initial_liquidity": initial_liquidity,
         "A": float(TEMPLATE_POOL["A"]),
         "gamma": float(TEMPLATE_POOL["gamma"]),
+        "lp_profit_fraction": float(TEMPLATE_POOL["lp_profit_fraction"]),
         "mid_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["mid_fee_bps"])),
         "out_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["out_fee_bps"])),
         "fee_gamma": scale_1e18(float(TEMPLATE_POOL["fee_gamma"])),
@@ -184,6 +184,77 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
     }
 
 
+def build_pool_config_entry(
+    request_params: dict[str, Any], candles_path: Path
+) -> dict[str, Any]:
+    template = build_template_config(candles_path)
+    entry = dict(template["pools"][0])
+    pool = dict(entry["pool"])
+
+    if "A" in request_params:
+        pool["A"] = str(float(request_params["A"]))
+    if "gamma" in request_params:
+        pool["gamma"] = str(float(request_params["gamma"]))
+    if "lp_profit_fraction" in request_params:
+        pool["lp_profit_fraction"] = str(float(request_params["lp_profit_fraction"]))
+    if "mid_fee_bps" in request_params:
+        pool["mid_fee"] = str(fee_bps_to_1e10(float(request_params["mid_fee_bps"])))
+    if "out_fee_bps" in request_params:
+        pool["out_fee"] = str(fee_bps_to_1e10(float(request_params["out_fee_bps"])))
+    if "fee_gamma" in request_params:
+        pool["fee_gamma"] = str(scale_1e18(float(request_params["fee_gamma"])))
+    if "allowed_extra_profit" in request_params:
+        pool["allowed_extra_profit"] = str(
+            scale_1e18(float(request_params["allowed_extra_profit"]))
+        )
+    if "adjustment_step" in request_params:
+        pool["adjustment_step"] = str(
+            scale_1e18(float(request_params["adjustment_step"]))
+        )
+    if "ma_time" in request_params:
+        pool["ma_time"] = str(float(request_params["ma_time"]))
+    if "donation_apy" in request_params:
+        pool["donation_apy"] = str(float(request_params["donation_apy"]))
+    if "donation_frequency" in request_params:
+        pool["donation_frequency"] = str(float(request_params["donation_frequency"]))
+    if "donation_coins_ratio" in request_params:
+        pool["donation_coins_ratio"] = str(
+            float(request_params["donation_coins_ratio"])
+        )
+
+    costs = dict(entry["costs"])
+    if "arb_fee_bps" in request_params:
+        costs["arb_fee_bps"] = float(request_params["arb_fee_bps"])
+    if "gas_coin0" in request_params:
+        costs["gas_coin0"] = float(request_params["gas_coin0"])
+
+    entry["pool"] = pool
+    entry["costs"] = costs
+    return entry
+
+
+def build_saved_pool_payload(
+    which: str,
+    row: dict[str, Any] | None,
+    candles_path: Path,
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+
+    request_params = dict(row.get("request", {}))
+    request_params.pop("id", None)
+    return {
+        "which": which,
+        "candles_path": str(candles_path),
+        "server_config": dict(SERVER_CONFIG),
+        "template_pool": dict(TEMPLATE_POOL),
+        "template_costs": dict(TEMPLATE_COSTS),
+        "params_display": dict(row.get("params", {})),
+        "request_params": request_params,
+        "pool_config_entry": build_pool_config_entry(request_params, candles_path),
+    }
+
+
 def write_template_file(candles_path: Path, directory: Path) -> Path:
     template_path = directory / "embedded_pool_config.json"
     template = build_template_config(candles_path)
@@ -194,11 +265,27 @@ def write_template_file(candles_path: Path, directory: Path) -> Path:
 def build_eval_server(repo_root: Path) -> None:
     build_dir = repo_root / "cpp_modular" / "build"
     subprocess.run(
-        ["cmake", "-S", str(repo_root / "cpp_modular"), "-B", str(build_dir)],
+        [
+            "cmake",
+            "-S",
+            str(repo_root / "cpp_modular"),
+            "-B",
+            str(build_dir),
+            "-DCMAKE_BUILD_TYPE=Release",
+        ],
         check=True,
     )
     subprocess.run(
-        ["cmake", "--build", str(build_dir), "--target", "arb_eval_server", "-j8"],
+        [
+            "cmake",
+            "--build",
+            str(build_dir),
+            "--config",
+            "Release",
+            "--target",
+            "arb_eval_server",
+            "-j8",
+        ],
         check=True,
     )
 
@@ -586,6 +673,7 @@ PARAM_LABELS = {
     "spread_bps": "spread",
     "fee_gamma": "gamma",
     "A_units": "A",
+    "lp_profit_fraction": "lpf",
 }
 
 
@@ -598,6 +686,8 @@ def format_value(key: str, value: float) -> str:
         return f"{value:.3e}"
     if key == "A_units":
         return f"{value:.1f}"
+    if key == "lp_profit_fraction":
+        return f"{value:.2f}"
     if key.endswith("_apy") or key.endswith("_rate"):
         return f"{value:.4f}"
     if abs(value) >= 1000 and float(value).is_integer():
@@ -694,6 +784,19 @@ def save_result(payload: dict[str, Any]) -> None:
     RESULT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def run_inspect_best() -> None:
+    inspect_script = REPO_ROOT / "python" / "arb_sim" / "inspect_nevergrad_result.py"
+    if not inspect_script.exists():
+        print(f"inspect script not found: {inspect_script}", flush=True)
+        return
+
+    cmd = ["uv", "run", "python", str(inspect_script), "--result", str(RESULT_PATH)]
+    try:
+        subprocess.run(cmd, cwd=REPO_ROOT, check=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"inspect replay failed: {exc}", flush=True)
+
+
 def build_optimizer(ng: Any, parametrization: Any) -> Any:
     workers = max(1, int(OPTIMIZATION["workers"]))
     optimizer_name = str(OPTIMIZATION["optimizer"])
@@ -768,6 +871,8 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
 
     started = time.time()
     best_seen: dict[str, Any] | None = None
+    recommendation: dict[str, Any] | None = None
+    interrupted = False
 
     with tempfile.TemporaryDirectory(prefix="arb_eval_template_") as tmp_dir:
         template_path = write_template_file(candles_path, Path(tmp_dir))
@@ -783,34 +888,38 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
 
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 next_step = 1
-                while next_step <= budget:
-                    batch_size = min(workers, budget - next_step + 1)
-                    batch_rows = run_parallel_batch(
-                        executor,
-                        optimizer,
-                        clients,
-                        next_step,
-                        batch_size,
+                try:
+                    while next_step <= budget:
+                        batch_size = min(workers, budget - next_step + 1)
+                        batch_rows = run_parallel_batch(
+                            executor,
+                            optimizer,
+                            clients,
+                            next_step,
+                            batch_size,
+                        )
+
+                        for candidate, row in batch_rows:
+                            optimizer.tell(candidate, float(row["loss"]))
+
+                            if best_seen is None or float(row["loss"]) < float(
+                                best_seen["loss"]
+                            ):
+                                best_seen = row
+
+                            step = int(row["step"])
+                            if step == 1 or step == budget or step % verbose_every == 0:
+                                print_progress(step, budget, row, best_seen)
+
+                        next_step += batch_size
+
+                    recommendation_candidate = optimizer.provide_recommendation()
+                    recommendation = evaluate_candidate(
+                        clients[0], budget + 1, recommendation_candidate.kwargs
                     )
-
-                    for candidate, row in batch_rows:
-                        optimizer.tell(candidate, float(row["loss"]))
-
-                        if best_seen is None or float(row["loss"]) < float(
-                            best_seen["loss"]
-                        ):
-                            best_seen = row
-
-                        step = int(row["step"])
-                        if step == 1 or step == budget or step % verbose_every == 0:
-                            print_progress(step, budget, row, best_seen)
-
-                    next_step += batch_size
-
-                recommendation_candidate = optimizer.provide_recommendation()
-                recommendation = evaluate_candidate(
-                    clients[0], budget + 1, recommendation_candidate.kwargs
-                )
+                except KeyboardInterrupt:
+                    interrupted = True
+                    print("\nInterrupted, saving best-so-far...", flush=True)
 
     elapsed_s = time.time() - started
     return {
@@ -826,8 +935,10 @@ def run_optimization(ng: Any, binary_path: Path, candles_path: Path) -> dict[str
         "optimizable_vars": OPTIMIZABLE_VARS,
         "loss_config": LOSS_CONFIG,
         "robust_eval": ROBUST_EVAL,
+        "interrupted": interrupted,
         "best_seen": best_seen,
         "recommendation": recommendation,
+        "best_pool": build_saved_pool_payload("best_seen", best_seen, candles_path),
     }
 
 
@@ -839,18 +950,16 @@ def main() -> int:
         raise SystemExit(f"candles file not found: {candles_path}")
 
     payload = run_optimization(ng, binary_path, candles_path)
-    save_result(payload)
-
     best_seen = payload["best_seen"]
     if best_seen is None:
+        save_result(payload)
         raise SystemExit("no evaluations were executed")
 
+    save_result(payload)
+
     print("best_seen:", json.dumps(best_seen, separators=(",", ":"), sort_keys=True))
-    print(
-        "recommendation:",
-        json.dumps(payload["recommendation"], separators=(",", ":"), sort_keys=True),
-    )
     print(f"saved: {RESULT_PATH}")
+    run_inspect_best()
     return 0
 
 

@@ -82,6 +82,7 @@ class ArbHarnessRunner:
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
         candle_filter: float | None = None,
+        disable_slippage_probes: bool = False,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
         cmd = [
@@ -119,6 +120,8 @@ class ArbHarnessRunner:
             cmd += ["--cowswap-fee-bps", str(cowswap_fee_bps)]
         if candle_filter is not None:
             cmd += ["--candle-filter", str(candle_filter)]
+        if disable_slippage_probes:
+            cmd += ["--disable-slippage-probes"]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
@@ -237,6 +240,11 @@ def main() -> int:
         action="store_true",
         help="Enable cowswap organic trade replay (uses cowswap_file from pool_config)",
     )
+    parser.add_argument(
+        "--disable-slippage-probes",
+        action="store_true",
+        help="Disable slippage probes in the C++ harness",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -329,6 +337,7 @@ def main() -> int:
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,
         candle_filter=args.candle_filter,
+        disable_slippage_probes=args.disable_slippage_probes,
     )
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])

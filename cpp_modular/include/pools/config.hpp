@@ -25,6 +25,7 @@ struct PoolInit {
     T mid_fee{T(3e-4)};
     T out_fee{T(5e-4)};
     T fee_gamma{T(0.23)};
+    T lp_profit_fraction{T(0.5)};
     T allowed_extra_profit{T(1e-10)};
     T adjustment_step{T(1e-3)};
     T ma_time{T(600.0)};
@@ -86,6 +87,10 @@ void parse_pool_entry(
     if (auto* v = pool.if_contains("mid_fee")) out_pool.mid_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("out_fee")) out_pool.out_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("fee_gamma")) out_pool.fee_gamma = parse_scaled_1e18<T>(*v);
+    if (auto* v = pool.if_contains("lp_profit_fraction")) {
+        T fraction = parse_plain_real<T>(*v);
+        out_pool.lp_profit_fraction = std::clamp<T>(fraction, T(0), T(1));
+    }
     if (auto* v = pool.if_contains("allowed_extra_profit")) out_pool.allowed_extra_profit = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("adjustment_step")) out_pool.adjustment_step = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("ma_time")) out_pool.ma_time = parse_plain_real<T>(*v);
