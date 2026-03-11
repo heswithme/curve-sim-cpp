@@ -15,7 +15,8 @@
 #include "core/json_utils.hpp"
 #include "events/loader.hpp"
 #include "harness/output.hpp"
-#include "harness/runner.hpp"
+#include "harness/runtime_backend.hpp"
+#include "harness/runtime_runner.hpp"
 #include "pools/config.hpp"
 #include "trading/costs.hpp"
 
@@ -64,7 +65,7 @@ void print_usage(const char* prog) {
         << "  -h, --help                 Show this help\n\n"
         << "Stdin protocol (JSONL in persistent mode):\n"
         << "  request fields:\n"
-        << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
+        << "    id (optional, echoed), pool_backend, mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
         << "  response fields:\n"
         << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
 }
@@ -344,10 +345,21 @@ json::object evaluate_request(
     const arb::pools::PoolInit<RealT>& base_pool,
     const arb::trading::Costs<RealT>& base_costs,
     const std::vector<arb::Event>& events,
-    const arb::harness::RunConfig<RealT>& run_cfg
+    const arb::harness::RuntimeRunConfig& run_cfg
 ) {
     auto pool = base_pool;
     auto costs = base_costs;
+    arb::harness::PoolBackend backend = arb::harness::PoolBackend::Double;
+
+    if (const auto* backend_value = req.if_contains("pool_backend")) {
+        if (!backend_value->is_string()) {
+            return make_error_response(req, "pool_backend must be a string");
+        }
+        const std::string backend_str = std::string(backend_value->as_string().c_str());
+        if (!arb::harness::parse_pool_backend(backend_str, backend)) {
+            return make_error_response(req, "Invalid pool_backend: " + backend_str);
+        }
+    }
 
     const double mid_fee = [&]() {
         if (req.if_contains("mid_fee")) {
@@ -389,25 +401,33 @@ json::object evaluate_request(
     pool.mid_fee = static_cast<RealT>(mid_fee);
     pool.out_fee = static_cast<RealT>(out_fee);
     pool.fee_gamma = static_cast<RealT>(fee_gamma);
+    arb::harness::set_pool_fee_json(pool.echo_pool, "mid_fee", mid_fee);
+    arb::harness::set_pool_fee_json(pool.echo_pool, "out_fee", out_fee);
+    arb::harness::set_pool_wad_json(pool.echo_pool, "fee_gamma", fee_gamma);
 
     if (req.if_contains("A")) {
         pool.A = static_cast<RealT>(get_double_opt(req, "A", static_cast<double>(pool.A)));
+        arb::harness::set_pool_plain_json(pool.echo_pool, "A", static_cast<double>(pool.A));
     }
     if (req.if_contains("gamma")) {
         pool.gamma = static_cast<RealT>(get_double_opt(req, "gamma", static_cast<double>(pool.gamma)));
+        arb::harness::set_pool_wad_json(pool.echo_pool, "gamma", static_cast<double>(pool.gamma));
     }
     if (req.if_contains("allowed_extra_profit")) {
         pool.allowed_extra_profit = static_cast<RealT>(
             get_double_opt(req, "allowed_extra_profit", static_cast<double>(pool.allowed_extra_profit))
         );
+        arb::harness::set_pool_wad_json(pool.echo_pool, "allowed_extra_profit", static_cast<double>(pool.allowed_extra_profit));
     }
     if (req.if_contains("adjustment_step")) {
         pool.adjustment_step = static_cast<RealT>(
             get_double_opt(req, "adjustment_step", static_cast<double>(pool.adjustment_step))
         );
+        arb::harness::set_pool_wad_json(pool.echo_pool, "adjustment_step", static_cast<double>(pool.adjustment_step));
     }
     if (req.if_contains("ma_time")) {
         pool.ma_time = static_cast<RealT>(get_double_opt(req, "ma_time", static_cast<double>(pool.ma_time)));
+        arb::harness::set_pool_plain_json(pool.echo_pool, "ma_time", static_cast<double>(pool.ma_time));
     }
     if (req.if_contains("donation_apy")) {
         pool.donation_apy = static_cast<RealT>(
@@ -431,9 +451,17 @@ json::object evaluate_request(
         costs.gas_coin0 = static_cast<RealT>(get_double_opt(req, "gas_coin0", static_cast<double>(costs.gas_coin0)));
     }
 
-    const auto run = arb::harness::run_single_pool(pool, costs, events, run_cfg, nullptr, nullptr);
+    const auto run = arb::harness::run_single_pool_runtime(
+        pool,
+        costs,
+        events,
+        run_cfg,
+        backend,
+        nullptr,
+        nullptr
+    );
     if (!run.success) {
-        return make_error_response(req, run.error_msg.empty() ? "run_single_pool failed" : run.error_msg);
+        return make_error_response(req, run.error_msg.empty() ? "run_single_pool_runtime failed" : run.error_msg);
     }
 
     const auto summary = arb::harness::metrics_to_summary(run, events.size());
@@ -499,13 +527,13 @@ int main(int argc, char* argv[]) {
         const auto& base_pool = templates[args.pool_index].first;
         const auto& base_costs = templates[args.pool_index].second;
 
-        arb::harness::RunConfig<RealT> run_cfg{};
-        run_cfg.min_swap_frac = static_cast<RealT>(args.min_swap);
-        run_cfg.max_swap_frac = static_cast<RealT>(args.max_swap);
+        arb::harness::RuntimeRunConfig run_cfg{};
+        run_cfg.min_swap_frac = args.min_swap;
+        run_cfg.max_swap_frac = args.max_swap;
         run_cfg.dustswap_freq_s = args.dustswap_freq_s;
         run_cfg.user_swap_freq_s = args.user_swap_freq_s;
-        run_cfg.user_swap_size_frac = static_cast<RealT>(args.user_swap_size_frac);
-        run_cfg.user_swap_thresh = static_cast<RealT>(args.user_swap_thresh);
+        run_cfg.user_swap_size_frac = args.user_swap_size_frac;
+        run_cfg.user_swap_thresh = args.user_swap_thresh;
         run_cfg.enable_slippage_probes = !args.disable_slippage_probes;
         run_cfg.save_actions = false;
         run_cfg.detailed_log = false;

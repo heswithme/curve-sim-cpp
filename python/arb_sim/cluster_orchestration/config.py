@@ -90,7 +90,8 @@ REMOTE_JOBS = REMOTE_BASE / "jobs"
 REMOTE_RESULTS = REMOTE_BASE / "results"
 
 # Binary name
-HARNESS_BINARY = "arb_harness_ld"
+HARNESS_BINARY = "arb_harness"
+HARNESS_POOL_BACKEND = "ld"
 
 # =============================================================================
 # Local Paths

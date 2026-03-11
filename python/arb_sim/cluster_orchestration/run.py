@@ -26,6 +26,7 @@ from config import (
     SSH_KEY,
     SSH_OPTIONS,
     HARNESS_BINARY,
+    HARNESS_POOL_BACKEND,
     JOB_TIMEOUT,
     CORES_PER_BLADE,
 )
@@ -100,6 +101,8 @@ def run_blade_job(
                 remote_pools,
                 remote_candles,
                 output_file,
+                "--pool-backend",
+                HARNESS_POOL_BACKEND,
                 f"--threads",
                 str(threads),
                 f"--pool-start",

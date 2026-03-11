@@ -47,28 +47,27 @@ fi
 echo "Using training data: $TRAINING_DATA"
 
 # Training run with production-like workload
-# This matches: uv run python/arb_sim/arb_sim.py --real double --dustswapfreq 600 --apy-period-days 1 --apy-period-cap 30 -n 10
-echo "Running training workload (double precision)..."
+echo "Running training workload (double backend)..."
 ARB_HARNESS="$BUILD_DIR/arb_harness"
 POOLS_FILE="$ARB_SIM_DIR/run_data/pool_config.json"
 
 if [[ -f "$POOLS_FILE" ]]; then
     # Run the actual workload that will be used in production
     "$ARB_HARNESS" "$POOLS_FILE" "$TRAINING_DATA" /tmp/pgo_training_out.json \
+        --pool-backend double \
         --dustswapfreq 600 \
         --apy-period-days 1 \
         --apy-period-cap 30 \
         -n 10 \
         2>&1 | tail -10 || true
-    
-    # Also train float and long double variants
-    echo "Training float variant..."
-    "$BUILD_DIR/arb_harness_f" "$POOLS_FILE" "$TRAINING_DATA" /tmp/pgo_training_f.json \
-        --dustswapfreq 600 -n 4 --n-candles 50000 2>/dev/null || true
-    
-    echo "Training long double variant..."
-    "$BUILD_DIR/arb_harness_ld" "$POOLS_FILE" "$TRAINING_DATA" /tmp/pgo_training_ld.json \
-        --dustswapfreq 600 -n 4 --n-candles 50000 2>/dev/null || true
+
+    echo "Training long double backend..."
+    "$ARB_HARNESS" "$POOLS_FILE" "$TRAINING_DATA" /tmp/pgo_training_ld.json \
+        --pool-backend ld --dustswapfreq 600 -n 4 --n-candles 50000 2>/dev/null || true
+
+    echo "Training uint backend..."
+    "$ARB_HARNESS" "$POOLS_FILE" "$TRAINING_DATA" /tmp/pgo_training_uint.json \
+        --pool-backend uint --dustswapfreq 600 -n 4 --n-candles 50000 2>/dev/null || true
 else
     echo "Warning: pools_grid.json not found, using fallback training"
     "$ARB_HARNESS" --help 2>/dev/null || true

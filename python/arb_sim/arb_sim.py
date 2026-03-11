@@ -22,14 +22,14 @@ class ArbHarnessRunner:
         self.cpp_dir = self.repo_root / "cpp_old"
         self.cpp_dir = self.repo_root / "cpp_modular"  # modular harness
         self.build_dir = self.cpp_dir / "build"
-        # Resolve binary name based on real type
         real = (real or "double").lower()
-        if real in ("float", "f"):
-            self.target = "arb_harness_f"
-        elif real in ("longdouble", "long_double", "ld", "long"):
-            self.target = "arb_harness_ld"
+        if real in ("longdouble", "long_double", "ld", "long"):
+            self.pool_backend = "ld"
+        elif real in ("uint", "u256", "uint256"):
+            self.pool_backend = "uint"
         else:
-            self.target = "arb_harness"
+            self.pool_backend = "double"
+        self.target = "arb_harness"
         self.exe_path = self.build_dir / self.target
 
     def configure_build(self):
@@ -89,6 +89,8 @@ class ArbHarnessRunner:
             str(pools_json),
             str(candles_path),
             str(out_json_path),
+            "--pool-backend",
+            self.pool_backend,
         ]
         if n_candles and n_candles > 0:
             cmd += ["--n-candles", str(n_candles)]
@@ -187,8 +189,8 @@ def main() -> int:
         "--real",
         type=str,
         default="double",
-        choices=["float", "double", "longdouble"],
-        help="Numeric precision for C++ harness",
+        choices=["double", "ld", "longdouble", "uint", "float"],
+        help="Pool backend for C++ harness",
     )
     parser.add_argument(
         "--dustswapfreq",

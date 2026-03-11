@@ -29,22 +29,10 @@ function(arb_target_defaults TARGET_NAME)
     )
 endfunction()
 
-# --- arb_harness (default: double) ---
+# --- arb_harness (runtime-selectable pool backend) ---
 add_executable(arb_harness ${COMMON_SOURCES})
 target_link_libraries(arb_harness Boost::json Threads::Threads)
 arb_target_defaults(arb_harness)
-
-# --- arb_harness_f (float) ---
-add_executable(arb_harness_f ${COMMON_SOURCES})
-target_compile_definitions(arb_harness_f PRIVATE ARB_MODE_F)
-target_link_libraries(arb_harness_f Boost::json Threads::Threads)
-arb_target_defaults(arb_harness_f)
-
-# --- arb_harness_ld (long double) ---
-add_executable(arb_harness_ld ${COMMON_SOURCES})
-target_compile_definitions(arb_harness_ld PRIVATE ARB_MODE_LD)
-target_link_libraries(arb_harness_ld Boost::json Threads::Threads)
-arb_target_defaults(arb_harness_ld)
 
 # --- arb_eval_server (persistent single-template evaluator) ---
 add_executable(arb_eval_server

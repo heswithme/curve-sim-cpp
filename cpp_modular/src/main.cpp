@@ -1,66 +1,53 @@
-// Modular arb_harness - Entry point with compile-time numeric type selection
-//
-// Build targets:
-//   arb_harness    - double (default)
-//   arb_harness_f  - float
-//   arb_harness_ld - long double
+// Modular arb_harness - runtime-selectable pool backend
 
-#include <iostream>
+#include <array>
+#include <chrono>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 
-#include "harness/cli.hpp"
-#include "harness/runner.hpp"
-#include "harness/output.hpp"
-#include "harness/detailed_output.hpp"
 #include "events/loader.hpp"
+#include "harness/cli.hpp"
+#include "harness/detailed_output.hpp"
+#include "harness/output.hpp"
+#include "harness/runtime_backend.hpp"
+#include "harness/runtime_runner.hpp"
 #include "pools/config.hpp"
-#include "pools/twocrypto_fx/twocrypto.hpp"
 #include "pools/twocrypto_fx/helpers.hpp"
-#include "trading/costs.hpp"
+#include "pools/twocrypto_fx/twocrypto.hpp"
 #include "trading/arbitrageur.hpp"
 
-// Compile-time numeric type selection (floating-only)
-#if defined(ARB_MODE_F)
-using RealT = float;
-static constexpr const char* TYPE_NAME = "float";
-#elif defined(ARB_MODE_LD)
-using RealT = long double;
-static constexpr const char* TYPE_NAME = "long double";
-#else
-using RealT = double;
-static constexpr const char* TYPE_NAME = "double";
-#endif
-
-// Helper to print a value
 template <typename T>
 void print_value(const char* name, const T& val) {
     std::cout << "  " << name << " = " << std::setprecision(12) << val << "\n";
 }
 
-// Pool test (floating types)
 template <typename T>
 void test_pool(T cex_price = T(-1)) {
     using Pool = arb::pools::twocrypto_fx::TwoCryptoPool<T>;
     using Traits = arb::pools::twocrypto_fx::PoolTraits<T>;
 
-    std::array<T, 2> precisions = {Traits::ONE(), Traits::ONE()};
-
-    T A = T(10000.0);
-    T gamma = T(1e-5);
-    T mid_fee = T(0.0001);
-    T out_fee = T(0.0006);
-    T fee_gamma = T(0.00023);
-    T allowed_extra_profit = T(1e-8);
-    T adjustment_step = T(0.0001);
-    T ma_time = T(600.0);
-    T initial_price = T(1.08);
+    const std::array<T, 2> precisions = {Traits::ONE(), Traits::ONE()};
+    const T A = T(10000.0);
+    const T gamma = T(1e-5);
+    const T mid_fee = T(0.0001);
+    const T out_fee = T(0.0006);
+    const T fee_gamma = T(0.00023);
+    const T allowed_extra_profit = T(1e-8);
+    const T adjustment_step = T(0.0001);
+    const T ma_time = T(600.0);
+    const T initial_price = T(1.08);
 
     Pool pool(
         precisions,
-        A, gamma,
-        mid_fee, out_fee, fee_gamma,
-        allowed_extra_profit, adjustment_step, ma_time,
+        A,
+        gamma,
+        mid_fee,
+        out_fee,
+        fee_gamma,
+        allowed_extra_profit,
+        adjustment_step,
+        ma_time,
         initial_price
     );
 
@@ -70,12 +57,10 @@ void test_pool(T cex_price = T(-1)) {
     print_value("cached_price_scale", pool.cached_price_scale);
     print_value("cached_price_oracle", pool.cached_price_oracle);
 
-    T amount0 = T(10000.0);
-    T amount1 = T(10000.0 / 1.08);
-    std::array<T, 2> amounts = {amount0, amount1};
-    T min_mint = Traits::ZERO();
-
-    T lp_tokens = pool.add_liquidity(amounts, min_mint);
+    const T amount0 = T(10000.0);
+    const T amount1 = T(10000.0 / 1.08);
+    const std::array<T, 2> amounts = {amount0, amount1};
+    const T lp_tokens = pool.add_liquidity(amounts, Traits::ZERO());
 
     std::cout << "\nAfter add_liquidity:\n";
     print_value("LP tokens minted", lp_tokens);
@@ -85,21 +70,22 @@ void test_pool(T cex_price = T(-1)) {
     print_value("balances[1]", pool.balances[1]);
     print_value("virtual_price", pool.get_virtual_price());
 
-    // Simulate a small exchange (no state change)
-    T dx = T(100.0);
-    auto sim = arb::pools::twocrypto_fx::simulate_exchange_once(pool, /*i=*/0, /*j=*/1, dx);
+    const T dx = T(100.0);
+    const auto sim = arb::pools::twocrypto_fx::simulate_exchange_once(pool, 0, 1, dx);
     std::cout << "\nSimulated exchange (0 -> 1):\n";
     print_value("dx", dx);
     print_value("dy_after_fee", sim.first);
     print_value("fee_tokens", sim.second);
 
-    // Arbitrage decision
     if (cex_price > T(0)) {
         arb::trading::Costs<T> costs{};
-        auto dec = arb::trading::decide_trade(
-            pool, cex_price, costs,
+        const auto dec = arb::trading::decide_trade(
+            pool,
+            cex_price,
+            costs,
             std::numeric_limits<T>::infinity(),
-            T(0.001), T(0.1)
+            T(0.001),
+            T(0.1)
         );
         std::cout << "\nArb decision:\n";
         std::cout << "  do_trade = " << dec.do_trade << "\n";
@@ -116,15 +102,13 @@ void test_pool(T cex_price = T(-1)) {
 }
 
 int main(int argc, char* argv[]) {
-    // Parse CLI arguments
     auto args = arb::harness::parse_cli(argc, argv);
-    
+
     if (!args.valid) {
-        // For now, if not enough args, run pool test
         if (argc < 2) {
-            std::cout << "arb_harness_mod: " << TYPE_NAME << "\n";
+            std::cout << "arb_harness_mod: runtime\n";
             std::cout << "\n--- Pool Test ---\n";
-            test_pool<RealT>();
+            test_pool<double>();
             arb::harness::print_usage(argv[0]);
             return 0;
         }
@@ -133,16 +117,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    arb::harness::PoolBackend backend = arb::harness::PoolBackend::Double;
+    if (!arb::harness::parse_pool_backend(args.pool_backend, backend)) {
+        std::cerr << "Error: invalid --pool-backend: " << args.pool_backend << "\n";
+        arb::harness::print_usage(argv[0]);
+        return 1;
+    }
+
     try {
         auto t_read0 = std::chrono::high_resolution_clock::now();
-        
-        // Load candles and generate events
-        auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
+
+        auto candles = arb::load_candles(
+            args.candles_path,
+            args.max_candles,
+            args.candle_filter_pct / 100.0
+        );
         const size_t n_candles = candles.size();
         auto events = arb::gen_events(candles);
 
-        // Candle vector is only required for detailed per-event logging.
-        // Free it eagerly for non-detailed runs to reduce memory footprint.
         const std::vector<arb::Candle>* candles_ptr = nullptr;
         if (args.detailed_log) {
             candles_ptr = &candles;
@@ -151,60 +143,59 @@ int main(int argc, char* argv[]) {
         }
 
         std::cout << "loaded " << n_candles << " candles -> "
-                  << events.size() << " events from " << args.candles_path << "\n" << std::flush;
-        
-        auto t_read1 = std::chrono::high_resolution_clock::now();
-        double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
+                  << events.size() << " events from " << args.candles_path
+                  << " using pool_backend=" << arb::harness::pool_backend_name(backend)
+                  << "\n" << std::flush;
 
-        // Load pool configs from JSON (optionally subset by range)
-        auto pool_configs = arb::pools::load_pool_configs<RealT>(
-            args.pools_path, args.pool_start, args.pool_end);
+        auto t_read1 = std::chrono::high_resolution_clock::now();
+        const double candles_read_ms =
+            std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
+
+        auto pool_configs = arb::pools::load_pool_configs<double>(
+            args.pools_path,
+            args.pool_start,
+            args.pool_end
+        );
         if (pool_configs.empty()) {
             throw std::runtime_error("No pool configurations found in " + args.pools_path);
         }
         std::cout << "loaded " << pool_configs.size() << " pools";
         if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
-            std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+            std::cout << " (range " << args.pool_start << "-"
+                      << (args.pool_start + pool_configs.size()) << ")";
         }
         std::cout << "\n" << std::flush;
-        
-        // Build run configuration from CLI args
-        arb::harness::RunConfig<RealT> run_cfg{};
-        run_cfg.min_swap_frac = static_cast<RealT>(args.min_swap_frac);
-        run_cfg.max_swap_frac = static_cast<RealT>(args.max_swap_frac);
+
+        arb::harness::RuntimeRunConfig run_cfg{};
+        run_cfg.min_swap_frac = args.min_swap_frac;
+        run_cfg.max_swap_frac = args.max_swap_frac;
         run_cfg.dustswap_freq_s = args.dustswap_freq_s;
         run_cfg.user_swap_freq_s = args.user_swap_freq_s;
-        run_cfg.user_swap_size_frac = static_cast<RealT>(args.user_swap_size_frac);
-        run_cfg.user_swap_thresh = static_cast<RealT>(args.user_swap_thresh);
+        run_cfg.user_swap_size_frac = args.user_swap_size_frac;
+        run_cfg.user_swap_thresh = args.user_swap_thresh;
         run_cfg.enable_slippage_probes = !args.disable_slippage_probes;
-        
-        // Wire save_actions flag
         run_cfg.save_actions = args.save_actions;
-        
-        // Wire detailed_log flag
         run_cfg.detailed_log = args.detailed_log;
         run_cfg.detailed_interval = args.detailed_interval;
-        
-        // Wire cowswap trades path and fee
         run_cfg.cowswap_path = args.cowswap_path;
-        run_cfg.cowswap_fee_bps = static_cast<RealT>(args.cowswap_fee_bps);
-        
+        run_cfg.cowswap_fee_bps = args.cowswap_fee_bps;
+
         auto t_exec0 = std::chrono::high_resolution_clock::now();
-        
-        // Run all pools in parallel
-        auto results = arb::harness::run_pools_parallel(
-            pool_configs, events, run_cfg,
+        const auto results = arb::harness::run_pools_parallel_runtime(
+            pool_configs,
+            events,
+            run_cfg,
+            backend,
             args.n_threads,
-            true,  // verbose - prints progress per pool
+            true,
             candles_ptr
         );
-        
         auto t_exec1 = std::chrono::high_resolution_clock::now();
-        double exec_ms = std::chrono::duration<double, std::milli>(t_exec1 - t_exec0).count();
-        
-        // Write JSON output
+        const double exec_ms =
+            std::chrono::duration<double, std::milli>(t_exec1 - t_exec0).count();
+
         if (!args.out_path.empty()) {
-            bool ok = arb::harness::write_results_json(
+            const bool ok = arb::harness::write_results_json(
                 args.out_path,
                 results,
                 events.size(),
@@ -217,25 +208,19 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Warning: Failed to write output to " << args.out_path << "\n";
             }
         }
-        
-        // Write detailed log if requested (uses first pool's detailed entries)
-        // Place detailed_log.json next to the output file
+
         if (args.detailed_log && !results.empty()) {
-            // Compute detailed_log.json path: same directory as output, fixed name
             std::string detailed_log_path;
-            {
-                auto pos = args.out_path.find_last_of("/\\");
-                if (pos != std::string::npos) {
-                    detailed_log_path = args.out_path.substr(0, pos + 1) + "detailed-output.json";
-                } else {
-                    detailed_log_path = "detailed-output.json";
-                }
+            const auto pos = args.out_path.find_last_of("/\\");
+            if (pos != std::string::npos) {
+                detailed_log_path = args.out_path.substr(0, pos + 1) + "detailed-output.json";
+            } else {
+                detailed_log_path = "detailed-output.json";
             }
-            
-            // Find first successful result with detailed entries
+
             for (const auto& res : results) {
                 if (res.success && !res.detailed_entries.empty()) {
-                    bool ok = arb::harness::write_detailed_log(
+                    const bool ok = arb::harness::write_detailed_log(
                         detailed_log_path,
                         res.detailed_entries
                     );
@@ -246,11 +231,10 @@ int main(int argc, char* argv[]) {
                         std::cout << "Wrote detailed log (" << res.detailed_entries.size()
                                   << " entries) to " << detailed_log_path << "\n";
                     }
-                    break;  // Only write first pool's detailed log
+                    break;
                 }
             }
         }
-
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;

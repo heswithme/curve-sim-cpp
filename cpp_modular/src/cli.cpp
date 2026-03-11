@@ -15,6 +15,7 @@ void print_usage(const char* prog_name) {
               << "       [--n-candles N] [--save-actions]\n"
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
+              << "       [--pool-backend {double|ld|uint}]\n"
               << "       [--dustswapfreq S]\n"
               << "       [--pool-start N] [--pool-end N]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
@@ -50,6 +51,8 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.n_threads = static_cast<size_t>(std::stoll(argv[++i]));
             } else if (arg == "--candle-filter" && i + 1 < argc) {
                 args.candle_filter_pct = std::stod(argv[++i]);
+            } else if (arg == "--pool-backend" && i + 1 < argc) {
+                args.pool_backend = argv[++i];
             } else if (arg == "--dustswapfreq" && i + 1 < argc) {
                 args.dustswap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
             } else if (arg == "--pool-start" && i + 1 < argc) {

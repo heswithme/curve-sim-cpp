@@ -82,7 +82,7 @@ void parse_pool_entry(
     
     // Pool parameters
     if (auto* v = pool.if_contains("A")) out_pool.A = parse_plain_real<T>(*v);
-    if (auto* v = pool.if_contains("gamma")) out_pool.gamma = parse_plain_real<T>(*v);
+    if (auto* v = pool.if_contains("gamma")) out_pool.gamma = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("mid_fee")) out_pool.mid_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("out_fee")) out_pool.out_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("fee_gamma")) out_pool.fee_gamma = parse_scaled_1e18<T>(*v);

@@ -39,7 +39,7 @@ if _IS_LOCAL:
         .run_commands(
             "sed -i 's/-march=native/-march=x86-64 -mtune=generic/g' /app/cpp_modular/CMakeLists.txt && "
             "cd /app/cpp_modular && mkdir -p build && cd build && "
-            "cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) arb_harness_ld"
+            "cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc) arb_harness"
         )
     )
 else:
@@ -59,7 +59,7 @@ def run_batch(pools: list[dict], harness_args: dict, candles_file: str) -> list[
     import time
     from pathlib import Path
 
-    exe = Path("/app/cpp_modular/build/arb_harness_ld")
+    exe = Path("/app/cpp_modular/build/arb_harness")
     candles = Path(f"/data/{candles_file}")
 
     if not exe.exists() or not candles.exists():
@@ -181,6 +181,7 @@ def main(
 
     harness_args = {
         "dustswapfreq": dustswapfreq,
+        "pool_backend": "ld",
     }
     if candle_filter is not None:
         harness_args["candle_filter"] = candle_filter

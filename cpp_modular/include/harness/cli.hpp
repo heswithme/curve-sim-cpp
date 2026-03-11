@@ -42,6 +42,9 @@ struct CliArgs {
     // Cowswap organic trades
     std::string cowswap_path;  // path to cowswap trades CSV (empty = disabled)
     double cowswap_fee_bps{0.0};  // fee in bps to beat historical execution
+
+    // Runtime-selectable pool backend for main arb_harness target
+    std::string pool_backend{"double"};
     
     // Validation
     bool valid{false};

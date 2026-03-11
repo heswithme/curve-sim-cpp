@@ -64,11 +64,6 @@ endfunction()
 add_executable(arb_harness ${{COMMON_SOURCES}})
 target_link_libraries(arb_harness Boost::json Threads::Threads)
 arb_target_defaults(arb_harness)
-
-add_executable(arb_harness_ld ${{COMMON_SOURCES}})
-target_compile_definitions(arb_harness_ld PRIVATE ARB_MODE_LD)
-target_link_libraries(arb_harness_ld Boost::json Threads::Threads)
-arb_target_defaults(arb_harness_ld)
 """
 
 
@@ -175,7 +170,7 @@ rm -rf {REMOTE_BUILD}
 mkdir -p {REMOTE_BUILD}
 cd {REMOTE_BUILD}
 cmake {REMOTE_SRC} -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc) arb_harness_ld arb_harness
+make -j$(nproc) arb_harness
 """
 
     full_cmd = f"nix-shell -p {nix_packages} --run '{build_script}'"
