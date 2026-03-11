@@ -11,9 +11,9 @@ Arbitrage runner for the C++ arb_harness (multi-pool, threaded in C++).
 import argparse
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
-from datetime import datetime, timezone
 
 
 class ArbHarnessRunner:
@@ -202,7 +202,7 @@ def main() -> int:
     parser.add_argument(
         "--candle-filter",
         type=float,
-        default=10.0,
+        default=99.0,
         help="Filter candles +/- PCT (default: 10.0)",
     )
     parser.add_argument(

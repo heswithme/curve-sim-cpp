@@ -16,7 +16,7 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
-N_DENSE = 32
+N_DENSE = 16
 
 DEMO_GRID = {
     "mid_fee": np.linspace(10 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
@@ -99,7 +99,7 @@ BASE_POOL = {
     "mid_fee": int(1 / 10_000 * 1e10),
     "out_fee": int(101 / 10_000 * 1e10),
     "fee_gamma": int(0.003 * 1e18),
-    "allowed_extra_profit": int(1e-10 * 10**18),
+    "allowed_extra_profit": int(1e-7 * 10**18),
     "adjustment_step": int(0.005 * 10**18),
     # "adjustment_step": int(1e-7 * 10**18), # ONLY FOR OLD POOLS
     "ma_time": 866,
