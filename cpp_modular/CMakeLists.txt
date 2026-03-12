@@ -3,6 +3,7 @@ project(arb_harness_modular CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Boost 1.83 REQUIRED COMPONENTS json)
 find_package(Threads REQUIRED)

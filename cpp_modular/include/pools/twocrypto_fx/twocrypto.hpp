@@ -5,7 +5,6 @@
 #include <string>
 #include <array>
 #include <stdexcept>
-#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
