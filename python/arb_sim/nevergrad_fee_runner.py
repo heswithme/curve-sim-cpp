@@ -30,7 +30,7 @@ CANDLES_PATH = (
 )
 RESULT_PATH = REPO_ROOT / "comparison-results" / "nevergrad_fee_result.json"
 
-FORCE_REBUILD_BINARY = False
+FORCE_REBUILD_BINARY = True
 BUILD_BINARY_IF_MISSING = True
 FAIL_PENALTY = 1_000_000.0
 OUT_FEE_BPS_MAX = 600.0
@@ -97,11 +97,11 @@ TEMPLATE_COSTS = {
 }
 
 OPTIMIZABLE_VARS = {
-    "mid_fee_bps": scalar(1.0, 100.0, step=1),
-    "spread_bps": scalar(0.0, 200.0, step=1),
-    "fee_gamma": log_scale(1e-6, 0.05),
-    "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
-    "donation_apy": scalar(0.0, 0.05, step=0.001),
+    "mid_fee_bps": scalar(1.0, 200.0, step=1),
+    "spread_bps": scalar(0.0, 1.0, step=1),
+    # "fee_gamma": log_scale(1e-6, 0.05),
+    # "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
+    # "donation_apy": scalar(0.0, 0.05, step=0.001),
     # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
 }
 
@@ -111,7 +111,7 @@ LOSS_CONFIG = {
 }
 
 ROBUST_EVAL = {
-    "enabled": True,
+    "enabled": False,
     "metric": "apy_net",
     "mode": "maximize",
     "tolerance_frac": 0.20,
