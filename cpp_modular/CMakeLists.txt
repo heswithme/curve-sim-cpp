@@ -55,6 +55,11 @@ add_executable(arb_eval_server
 target_link_libraries(arb_eval_server Boost::json Threads::Threads)
 arb_target_defaults(arb_eval_server)
 
+# --- fee_model_regression (dynamic-fee safety checks) ---
+add_executable(fee_model_regression src/fee_model_regression.cpp)
+target_link_libraries(fee_model_regression Boost::json Threads::Threads)
+arb_target_defaults(fee_model_regression)
+
 # --- stableswap_math_i (C ABI for Python benchmarks) ---
 add_library(stableswap_math_i SHARED src/stableswap_math_i.cpp)
 arb_target_defaults(stableswap_math_i)

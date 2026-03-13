@@ -65,7 +65,11 @@ void print_usage(const char* prog) {
         << "  request fields:\n"
         << "    id (optional, echoed), fee_params (array[20] of plain doubles)\n"
         << "  response fields:\n"
-        << "    ok, fee_params, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
+        << "    ok, fee_model_name, fee_param_labels, fee_params, vp, apy, apy_net,\n"
+        << "    apy_xcp, apy_xcp_net, avg_rel_price_diff, max_rel_price_diff,\n"
+        << "    avg_imbalance, avg_pool_fee, tw_avg_pool_fee, fee_capture_rate,\n"
+        << "    tw_real_slippage_1pct, tw_real_slippage_5pct, tw_real_slippage_10pct,\n"
+        << "    total_notional_coin0, trades, n_rebalances, elapsed_ms\n";
 }
 
 bool parse_size_t(const std::string& s, std::size_t& out) {
@@ -386,6 +390,24 @@ json::array fee_params_to_json(const arb::pools::twocrypto_fx::FeeParams<RealT>&
     return out;
 }
 
+json::array fee_param_labels_to_json() {
+    json::array out;
+    out.reserve(arb::pools::twocrypto_fx::FEE_PARAM_COUNT);
+    for (const auto& label : arb::pools::twocrypto_fx::FEE_PARAM_LABELS) {
+        out.emplace_back(label.data());
+    }
+    return out;
+}
+
+void add_summary_metric(
+    json::object& out,
+    const json::object& summary,
+    const char* key,
+    double fallback
+) {
+    out[key] = get_double_opt(summary, key, fallback);
+}
+
 json::object evaluate_request(
     const json::object& req,
     const arb::pools::PoolInit<RealT>& base_pool,
@@ -460,18 +482,32 @@ json::object evaluate_request(
         out["id"] = *id;
     }
     out["ok"] = true;
+    out["fee_model_name"] = arb::pools::twocrypto_fx::FEE_MODEL_NAME.data();
+    out["fee_param_labels"] = fee_param_labels_to_json();
     out["fee_params"] = fee_params_to_json(pool.fee_params);
     out["lp_profit_fraction"] = static_cast<double>(pool.lp_profit_fraction);
     out["ma_time"] = static_cast<double>(pool.ma_time);
 
-    out["vp"] = get_double_opt(summary, "vp", -1.0);
-    out["apy"] = get_double_opt(summary, "apy", -1.0);
-    out["apy_net"] = get_double_opt(summary, "apy_net", -1.0);
-    out["avg_rel_price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
-    out["max_rel_price_diff"] = get_double_opt(summary, "max_rel_price_diff", -1.0);
-
-    out["trades"] = get_double_opt(summary, "trades", 0.0);
-    out["n_rebalances"] = get_double_opt(summary, "n_rebalances", 0.0);
+    add_summary_metric(out, summary, "vp", -1.0);
+    add_summary_metric(out, summary, "vp_boosted", -1.0);
+    add_summary_metric(out, summary, "vpminusone", -1.0);
+    add_summary_metric(out, summary, "apy", -1.0);
+    add_summary_metric(out, summary, "apy_net", -1.0);
+    add_summary_metric(out, summary, "apy_xcp", -1.0);
+    add_summary_metric(out, summary, "apy_xcp_net", -1.0);
+    add_summary_metric(out, summary, "avg_rel_price_diff", -1.0);
+    add_summary_metric(out, summary, "max_rel_price_diff", -1.0);
+    add_summary_metric(out, summary, "avg_imbalance", -1.0);
+    add_summary_metric(out, summary, "avg_pool_fee", -1.0);
+    add_summary_metric(out, summary, "tw_avg_pool_fee", -1.0);
+    add_summary_metric(out, summary, "fee_capture_rate", -1.0);
+    add_summary_metric(out, summary, "tw_real_slippage_1pct", -1.0);
+    add_summary_metric(out, summary, "tw_real_slippage_5pct", -1.0);
+    add_summary_metric(out, summary, "tw_real_slippage_10pct", -1.0);
+    add_summary_metric(out, summary, "total_notional_coin0", -1.0);
+    add_summary_metric(out, summary, "trades", 0.0);
+    add_summary_metric(out, summary, "n_rebalances", 0.0);
+    add_summary_metric(out, summary, "pool_exec_ms", run.elapsed_ms);
     out["elapsed_ms"] = run.elapsed_ms;
     return out;
 }

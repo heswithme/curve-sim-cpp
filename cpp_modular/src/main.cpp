@@ -48,16 +48,7 @@ void test_pool(T cex_price = T(-1)) {
 
     T A = T(10000.0);
     T gamma = T(1e-5);
-    auto fee_params = arb::pools::twocrypto_fx::make_current_fee_params(
-        Traits::ZERO(),
-        T(0.0001),
-        T(0.0006),
-        T(0.00023),
-        Traits::ZERO(),
-        Traits::ZERO(),
-        Traits::ZERO(),
-        Traits::ZERO()
-    );
+    auto fee_params = arb::pools::twocrypto_fx::make_constant_fee_params(T(0.0001));
     T allowed_extra_profit = T(1e-8);
     T adjustment_step = T(0.0001);
     T ma_time = T(600.0);

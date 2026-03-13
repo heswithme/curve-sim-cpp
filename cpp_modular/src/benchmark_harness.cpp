@@ -126,40 +126,7 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
             fee_params[i] = arb::parse_scaled_1e18<T>(arr[i]);
         }
     } else {
-        const T base_fee = p.if_contains("base_fee")
-            ? parse_fee<T>(get_str(p, "base_fee"))
-            : PoolTraits<T>::ZERO();
-        const T mid_fee = parse_fee<T>(get_str(p, "mid_fee"));
-        const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
-        const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
-        const T calm_discount_max = p.if_contains("calm_discount_max")
-            ? (std::is_same_v<T, uint256>
-                ? parse_wad<T>(get_str(p, "calm_discount_max"))
-                : parse_raw<T>(get_str(p, "calm_discount_max")))
-            : PoolTraits<T>::ZERO();
-        const T fee_volatility_ref = p.if_contains("fee_volatility_ref")
-            ? parse_wad<T>(get_str(p, "fee_volatility_ref"))
-            : PoolTraits<T>::ZERO();
-        const T gap_fee_scale = p.if_contains("gap_fee_scale")
-            ? (std::is_same_v<T, uint256>
-                ? parse_wad<T>(get_str(p, "gap_fee_scale"))
-                : parse_raw<T>(get_str(p, "gap_fee_scale")))
-            : PoolTraits<T>::ZERO();
-        const T gap_fee_const_discount = p.if_contains("gap_fee_const_discount")
-            ? (std::is_same_v<T, uint256>
-                ? parse_wad<T>(get_str(p, "gap_fee_const_discount"))
-                : parse_raw<T>(get_str(p, "gap_fee_const_discount")))
-            : PoolTraits<T>::ZERO();
-        fee_params = arb::pools::twocrypto_fx::make_current_fee_params(
-            base_fee,
-            mid_fee,
-            out_fee,
-            fee_gamma,
-            calm_discount_max,
-            fee_volatility_ref,
-            gap_fee_scale,
-            gap_fee_const_discount
-        );
+        throw std::runtime_error("fee_params must be present in benchmark pool configs");
     }
     const T lp_profit_fraction = p.if_contains("lp_profit_fraction")
         ? (std::is_same_v<T, uint256>

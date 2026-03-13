@@ -24,16 +24,7 @@ struct PoolInit {
     T A{T(100000.0)};
     T gamma{T(0)};
     twocrypto_fx::FeeParams<T> fee_params{
-        twocrypto_fx::make_current_fee_params(
-            T(0),
-            T(3e-4),
-            T(5e-4),
-            T(0.23),
-            T(0),
-            T(0),
-            T(0),
-            T(0)
-        )
+        twocrypto_fx::make_constant_fee_params(T(3e-4))
     };
     T lp_profit_fraction{T(0.5)};
     T allowed_extra_profit{T(1e-10)};
@@ -103,34 +94,7 @@ void parse_pool_entry(
             out_pool.fee_params[i] = parse_scaled_1e18<T>(arr[i]);
         }
     } else {
-        T base_fee = T(0);
-        T mid_fee = T(3e-4);
-        T out_fee = T(5e-4);
-        T fee_gamma = T(0.23);
-        T calm_discount_max = T(0);
-        T fee_volatility_ref = T(0);
-        T gap_fee_scale = T(0);
-        T gap_fee_const_discount = T(0);
-
-        if (auto* v = pool.if_contains("base_fee")) base_fee = parse_fee_1e10<T>(*v);
-        if (auto* v = pool.if_contains("mid_fee")) mid_fee = parse_fee_1e10<T>(*v);
-        if (auto* v = pool.if_contains("out_fee")) out_fee = parse_fee_1e10<T>(*v);
-        if (auto* v = pool.if_contains("fee_gamma")) fee_gamma = parse_scaled_1e18<T>(*v);
-        if (auto* v = pool.if_contains("calm_discount_max")) calm_discount_max = parse_plain_real<T>(*v);
-        if (auto* v = pool.if_contains("fee_volatility_ref")) fee_volatility_ref = parse_scaled_1e18<T>(*v);
-        if (auto* v = pool.if_contains("gap_fee_scale")) gap_fee_scale = parse_plain_real<T>(*v);
-        if (auto* v = pool.if_contains("gap_fee_const_discount")) gap_fee_const_discount = parse_plain_real<T>(*v);
-
-        out_pool.fee_params = twocrypto_fx::make_current_fee_params(
-            base_fee,
-            mid_fee,
-            out_fee,
-            fee_gamma,
-            calm_discount_max,
-            fee_volatility_ref,
-            gap_fee_scale,
-            gap_fee_const_discount
-        );
+        throw std::runtime_error("fee_params must be present for dynamic-fee configs");
     }
     if (auto* v = pool.if_contains("lp_profit_fraction")) {
         T fraction = parse_plain_real<T>(*v);

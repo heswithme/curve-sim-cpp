@@ -45,30 +45,6 @@ inline T xp_to_tokens_j(const PoolT<T>& pool, size_t j, T amount_xp, const T& pr
     return v / pool.precisions[j];
 }
 
-// -----------------------------------------------------------------------------
-// Fee + price helpers
-// -----------------------------------------------------------------------------
-template <typename T>
-inline T dyn_fee(
-    const std::array<T, 2>& xp,
-    const T& mid_fee,
-    const T& out_fee,
-    const T& fee_gamma
-) {
-    const T Bsum = xp[0] + xp[1];
-    if (!(Bsum > T(0))) {
-        return mid_fee;
-    }
-
-    T B = PoolTraits<T>::PRECISION() * PoolT<T>::N_COINS * PoolT<T>::N_COINS * xp[0] / Bsum * xp[1] / Bsum;
-    B = fee_gamma * B /
-        (fee_gamma * B / PoolTraits<T>::PRECISION() + PoolTraits<T>::PRECISION() - B);
-
-    return (
-        mid_fee * B + out_fee * (PoolTraits<T>::PRECISION() - B)
-    ) / PoolTraits<T>::PRECISION();
-}
-
 template <typename T>
 inline FeeBreakdown<T> state_fee_breakdown(
     const PoolT<T>& pool,

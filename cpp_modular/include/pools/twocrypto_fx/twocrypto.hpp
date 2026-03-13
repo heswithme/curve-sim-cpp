@@ -187,7 +187,8 @@ private:
     }
 
     T _fee(const std::array<T, 2>& xp) const {
-        return inventory_fee_from_params(xp, fee_params, Traits::PRECISION());
+        (void)xp;
+        return constant_fee_from_params(fee_params);
     }
 
     FeeBreakdown<T> _swap_fee_breakdown(
@@ -814,8 +815,6 @@ public:
         block_timestamp = ts;
         if (D == Traits::ZERO() && totalSupply == Traits::ZERO()) {
             last_timestamp = ts;
-            fee_state[FEE_STATE_LAST_UPDATE_TS] = static_cast<T>(ts);
-            fee_state[FEE_STATE_LAST_SPOT] = last_prices;
         }
     }
 
