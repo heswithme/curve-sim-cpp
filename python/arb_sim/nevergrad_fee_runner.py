@@ -82,14 +82,17 @@ DEFAULT_SERVER_CONFIG = {
     "dustswapfreq": 600,
     "min_swap": 1e-6,
     "max_swap": 1.0,
-    "disable_slippage_probes": False,
+    "disable_slippage_probes": True,
 }
 
 DEFAULT_LOSS_CONFIG = {
     "metric": "apy_net",
+    "avg_rel_target": 500.0 / 10_000.0,
+    "avg_rel_lambda": 0.1,
 }
 
 DEFAULT_CONSTRAINTS = {
+    "enabled": False,
     "avg_rel_price_diff_max": 500.0 / 10_000.0,
     "max_rel_price_diff_max": 3000.0 / 10_000.0,
     "tw_real_slippage_5pct_max": 500.0 / 10_000.0,
@@ -192,13 +195,13 @@ DEFAULT_OPTIMIZABLE_VARS = {
 EMBEDDED_TEMPLATE_TAG = "agent_constant_fee_template"
 EMBEDDED_TEMPLATE_INITIAL_LIQ_COIN0 = 10_000_000.0
 EMBEDDED_TEMPLATE_POOL = {
-    "A": int(7 * 10_000),
-    "gamma": wad(1e-4),
+    "A": int(6 * 10_000),
+    "gamma": 1e-4,
     "fee_params": [fee_bps(1)] + [0] * (FEE_PARAM_COUNT - 1),
     "allowed_extra_profit": wad(1e-10),
     "adjustment_step": wad(0.005),
     "ma_time": 866,
-    "donation_apy": 0.035,
+    "donation_apy": 0.036,
     "donation_frequency": 86400,
     "donation_coins_ratio": 0.5,
     "lp_profit_fraction": 0.5,
@@ -613,11 +616,6 @@ def compute_loss(
     loss_config: dict[str, Any],
     constraints: dict[str, Any],
 ) -> tuple[float, list[dict[str, float | str]], float]:
-    violations = constraint_violations(response, constraints)
-    constraint_penalty = violation_penalty(violations)
-    if constraint_penalty > 0.0:
-        return constraint_penalty, violations, constraint_penalty
-
     metric = str(loss_config["metric"])
     metric_value = as_float(response, metric, float("-inf"))
     if not math.isfinite(metric_value):
@@ -626,7 +624,21 @@ def compute_loss(
             [{"name": metric, "value": metric_value, "threshold": 0.0}],
             FAIL_PENALTY,
         )
-    return -metric_value, violations, 0.0
+
+    avg_rel = abs(as_float(response, "avg_rel_price_diff", float("inf")))
+    target = float(loss_config["avg_rel_target"])
+    lam = float(loss_config["avg_rel_lambda"])
+    excess = max(0.0, avg_rel / target - 1.0)
+    soft_loss = -metric_value + lam * (excess**2)
+
+    if not bool(constraints.get("enabled", False)):
+        return soft_loss, [], 0.0
+
+    violations = constraint_violations(response, constraints)
+    constraint_penalty = violation_penalty(violations)
+    if constraint_penalty > 0.0:
+        return constraint_penalty, violations, constraint_penalty
+    return soft_loss, violations, 0.0
 
 
 def clamp_request_value(
@@ -1142,8 +1154,13 @@ def run_optimization(
         "verbose_every": int(args.verbose_every),
         "workers": int(args.workers),
     }
-    loss_config = {"metric": args.score_metric}
+    loss_config = {
+        "metric": args.score_metric,
+        "avg_rel_target": float(args.avg_rel_target_bps) / 10_000.0,
+        "avg_rel_lambda": float(args.avg_rel_lambda),
+    }
     constraints = {
+        "enabled": bool(args.hard_constraints),
         "avg_rel_price_diff_max": float(args.max_avg_rel_bps) / 10_000.0,
         "max_rel_price_diff_max": float(args.max_rel_bps) / 10_000.0,
         "tw_real_slippage_5pct_max": float(args.max_tw_slippage_5pct_bps) / 10_000.0,
@@ -1338,12 +1355,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--max-swap", type=float, default=DEFAULT_SERVER_CONFIG["max_swap"]
     )
-    parser.add_argument("--disable-slippage-probes", action="store_true")
+    parser.add_argument(
+        "--disable-slippage-probes",
+        dest="disable_slippage_probes",
+        action="store_true",
+        help="Disable slippage probes in arb_eval_server.",
+    )
+    parser.add_argument(
+        "--enable-slippage-probes",
+        dest="disable_slippage_probes",
+        action="store_false",
+        help="Enable slippage probes in arb_eval_server.",
+    )
+    parser.set_defaults(
+        disable_slippage_probes=DEFAULT_SERVER_CONFIG["disable_slippage_probes"]
+    )
     parser.add_argument("--skip-rebuild", action="store_true")
     parser.add_argument("--inspect-best", action="store_true")
     parser.add_argument(
         "--score-metric", type=str, default=DEFAULT_LOSS_CONFIG["metric"]
     )
+    parser.add_argument(
+        "--avg-rel-target-bps",
+        type=float,
+        default=DEFAULT_LOSS_CONFIG["avg_rel_target"] * 10_000.0,
+    )
+    parser.add_argument(
+        "--avg-rel-lambda",
+        type=float,
+        default=DEFAULT_LOSS_CONFIG["avg_rel_lambda"],
+    )
+    parser.add_argument("--hard-constraints", action="store_true")
     parser.add_argument(
         "--max-avg-rel-bps",
         type=float,
