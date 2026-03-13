@@ -99,6 +99,11 @@ struct ExchangeAction {
     T vp_before{0};
     T vp_after{0};
     T balance_indicator{0};
+    T total_fee{0};
+    std::array<T, 4> fee_components{T(0), T(0), T(0), T(0)};
+    std::array<T, 4> fee_signals{T(0), T(0), T(0), T(0)};
+    std::array<T, 20> fee_params{};
+    std::array<T, 20> fee_state{};
     
     json::object to_json() const {
         json::object o;
@@ -127,6 +132,31 @@ struct ExchangeAction {
         o["vp_before"] = static_cast<double>(vp_before);
         o["vp_after"] = static_cast<double>(vp_after);
         o["balance_indicator"] = static_cast<double>(balance_indicator);
+        o["total_fee"] = static_cast<double>(total_fee);
+        o["fee_components"] = json::array{
+            static_cast<double>(fee_components[0]),
+            static_cast<double>(fee_components[1]),
+            static_cast<double>(fee_components[2]),
+            static_cast<double>(fee_components[3]),
+        };
+        o["fee_signals"] = json::array{
+            static_cast<double>(fee_signals[0]),
+            static_cast<double>(fee_signals[1]),
+            static_cast<double>(fee_signals[2]),
+            static_cast<double>(fee_signals[3]),
+        };
+        json::array params_arr;
+        params_arr.reserve(fee_params.size());
+        for (const auto& v : fee_params) {
+            params_arr.push_back(static_cast<double>(v));
+        }
+        o["fee_params"] = std::move(params_arr);
+        json::array state_arr;
+        state_arr.reserve(fee_state.size());
+        for (const auto& v : fee_state) {
+            state_arr.push_back(static_cast<double>(v));
+        }
+        o["fee_state"] = std::move(state_arr);
         return o;
     }
 };

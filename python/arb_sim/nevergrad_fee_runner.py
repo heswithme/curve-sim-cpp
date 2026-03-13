@@ -16,11 +16,18 @@ from typing import Any
 try:
     from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 except ModuleNotFoundError:
-    from python.arb_sim.pool_helpers import (
-        _first_candle_ts,
-        _initial_price_from_file,
-        strify_pool,
-    )
+    try:
+        from .pool_helpers import (
+            _first_candle_ts,
+            _initial_price_from_file,
+            strify_pool,
+        )
+    except ImportError:
+        from python.arb_sim.pool_helpers import (
+            _first_candle_ts,
+            _initial_price_from_file,
+            strify_pool,
+        )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -33,7 +40,28 @@ RESULT_PATH = REPO_ROOT / "comparison-results" / "nevergrad_fee_result.json"
 FORCE_REBUILD_BINARY = False
 BUILD_BINARY_IF_MISSING = True
 FAIL_PENALTY = 1_000_000.0
-OUT_FEE_BPS_MAX = 600.0
+FEE_PARAM_COUNT = 20
+
+FEE_PARAM_BASE_FLOOR = 0
+FEE_PARAM_MID_FEE = 1
+FEE_PARAM_SPREAD = 2
+FEE_PARAM_FEE_GAMMA = 3
+FEE_PARAM_CALM_DISCOUNT_MAX = 4
+FEE_PARAM_FEE_VOLATILITY_REF = 5
+FEE_PARAM_GAP_FEE_SCALE = 6
+FEE_PARAM_GAP_FEE_CONST_DISCOUNT = 7
+FEE_PARAM_RESERVED_8 = 8
+FEE_PARAM_RESERVED_9 = 9
+FEE_PARAM_RESERVED_10 = 10
+FEE_PARAM_RESERVED_11 = 11
+FEE_PARAM_RESERVED_12 = 12
+FEE_PARAM_RESERVED_13 = 13
+FEE_PARAM_RESERVED_14 = 14
+FEE_PARAM_RESERVED_15 = 15
+FEE_PARAM_RESERVED_16 = 16
+FEE_PARAM_RESERVED_17 = 17
+FEE_PARAM_RESERVED_18 = 18
+FEE_PARAM_RESERVED_19 = 19
 
 
 def scalar(
@@ -73,8 +101,35 @@ SERVER_CONFIG = {
     "disable_slippage_probes": True,
 }
 
+def zero_fee_params() -> list[float]:
+    return [0.0] * FEE_PARAM_COUNT
+
+
+def make_current_fee_params(
+    *,
+    base_floor: float = 0.0,
+    mid_fee: float = 1.0 / 10_000.0,
+    out_fee: float = 1.0 / 10_000.0,
+    fee_gamma: float = 0.003,
+    calm_discount_max: float = 0.0,
+    fee_volatility_ref: float = 0.0,
+    gap_fee_scale: float = 0.0,
+    gap_fee_const_discount: float = 0.0,
+) -> list[float]:
+    params = zero_fee_params()
+    params[FEE_PARAM_BASE_FLOOR] = float(base_floor)
+    params[FEE_PARAM_MID_FEE] = float(mid_fee)
+    params[FEE_PARAM_SPREAD] = max(0.0, float(out_fee) - float(mid_fee))
+    params[FEE_PARAM_FEE_GAMMA] = float(fee_gamma)
+    params[FEE_PARAM_CALM_DISCOUNT_MAX] = float(calm_discount_max)
+    params[FEE_PARAM_FEE_VOLATILITY_REF] = float(fee_volatility_ref)
+    params[FEE_PARAM_GAP_FEE_SCALE] = float(gap_fee_scale)
+    params[FEE_PARAM_GAP_FEE_CONST_DISCOUNT] = float(gap_fee_const_discount)
+    return params
+
+
 TEMPLATE_POOL = {
-    "A": 6 * 10_000,
+    "A": 10 * 10_000,
     "gamma": 0.0001,
     "lp_profit_fraction": 0.5,
     "allowed_extra_profit": 1e-10,
@@ -84,9 +139,12 @@ TEMPLATE_POOL = {
     "donation_frequency": 86400.0,
     "donation_coins_ratio": 0.5,
     "initial_liq_coin0": 10_000_000.0,
-    "mid_fee_bps": 1.0,
-    "out_fee_bps": 1.0,
-    "fee_gamma": 0.003,
+    "fee_params": make_current_fee_params(
+        base_floor=0.0,
+        mid_fee=1.0 / 10_000.0,
+        out_fee=1.0 / 10_000.0,
+        fee_gamma=0.003,
+    ),
 }
 
 TEMPLATE_COSTS = {
@@ -97,12 +155,26 @@ TEMPLATE_COSTS = {
 }
 
 OPTIMIZABLE_VARS = {
-    "mid_fee_bps": scalar(1.0, 100.0, step=1),
-    "spread_bps": scalar(0.0, 200.0, step=1),
-    "fee_gamma": log_scale(1e-6, 0.05),
-    "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
-    "donation_apy": scalar(0.0, 0.05, step=0.001),
-    # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
+    "fee_param_0": scalar(0.0, 300.0 / 10_000.0, step=1.0 / 10_000.0),
+    "fee_param_1": scalar(1.0 / 10_000.0, 300.0 / 10_000.0, step=1.0 / 10_000.0),
+    "fee_param_2": scalar(0.0, 300.0 / 10_000.0, step=1.0 / 10_000.0),
+    # "fee_param_3": log_scale(1e-6, 0.05),
+    "fee_param_4": scalar(0.0, 1.0, step=0.01),
+    "fee_param_5": log_scale(1e-4, 0.1),
+    "fee_param_6": log_scale(1e-2, 10.0),
+    "fee_param_7": scalar(0.0, 0.05, step=0.0005),
+    "fee_param_8": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_9": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_10": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_11": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_12": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_13": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_14": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_15": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_16": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_17": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_18": scalar(0.0, 0.0, step=0.0001),
+    "fee_param_19": scalar(0.0, 0.0, step=0.0001),
 }
 
 LOSS_CONFIG = {
@@ -111,13 +183,13 @@ LOSS_CONFIG = {
 }
 
 ROBUST_EVAL = {
-    "enabled": True,
+    "enabled": False,
     "metric": "apy_net",
     "mode": "maximize",
     "tolerance_frac": 0.20,
     "penalty_weight": 0.1,
     "metric_floor": 0.01,
-    "A_shift_frac": 0.05,
+    "A_shift_frac": 0.1,
     "fee_shift_frac": 0.0,
     "aggregate": "mean",
 }
@@ -154,9 +226,9 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
         "A": float(TEMPLATE_POOL["A"]),
         "gamma": float(TEMPLATE_POOL["gamma"]),
         "lp_profit_fraction": float(TEMPLATE_POOL["lp_profit_fraction"]),
-        "mid_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["mid_fee_bps"])),
-        "out_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["out_fee_bps"])),
-        "fee_gamma": scale_1e18(float(TEMPLATE_POOL["fee_gamma"])),
+        "fee_params": [
+            scale_1e18(float(value)) for value in TEMPLATE_POOL["fee_params"]
+        ],
         "allowed_extra_profit": scale_1e18(
             float(TEMPLATE_POOL["allowed_extra_profit"])
         ),
@@ -197,12 +269,10 @@ def build_pool_config_entry(
         pool["gamma"] = str(float(request_params["gamma"]))
     if "lp_profit_fraction" in request_params:
         pool["lp_profit_fraction"] = str(float(request_params["lp_profit_fraction"]))
-    if "mid_fee_bps" in request_params:
-        pool["mid_fee"] = str(fee_bps_to_1e10(float(request_params["mid_fee_bps"])))
-    if "out_fee_bps" in request_params:
-        pool["out_fee"] = str(fee_bps_to_1e10(float(request_params["out_fee_bps"])))
-    if "fee_gamma" in request_params:
-        pool["fee_gamma"] = str(scale_1e18(float(request_params["fee_gamma"])))
+    fee_params = [
+        float(value) for value in request_params.get("fee_params", TEMPLATE_POOL["fee_params"])
+    ]
+    pool["fee_params"] = [str(scale_1e18(value)) for value in fee_params]
     if "allowed_extra_profit" in request_params:
         pool["allowed_extra_profit"] = str(
             scale_1e18(float(request_params["allowed_extra_profit"]))
@@ -445,9 +515,6 @@ def clamp_request_value(request_key: str, value: float) -> float:
         lower = float(spec["lower"]) * scale
         upper = float(spec["upper"]) * scale
         return min(max(value, lower), upper)
-
-    if request_key == "out_fee_bps":
-        return min(max(value, 0.0), OUT_FEE_BPS_MAX)
     return value
 
 
@@ -512,21 +579,6 @@ def build_robust_neighbor_requests(request: dict[str, Any]) -> list[dict[str, An
     if a_shift_frac > 0.0 and "A" in request:
         neighbors.append(shifted_request(request, "A", +a_shift_frac))
         neighbors.append(shifted_request(request, "A", -a_shift_frac))
-
-    fee_shift_frac = float(ROBUST_EVAL.get("fee_shift_frac", 0.0))
-    if fee_shift_frac > 0.0 and "mid_fee_bps" in request and "out_fee_bps" in request:
-        for sign in (+1.0, -1.0):
-            shifted = dict(request)
-            shifted["mid_fee_bps"] = clamp_request_value(
-                "mid_fee_bps",
-                float(request["mid_fee_bps"]) * (1.0 + sign * fee_shift_frac),
-            )
-            shifted["out_fee_bps"] = clamp_request_value(
-                "out_fee_bps",
-                float(request["out_fee_bps"]) * (1.0 + sign * fee_shift_frac),
-            )
-            if shifted["out_fee_bps"] >= shifted["mid_fee_bps"]:
-                neighbors.append(shifted)
 
     center_key = dict(request)
     center_key.pop("id", None)
@@ -594,6 +646,7 @@ def build_request(
 ) -> tuple[dict[str, Any], dict[str, float], str | None]:
     request: dict[str, Any] = {"id": eval_id}
     params: dict[str, float] = {}
+    fee_params = [float(value) for value in TEMPLATE_POOL["fee_params"]]
 
     for name, spec in OPTIMIZABLE_VARS.items():
         value = float(candidate[name])
@@ -601,26 +654,14 @@ def build_request(
         request_value = clamp_request_value(
             request_key, candidate_value_to_request_value(spec, value)
         )
-        request[request_key] = request_value
         params[name] = request_value_to_display_value(spec, request_value)
-        if request_key != name and float(spec.get("scale", 1.0)) == 1.0:
-            params[request_key] = request_value
+        if request_key.startswith("fee_param_"):
+            idx = int(request_key.removeprefix("fee_param_"))
+            fee_params[idx] = request_value
+        else:
+            request[request_key] = request_value
 
-    if "spread_bps" in params:
-        if "mid_fee_bps" not in params:
-            return request, params, "spread_bps requires mid_fee_bps"
-        out_fee_bps = params["mid_fee_bps"] + params["spread_bps"]
-        request.pop("spread_bps", None)
-        request["out_fee_bps"] = out_fee_bps
-        params["out_fee_bps"] = out_fee_bps
-
-    out_fee_bps = request.get("out_fee_bps")
-    if out_fee_bps is not None and float(out_fee_bps) > OUT_FEE_BPS_MAX:
-        return (
-            request,
-            params,
-            f"out_fee_bps {float(out_fee_bps):.8f} exceeds max {OUT_FEE_BPS_MAX:.8f}",
-        )
+    request["fee_params"] = fee_params
 
     return request, params, None
 
@@ -668,10 +709,7 @@ def evaluate_candidate(
 
 
 PARAM_LABELS = {
-    "mid_fee_bps": "mid",
-    "out_fee_bps": "out",
-    "spread_bps": "spread",
-    "fee_gamma": "gamma",
+    **{f"fee_param_{i}": f"p{i}" for i in range(FEE_PARAM_COUNT)},
     "A_units": "A",
     "lp_profit_fraction": "lpf",
 }
@@ -680,9 +718,9 @@ PARAM_LABELS = {
 def format_value(key: str, value: float) -> str:
     if not math.isfinite(value):
         return "nan"
-    if key.endswith("_bps"):
-        return f"{value:.1f}"
-    if key == "fee_gamma":
+    if key.startswith("fee_param_"):
+        return f"{value:.4g}"
+    if key.endswith("_ref"):
         return f"{value:.3e}"
     if key == "A_units":
         return f"{value:.1f}"
@@ -709,12 +747,6 @@ def format_rel_bps(value: float) -> str:
 
 def ordered_param_keys(params: dict[str, Any]) -> list[str]:
     ordered = list(OPTIMIZABLE_VARS)
-    if "out_fee_bps" in params and "out_fee_bps" not in ordered:
-        if "mid_fee_bps" in ordered:
-            ordered.insert(ordered.index("mid_fee_bps") + 1, "out_fee_bps")
-        else:
-            ordered.append("out_fee_bps")
-
     for key in sorted(params):
         if key not in ordered:
             ordered.append(key)

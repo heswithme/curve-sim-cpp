@@ -63,9 +63,9 @@ void print_usage(const char* prog) {
         << "  -h, --help                 Show this help\n\n"
         << "Stdin protocol (JSONL in persistent mode):\n"
         << "  request fields:\n"
-        << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
+        << "    id (optional, echoed), fee_params (array[20] of plain doubles)\n"
         << "  response fields:\n"
-        << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
+        << "    ok, fee_params, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
 }
 
 bool parse_size_t(const std::string& s, std::size_t& out) {
@@ -338,6 +338,54 @@ json::object make_error_response(const json::object& req, const std::string& err
     return out;
 }
 
+arb::pools::twocrypto_fx::FeeParams<RealT> parse_fee_params_request(
+    const json::object& req,
+    const arb::pools::twocrypto_fx::FeeParams<RealT>& fallback
+) {
+    auto fee_params = fallback;
+    const auto* raw = req.if_contains("fee_params");
+    if (raw == nullptr) {
+        return fee_params;
+    }
+    if (!raw->is_array()) {
+        throw std::runtime_error("fee_params must be an array");
+    }
+
+    const auto& arr = raw->as_array();
+    if (arr.size() != arb::pools::twocrypto_fx::FEE_PARAM_COUNT) {
+        throw std::runtime_error("fee_params must have length 20");
+    }
+    for (std::size_t i = 0; i < arb::pools::twocrypto_fx::FEE_PARAM_COUNT; ++i) {
+        const auto& v = arr[i];
+        double parsed = 0.0;
+        if (v.is_double()) {
+            parsed = v.as_double();
+        } else if (v.is_int64()) {
+            parsed = static_cast<double>(v.as_int64());
+        } else if (v.is_uint64()) {
+            parsed = static_cast<double>(v.as_uint64());
+        } else if (v.is_string()) {
+            parsed = std::stod(std::string(v.as_string().c_str()));
+        } else {
+            throw std::runtime_error("fee_params entries must be numeric");
+        }
+        if (!std::isfinite(parsed)) {
+            throw std::runtime_error("fee_params entries must be finite");
+        }
+        fee_params[i] = static_cast<RealT>(parsed);
+    }
+    return fee_params;
+}
+
+json::array fee_params_to_json(const arb::pools::twocrypto_fx::FeeParams<RealT>& fee_params) {
+    json::array out;
+    out.reserve(arb::pools::twocrypto_fx::FEE_PARAM_COUNT);
+    for (const auto& value : fee_params) {
+        out.emplace_back(static_cast<double>(value));
+    }
+    return out;
+}
+
 json::object evaluate_request(
     const json::object& req,
     const arb::pools::PoolInit<RealT>& base_pool,
@@ -348,46 +396,11 @@ json::object evaluate_request(
     auto pool = base_pool;
     auto costs = base_costs;
 
-    const double mid_fee = [&]() {
-        if (req.if_contains("mid_fee")) {
-            return get_double_opt(req, "mid_fee", static_cast<double>(pool.mid_fee));
-        }
-        if (req.if_contains("mid_fee_bps")) {
-            return get_double_opt(req, "mid_fee_bps", static_cast<double>(pool.mid_fee) * 10000.0) / 10000.0;
-        }
-        return static_cast<double>(pool.mid_fee);
-    }();
-
-    const double out_fee = [&]() {
-        if (req.if_contains("out_fee")) {
-            return get_double_opt(req, "out_fee", static_cast<double>(pool.out_fee));
-        }
-        if (req.if_contains("out_fee_bps")) {
-            return get_double_opt(req, "out_fee_bps", static_cast<double>(pool.out_fee) * 10000.0) / 10000.0;
-        }
-        return static_cast<double>(pool.out_fee);
-    }();
-
-    const double fee_gamma = req.if_contains("fee_gamma")
-        ? get_double_opt(req, "fee_gamma", static_cast<double>(pool.fee_gamma))
-        : static_cast<double>(pool.fee_gamma);
-
-    if (!std::isfinite(mid_fee) || !std::isfinite(out_fee) || !std::isfinite(fee_gamma)) {
-        return make_error_response(req, "Non-finite parameter value");
+    try {
+        pool.fee_params = parse_fee_params_request(req, pool.fee_params);
+    } catch (const std::exception& e) {
+        return make_error_response(req, e.what());
     }
-    if (mid_fee < 0.0 || out_fee < 0.0 || fee_gamma < 0.0) {
-        return make_error_response(req, "Fees and fee_gamma must be >= 0");
-    }
-    if (mid_fee > 1.0 || out_fee > 1.0 || fee_gamma > 1.0) {
-        return make_error_response(req, "Fees and fee_gamma must be <= 1");
-    }
-    if (out_fee < mid_fee) {
-        return make_error_response(req, "out_fee must be >= mid_fee");
-    }
-
-    pool.mid_fee = static_cast<RealT>(mid_fee);
-    pool.out_fee = static_cast<RealT>(out_fee);
-    pool.fee_gamma = static_cast<RealT>(fee_gamma);
 
     if (req.if_contains("A")) {
         pool.A = static_cast<RealT>(get_double_opt(req, "A", static_cast<double>(pool.A)));
@@ -412,9 +425,6 @@ json::object evaluate_request(
         pool.adjustment_step = static_cast<RealT>(
             get_double_opt(req, "adjustment_step", static_cast<double>(pool.adjustment_step))
         );
-    }
-    if (req.if_contains("ma_time")) {
-        pool.ma_time = static_cast<RealT>(get_double_opt(req, "ma_time", static_cast<double>(pool.ma_time)));
     }
     if (req.if_contains("donation_apy")) {
         pool.donation_apy = static_cast<RealT>(
@@ -450,12 +460,9 @@ json::object evaluate_request(
         out["id"] = *id;
     }
     out["ok"] = true;
-    out["mid_fee"] = static_cast<double>(pool.mid_fee);
-    out["out_fee"] = static_cast<double>(pool.out_fee);
-    out["fee_gamma"] = static_cast<double>(pool.fee_gamma);
+    out["fee_params"] = fee_params_to_json(pool.fee_params);
     out["lp_profit_fraction"] = static_cast<double>(pool.lp_profit_fraction);
-    out["mid_fee_bps"] = static_cast<double>(pool.mid_fee) * 10000.0;
-    out["out_fee_bps"] = static_cast<double>(pool.out_fee) * 10000.0;
+    out["ma_time"] = static_cast<double>(pool.ma_time);
 
     out["vp"] = get_double_opt(summary, "vp", -1.0);
     out["apy"] = get_double_opt(summary, "apy", -1.0);

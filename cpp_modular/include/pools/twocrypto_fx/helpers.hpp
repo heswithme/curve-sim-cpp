@@ -60,7 +60,6 @@ inline T dyn_fee(
         return mid_fee;
     }
 
-    // Matches the pool's internal _fee formula; for floating types PRECISION() == 1.
     T B = PoolTraits<T>::PRECISION() * PoolT<T>::N_COINS * PoolT<T>::N_COINS * xp[0] / Bsum * xp[1] / Bsum;
     B = fee_gamma * B /
         (fee_gamma * B / PoolTraits<T>::PRECISION() + PoolTraits<T>::PRECISION() - B);
@@ -71,27 +70,23 @@ inline T dyn_fee(
 }
 
 template <typename T>
+inline FeeBreakdown<T> state_fee_breakdown(
+    const PoolT<T>& pool,
+    const std::array<T, 2>& xp
+) {
+    return pool.state_fee_breakdown(xp);
+}
+
+template <typename T>
 inline std::pair<T, T> post_trade_price_and_fee(
     const PoolT<T>& pool,
     size_t i,
     size_t j,
-    T dx
+    T dx,
+    T cex_price = T(0)
 ) {
-    const T ps = pool.cached_price_scale;
-
-    auto balances_local = pool.balances;
-    balances_local[i] += dx;
-    auto xp = pool_xp_from(pool, balances_local, ps);
-
-    auto y_out = MathOps<T>::get_y(pool.A, pool.gamma, xp, pool.D, j);
-    T dy_xp = xp[j] - y_out.value;
-    xp[j] -= dy_xp;
-
-    const T fee_pool = dyn_fee(xp, pool.mid_fee, pool.out_fee, pool.fee_gamma);
-    const T D_new = MathOps<T>::newton_D(pool.A, pool.gamma, xp, T(0));
-    const T p_new = MathOps<T>::get_p(xp, D_new, {pool.A, pool.gamma}) * ps / PoolTraits<T>::PRECISION();
-
-    return {p_new, fee_pool};
+    const auto preview = pool.preview_exchange(i, j, dx, cex_price);
+    return {preview.spot_post, preview.fees.total_fee};
 }
 
 template <typename T>
@@ -113,22 +108,11 @@ inline std::pair<T, T> simulate_exchange_once(
     const PoolT<T>& pool,
     size_t i,
     size_t j,
-    T dx
+    T dx,
+    T cex_price = T(0)
 ) {
-    const T ps = pool.cached_price_scale;
-
-    auto balances_local = pool.balances;
-    balances_local[i] += dx;
-    auto xp = pool_xp_from(pool, balances_local, ps);
-
-    auto y_out = MathOps<T>::get_y(pool.A, pool.gamma, xp, pool.D, j);
-    T dy_xp = xp[j] - y_out.value;
-    xp[j] -= dy_xp;
-
-    T dy_tokens  = xp_to_tokens_j(pool, j, dy_xp, ps);
-    T fee_pool   = dyn_fee(xp, pool.mid_fee, pool.out_fee, pool.fee_gamma);
-    T fee_tokens = fee_pool * dy_tokens / PoolTraits<T>::FEE_PRECISION();
-    return {dy_tokens - fee_tokens, fee_tokens};
+    const auto preview = pool.preview_exchange(i, j, dx, cex_price);
+    return {preview.dy_after_fee, preview.fee_tokens};
 }
 
 // -----------------------------------------------------------------------------

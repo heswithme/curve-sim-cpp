@@ -18,6 +18,15 @@ namespace json = boost::json;
 namespace arb {
 namespace harness {
 
+template <typename T>
+json::value debug_numeric_json(const T& v) {
+    if constexpr (std::is_same_v<T, pools::twocrypto_fx::uint256>) {
+        return v.template convert_to<std::string>();
+    } else {
+        return static_cast<double>(v);
+    }
+}
+
 // Convert pool result's final state to JSON object
 template <typename T>
 json::object pool_state_json(const PoolResult<T>& r) {
@@ -37,6 +46,22 @@ json::object pool_state_json(const PoolResult<T>& r) {
     o["totalSupply"] = to_str_1e18(r.totalSupply);
     o["donation_shares"] = to_str_1e18(r.donation_shares);
     o["donation_unlocked"] = to_str_1e18(r.donation_unlocked);
+    {
+        json::array fee_params_arr;
+        fee_params_arr.reserve(r.fee_params.size());
+        for (const auto& v : r.fee_params) {
+            fee_params_arr.push_back(debug_numeric_json(v));
+        }
+        o["fee_params"] = std::move(fee_params_arr);
+    }
+    {
+        json::array fee_state_arr;
+        fee_state_arr.reserve(r.fee_state.size());
+        for (const auto& v : r.fee_state) {
+            fee_state_arr.push_back(debug_numeric_json(v));
+        }
+        o["fee_state"] = std::move(fee_state_arr);
+    }
     o["timestamp"] = r.timestamp;
     return o;
 }

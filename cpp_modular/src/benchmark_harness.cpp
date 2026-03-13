@@ -116,11 +116,56 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
 
     const T A = parse_raw<T>(get_str(p, "A"));
     const T gamma = parse_wad<T>(get_str(p, "gamma"));
-
-    const T mid_fee = parse_fee<T>(get_str(p, "mid_fee"));
-    const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
-    const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
-
+    arb::pools::twocrypto_fx::FeeParams<T> fee_params{};
+    if (auto* v = p.if_contains("fee_params")) {
+        const auto& arr = v->as_array();
+        if (arr.size() != arb::pools::twocrypto_fx::FEE_PARAM_COUNT) {
+            throw std::runtime_error("fee_params must have length 20");
+        }
+        for (std::size_t i = 0; i < arb::pools::twocrypto_fx::FEE_PARAM_COUNT; ++i) {
+            fee_params[i] = arb::parse_scaled_1e18<T>(arr[i]);
+        }
+    } else {
+        const T base_fee = p.if_contains("base_fee")
+            ? parse_fee<T>(get_str(p, "base_fee"))
+            : PoolTraits<T>::ZERO();
+        const T mid_fee = parse_fee<T>(get_str(p, "mid_fee"));
+        const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
+        const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
+        const T calm_discount_max = p.if_contains("calm_discount_max")
+            ? (std::is_same_v<T, uint256>
+                ? parse_wad<T>(get_str(p, "calm_discount_max"))
+                : parse_raw<T>(get_str(p, "calm_discount_max")))
+            : PoolTraits<T>::ZERO();
+        const T fee_volatility_ref = p.if_contains("fee_volatility_ref")
+            ? parse_wad<T>(get_str(p, "fee_volatility_ref"))
+            : PoolTraits<T>::ZERO();
+        const T gap_fee_scale = p.if_contains("gap_fee_scale")
+            ? (std::is_same_v<T, uint256>
+                ? parse_wad<T>(get_str(p, "gap_fee_scale"))
+                : parse_raw<T>(get_str(p, "gap_fee_scale")))
+            : PoolTraits<T>::ZERO();
+        const T gap_fee_const_discount = p.if_contains("gap_fee_const_discount")
+            ? (std::is_same_v<T, uint256>
+                ? parse_wad<T>(get_str(p, "gap_fee_const_discount"))
+                : parse_raw<T>(get_str(p, "gap_fee_const_discount")))
+            : PoolTraits<T>::ZERO();
+        fee_params = arb::pools::twocrypto_fx::make_current_fee_params(
+            base_fee,
+            mid_fee,
+            out_fee,
+            fee_gamma,
+            calm_discount_max,
+            fee_volatility_ref,
+            gap_fee_scale,
+            gap_fee_const_discount
+        );
+    }
+    const T lp_profit_fraction = p.if_contains("lp_profit_fraction")
+        ? (std::is_same_v<T, uint256>
+            ? parse_wad<T>(get_str(p, "lp_profit_fraction"))
+            : parse_raw<T>(get_str(p, "lp_profit_fraction")))
+        : T(0.5);
     const T allowed_extra_profit = parse_wad<T>(get_str(p, "allowed_extra_profit"));
     const T adjustment_step = parse_wad<T>(get_str(p, "adjustment_step"));
 
@@ -131,13 +176,12 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
         precisions,
         A,
         gamma,
-        mid_fee,
-        out_fee,
-        fee_gamma,
+        fee_params,
         allowed_extra_profit,
         adjustment_step,
         ma_time,
-        initial_price
+        initial_price,
+        lp_profit_fraction
     );
 
     const uint64_t start_ts = get_u64_opt(sequence, "start_timestamp", 0);

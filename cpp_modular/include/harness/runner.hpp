@@ -63,6 +63,8 @@ struct PoolResult {
     T donation_shares{0};
     T donation_unlocked{0};
     T last_prices{0};
+    std::array<T, 20> fee_params{T(0)};
+    std::array<T, 20> fee_state{T(0)};
     uint64_t timestamp{0};
 
     // Echo back original JSON for params block
@@ -147,9 +149,7 @@ PoolResult<T> run_single_pool(
             pool_init.precisions,
             pool_init.A,
             pool_init.gamma,
-            pool_init.mid_fee,
-            pool_init.out_fee,
-            pool_init.fee_gamma,
+            pool_init.fee_params,
             pool_init.allowed_extra_profit,
             pool_init.adjustment_step,
             pool_init.ma_time,
@@ -253,6 +253,8 @@ PoolResult<T> run_single_pool(
         result.donation_shares = pool.donation_shares;
         result.donation_unlocked = pool.donation_unlocked();
         result.last_prices = pool.last_prices;
+        result.fee_params = pool.fee_params;
+        result.fee_state = pool.fee_state;
         result.timestamp = pool.block_timestamp;
         result.success = true;
 

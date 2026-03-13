@@ -85,7 +85,7 @@ EventLoopResult<T> run_event_loop(
             const T S = probe_sizes_coin0[k];
             // 0 -> 1
             {
-                auto pr = pools::twocrypto_fx::simulate_exchange_once(pool, 0, 1, S);
+                auto pr = pools::twocrypto_fx::simulate_exchange_once(pool, 0, 1, S, p_cex);
                 const T dy1 = pr.first;  // coin1 after fee
                 const T ideal1 = S / p_cex;
                 T s01 = T(0);
@@ -94,7 +94,7 @@ EventLoopResult<T> run_event_loop(
                 }
                 // 1 -> 0
                 const T dx1 = S / p_cex;
-                auto pr10 = pools::twocrypto_fx::simulate_exchange_once(pool, 1, 0, dx1);
+                auto pr10 = pools::twocrypto_fx::simulate_exchange_once(pool, 1, 0, dx1, p_cex);
                 const T dy0 = pr10.first;  // coin0 after fee
                 T s10 = T(0);
                 if (S > T(0)) {
@@ -113,10 +113,7 @@ EventLoopResult<T> run_event_loop(
         tw.sample_imbalance(ts, x0p, x1p);
 
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        const T cur_fee = pools::twocrypto_fx::dyn_fee(
-            xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma
-        );
-        tw.sample_fee(ts, cur_fee);
+        tw.sample_fee(ts, pool.state_fee(xp_now));
     };
 
     auto apply_donation = [&](uint64_t ts) {
@@ -156,12 +153,19 @@ EventLoopResult<T> run_event_loop(
             const T p_pool_before = pool.get_p();
             const uint64_t last_ts_before = pool.last_timestamp;
             const T lp_before = pool.last_prices;
+            const auto preview = pool.preview_exchange(
+                static_cast<size_t>(dec.i),
+                static_cast<size_t>(dec.j),
+                dec.dx,
+                cex_price
+            );
 
             auto res = pool.exchange(
                 static_cast<T>(dec.i),
                 static_cast<T>(dec.j),
                 dec.dx,
-                T(0)
+                T(0),
+                cex_price
             );
 
             const T dy_after_fee = res[0];
@@ -189,7 +193,7 @@ EventLoopResult<T> run_event_loop(
             action_logger.log_exchange(ev.ts, dec.i, dec.j, dec.dx, dy_after_fee, fee_tokens,
                                        dec.profit, cex_price, p_pool_before,
                                        oracle_before, ps_before, last_ts_before, lp_before,
-                                       xcp_profit_before, vp_before, pool, tw);
+                                       xcp_profit_before, vp_before, preview.fees, pool, tw);
             return true;
         } catch (...) {
             return false;

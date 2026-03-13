@@ -69,7 +69,7 @@ bool try_user_swap(
     if (!(dx > T(0))) return false;
     
     try {
-        (void)pool.exchange(static_cast<T>(i_from), static_cast<T>(j_to), dx, T(0));
+        (void)pool.exchange(static_cast<T>(i_from), static_cast<T>(j_to), dx, T(0), p_cex);
         cfg.next_dir ^= 1;  // alternate direction for next swap
         return true;
         

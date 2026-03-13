@@ -1,6 +1,7 @@
 // Detailed per-candle output for compatibility with old simulator format
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
@@ -34,7 +35,11 @@ struct DetailedEntry {
     T low;
     T close;
     T p_cex;              // event price used for this tick
-    T fee;                // dynamic fee at this point
+    T fee;                // state fee at this point
+    std::array<T, 4> fee_components;
+    std::array<T, 4> fee_signals;
+    std::array<T, 20> fee_params;
+    std::array<T, 20> fee_state;
     uint64_t n_trades;    // cumulative trade count
     uint64_t n_rebalances; // cumulative rebalance count
 };
@@ -70,6 +75,26 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
             << ", \"close\": " << e.close
             << ", \"p_cex\": " << e.p_cex
             << ", \"fee\": " << e.fee
+            << ", \"fee_components\": [" << e.fee_components[0]
+            << ", " << e.fee_components[1]
+            << ", " << e.fee_components[2]
+            << ", " << e.fee_components[3] << "]"
+            << ", \"fee_signals\": [" << e.fee_signals[0]
+            << ", " << e.fee_signals[1]
+            << ", " << e.fee_signals[2]
+            << ", " << e.fee_signals[3] << "]"
+            << ", \"fee_params\": [";
+        for (size_t j = 0; j < e.fee_params.size(); ++j) {
+            if (j > 0) out << ", ";
+            out << e.fee_params[j];
+        }
+        out << "]"
+            << ", \"fee_state\": [";
+        for (size_t j = 0; j < e.fee_state.size(); ++j) {
+            if (j > 0) out << ", ";
+            out << e.fee_state[j];
+        }
+        out << "]"
             << ", \"n_trades\": " << e.n_trades
             << ", \"n_rebalances\": " << e.n_rebalances
             << "}";

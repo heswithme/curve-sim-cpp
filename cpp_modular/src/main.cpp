@@ -48,9 +48,16 @@ void test_pool(T cex_price = T(-1)) {
 
     T A = T(10000.0);
     T gamma = T(1e-5);
-    T mid_fee = T(0.0001);
-    T out_fee = T(0.0006);
-    T fee_gamma = T(0.00023);
+    auto fee_params = arb::pools::twocrypto_fx::make_current_fee_params(
+        Traits::ZERO(),
+        T(0.0001),
+        T(0.0006),
+        T(0.00023),
+        Traits::ZERO(),
+        Traits::ZERO(),
+        Traits::ZERO(),
+        Traits::ZERO()
+    );
     T allowed_extra_profit = T(1e-8);
     T adjustment_step = T(0.0001);
     T ma_time = T(600.0);
@@ -59,7 +66,7 @@ void test_pool(T cex_price = T(-1)) {
     Pool pool(
         precisions,
         A, gamma,
-        mid_fee, out_fee, fee_gamma,
+        fee_params,
         allowed_extra_profit, adjustment_step, ma_time,
         initial_price
     );

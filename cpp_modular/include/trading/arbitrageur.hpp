@@ -53,11 +53,13 @@ Decision<T> decide_trade(
 
     const auto xp_now = fx::pool_xp_current(pool);
     const T p_now = fx::MathOps<T>::get_p(xp_now, pool.D, {pool.A, pool.gamma}) * pool.cached_price_scale;
-    const T fee_pool = fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+    const T fee_pool_01 = pool.quote_fee(xp_now, 0, 1, cex_price);
+    const T fee_pool_10 = pool.quote_fee(xp_now, 1, 0, cex_price);
 
-    const T one_minus_fee = std::max(T(1) - fee_pool, T(1e-12));
-    const T p_pool_bid = one_minus_fee * p_now;
-    const T p_pool_ask = p_now / one_minus_fee;
+    const T one_minus_fee_01 = std::max(T(1) - fee_pool_01, T(1e-12));
+    const T one_minus_fee_10 = std::max(T(1) - fee_pool_10, T(1e-12));
+    const T p_pool_bid = one_minus_fee_10 * p_now;
+    const T p_pool_ask = p_now / one_minus_fee_01;
 
     const T p_cex_bid = (T(1) - fee_cex) * cex_price;
     const T p_cex_ask = (T(1) + fee_cex) * cex_price;
@@ -94,7 +96,13 @@ Decision<T> decide_trade(
 
     const T dx_range = dx_hi - dx_lo;
     auto profit_at = [&](T dx) -> T {
-        auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx);
+        auto sim = fx::simulate_exchange_once(
+            pool,
+            static_cast<size_t>(sel_i),
+            static_cast<size_t>(sel_j),
+            dx,
+            cex_price
+        );
         const T dy_after_fee = sim.first;
         if (sel_i == 0) {
             return dy_after_fee * cex_price * (T(1) - fee_cex) - dx - costs.gas_coin0;
@@ -140,7 +148,13 @@ Decision<T> decide_trade(
     }
 
     // Simulate and compute profit
-    auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx_star);
+    auto sim = fx::simulate_exchange_once(
+        pool,
+        static_cast<size_t>(sel_i),
+        static_cast<size_t>(sel_j),
+        dx_star,
+        cex_price
+    );
     T dy_after_fee = sim.first;
 
     T profit;
@@ -182,11 +196,13 @@ Decision<T> decide_trade_numeric(
 
     const auto xp_now = fx::pool_xp_current(pool);
     const T p_now = fx::MathOps<T>::get_p(xp_now, pool.D, {pool.A, pool.gamma}) * pool.cached_price_scale;
-    const T fee_pool = fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+    const T fee_pool_01 = pool.quote_fee(xp_now, 0, 1, cex_price);
+    const T fee_pool_10 = pool.quote_fee(xp_now, 1, 0, cex_price);
 
-    const T one_minus_fee = std::max(T(1) - fee_pool, T(1e-12));
-    const T p_pool_bid = one_minus_fee * p_now;
-    const T p_pool_ask = p_now / one_minus_fee;
+    const T one_minus_fee_01 = std::max(T(1) - fee_pool_01, T(1e-12));
+    const T one_minus_fee_10 = std::max(T(1) - fee_pool_10, T(1e-12));
+    const T p_pool_bid = one_minus_fee_10 * p_now;
+    const T p_pool_ask = p_now / one_minus_fee_01;
 
     const T p_cex_bid = (T(1) - fee_cex) * cex_price;
     const T p_cex_ask = (T(1) + fee_cex) * cex_price;
@@ -222,7 +238,13 @@ Decision<T> decide_trade_numeric(
     if (!(dx_hi > dx_lo)) return d;
 
     auto profit_for_dx = [&](T dx) -> T {
-        auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx);
+        auto sim = fx::simulate_exchange_once(
+            pool,
+            static_cast<size_t>(sel_i),
+            static_cast<size_t>(sel_j),
+            dx,
+            cex_price
+        );
         const T dy_after_fee = sim.first;
         return (sel_i == 0)
             ? (dy_after_fee * cex_price * (T(1) - fee_cex) - dx - costs.gas_coin0)
@@ -258,7 +280,13 @@ Decision<T> decide_trade_numeric(
 
     if (!(profit > T(0))) return d;
 
-    auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx_best);
+    auto sim = fx::simulate_exchange_once(
+        pool,
+        static_cast<size_t>(sel_i),
+        static_cast<size_t>(sel_j),
+        dx_best,
+        cex_price
+    );
     T dy_after_fee = sim.first;
 
     d.do_trade = true;

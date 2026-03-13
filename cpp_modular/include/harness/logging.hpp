@@ -69,6 +69,7 @@ public:
                       T profit_coin0, T p_cex, T p_pool_before,
                       T oracle_before, T ps_before, uint64_t last_ts_before, T lp_before,
                       T xcp_profit_before, T vp_before,
+                      const pools::twocrypto_fx::FeeBreakdown<T>& fees,
                       const Pool& pool, const TW& tw) {
         if (!enabled_) return;
         (void)tw;
@@ -96,6 +97,11 @@ public:
         act.vp_before = vp_before;
         act.vp_after = pool.get_vp_boosted();
         act.balance_indicator = pools::twocrypto_fx::balance_indicator(pool);
+        act.total_fee = fees.total_fee;
+        act.fee_components = fees.components;
+        act.fee_signals = fees.signals;
+        act.fee_params = pool.fee_params;
+        act.fee_state = pool.fee_state;
         actions_.push_back(std::move(act));
     }
     
@@ -165,7 +171,12 @@ public:
         entry.close = static_cast<T>(candle.close);
         entry.p_cex = p_cex;
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+        const auto fees = pool.state_fee_breakdown(xp_now);
+        entry.fee = fees.total_fee;
+        entry.fee_components = fees.components;
+        entry.fee_signals = fees.signals;
+        entry.fee_params = pool.fee_params;
+        entry.fee_state = pool.fee_state;
         entry.n_trades = n_trades;
         entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);

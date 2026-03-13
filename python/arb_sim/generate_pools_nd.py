@@ -16,12 +16,12 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
-N_DENSE = 16
+N_DENSE = 32
 
 DEMO_GRID = {
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
+    "mid_fee": np.linspace(1 / 10_000 * 10**10, 400 / 10_000 * 10**10, N_DENSE),  # 1
     "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
-    "donation_apy": np.linspace(0.036, 0.036, 1),  # 0-20%
+    "donation_apy": np.linspace(0.0, 0.1, N_DENSE),  # 0-20%
 }
 
 ARB_FEE_BPS = 3

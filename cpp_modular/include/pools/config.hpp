@@ -11,6 +11,7 @@
 #include <boost/json.hpp>
 
 #include "core/json_utils.hpp"
+#include "pools/twocrypto_fx/fee_model.hpp"
 #include "trading/costs.hpp"
 
 namespace arb {
@@ -22,9 +23,18 @@ struct PoolInit {
     std::array<T, 2> precisions{T(1), T(1)};
     T A{T(100000.0)};
     T gamma{T(0)};
-    T mid_fee{T(3e-4)};
-    T out_fee{T(5e-4)};
-    T fee_gamma{T(0.23)};
+    twocrypto_fx::FeeParams<T> fee_params{
+        twocrypto_fx::make_current_fee_params(
+            T(0),
+            T(3e-4),
+            T(5e-4),
+            T(0.23),
+            T(0),
+            T(0),
+            T(0),
+            T(0)
+        )
+    };
     T lp_profit_fraction{T(0.5)};
     T allowed_extra_profit{T(1e-10)};
     T adjustment_step{T(1e-3)};
@@ -84,9 +94,44 @@ void parse_pool_entry(
     // Pool parameters
     if (auto* v = pool.if_contains("A")) out_pool.A = parse_plain_real<T>(*v);
     if (auto* v = pool.if_contains("gamma")) out_pool.gamma = parse_plain_real<T>(*v);
-    if (auto* v = pool.if_contains("mid_fee")) out_pool.mid_fee = parse_fee_1e10<T>(*v);
-    if (auto* v = pool.if_contains("out_fee")) out_pool.out_fee = parse_fee_1e10<T>(*v);
-    if (auto* v = pool.if_contains("fee_gamma")) out_pool.fee_gamma = parse_scaled_1e18<T>(*v);
+    if (auto* v = pool.if_contains("fee_params")) {
+        const auto& arr = v->as_array();
+        if (arr.size() != twocrypto_fx::FEE_PARAM_COUNT) {
+            throw std::runtime_error("fee_params must have length 20");
+        }
+        for (std::size_t i = 0; i < twocrypto_fx::FEE_PARAM_COUNT; ++i) {
+            out_pool.fee_params[i] = parse_scaled_1e18<T>(arr[i]);
+        }
+    } else {
+        T base_fee = T(0);
+        T mid_fee = T(3e-4);
+        T out_fee = T(5e-4);
+        T fee_gamma = T(0.23);
+        T calm_discount_max = T(0);
+        T fee_volatility_ref = T(0);
+        T gap_fee_scale = T(0);
+        T gap_fee_const_discount = T(0);
+
+        if (auto* v = pool.if_contains("base_fee")) base_fee = parse_fee_1e10<T>(*v);
+        if (auto* v = pool.if_contains("mid_fee")) mid_fee = parse_fee_1e10<T>(*v);
+        if (auto* v = pool.if_contains("out_fee")) out_fee = parse_fee_1e10<T>(*v);
+        if (auto* v = pool.if_contains("fee_gamma")) fee_gamma = parse_scaled_1e18<T>(*v);
+        if (auto* v = pool.if_contains("calm_discount_max")) calm_discount_max = parse_plain_real<T>(*v);
+        if (auto* v = pool.if_contains("fee_volatility_ref")) fee_volatility_ref = parse_scaled_1e18<T>(*v);
+        if (auto* v = pool.if_contains("gap_fee_scale")) gap_fee_scale = parse_plain_real<T>(*v);
+        if (auto* v = pool.if_contains("gap_fee_const_discount")) gap_fee_const_discount = parse_plain_real<T>(*v);
+
+        out_pool.fee_params = twocrypto_fx::make_current_fee_params(
+            base_fee,
+            mid_fee,
+            out_fee,
+            fee_gamma,
+            calm_discount_max,
+            fee_volatility_ref,
+            gap_fee_scale,
+            gap_fee_const_discount
+        );
+    }
     if (auto* v = pool.if_contains("lp_profit_fraction")) {
         T fraction = parse_plain_real<T>(*v);
         out_pool.lp_profit_fraction = std::clamp<T>(fraction, T(0), T(1));

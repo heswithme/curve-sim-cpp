@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <iostream>
 #include "stableswap_math.hpp"
+#include "fee_model.hpp"
 
 namespace arb {
 namespace pools {
@@ -100,9 +101,8 @@ public:
     // Parameters (normalized)
     T A = Traits::ZERO();
     T gamma = Traits::ZERO();
-    T mid_fee = Traits::ZERO();
-    T out_fee = Traits::ZERO();
-    T fee_gamma = Traits::ZERO();
+    FeeParams<T> fee_params = zero_fee_params<T>();
+    FeeState<T> fee_state = zero_fee_state<T>();
     T lp_profit_fraction = T(0.5);
     T allowed_extra_profit = Traits::ZERO();
     T adjustment_step = Traits::ZERO();
@@ -137,9 +137,7 @@ public:
         const std::array<T, 2>& _precisions,
         const T& _A,
         const T& _gamma,
-        const T& _mid_fee,
-        const T& _out_fee,
-        const T& _fee_gamma,
+        const FeeParams<T>& _fee_params,
         const T& _allowed_extra_profit,
         const T& _adjustment_step,
         const T& _ma_time,
@@ -148,11 +146,19 @@ public:
     ) {
         precisions = _precisions;
         A = _A; gamma = _gamma;
-        mid_fee = _mid_fee; out_fee = _out_fee; fee_gamma = _fee_gamma;
+        fee_params = _fee_params;
         lp_profit_fraction = _lp_profit_fraction;
         allowed_extra_profit = _allowed_extra_profit;
         adjustment_step = _adjustment_step;
         ma_time = _ma_time;
+
+        for (const auto& fee_param : fee_params) {
+            if constexpr (std::is_same_v<T, uint256>) {
+                (void)fee_param;
+            } else if (!std::isfinite(static_cast<double>(fee_param))) {
+                throw std::invalid_argument("fee_params must be finite");
+            }
+        }
 
         cached_price_scale = initial_price;
         cached_price_oracle = initial_price;
@@ -165,6 +171,7 @@ public:
         block_timestamp = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
         last_timestamp = block_timestamp;
+        init_fee_state(fee_state, last_prices, block_timestamp);
     }
 
 private:
@@ -179,24 +186,33 @@ private:
         };
     }
 
-    // _fee: dynamic fee between mid_fee and out_fee based on balance skew
     T _fee(const std::array<T, 2>& xp) const {
-        if (fee_gamma == Traits::ZERO()) {
-            return mid_fee;
-        }
+        return inventory_fee_from_params(xp, fee_params, Traits::PRECISION());
+    }
 
-        T Bsum = xp[0] + xp[1];
-        if (Bsum == Traits::ZERO()) {
-            return mid_fee;
-        }
-
-        T B = Traits::PRECISION() * N_COINS * N_COINS * xp[0] / Bsum * xp[1] / Bsum;
-        B = fee_gamma * B /
-            (fee_gamma * B / Traits::PRECISION() + Traits::PRECISION() - B);
-
-        return (
-            mid_fee * B + out_fee * (Traits::PRECISION() - B)
-        ) / Traits::PRECISION();
+    FeeBreakdown<T> _swap_fee_breakdown(
+        const std::array<T, 2>& xp,
+        size_t idx_i,
+        size_t idx_j,
+        const T& dx,
+        const T& cex_price
+    ) const {
+        FeeInputs<T> inputs;
+        inputs.xp = xp;
+        inputs.spot = get_p();
+        inputs.price_oracle = cached_price_oracle;
+        inputs.price_scale = cached_price_scale;
+        inputs.last_prices = last_prices;
+        inputs.idx_i = idx_i;
+        inputs.idx_j = idx_j;
+        inputs.dx = dx;
+        inputs.cex_price = cex_price;
+        inputs.has_trade_context = cex_price > Traits::ZERO();
+        inputs.block_timestamp = block_timestamp;
+        inputs.last_timestamp = last_timestamp;
+        inputs.precision = Traits::PRECISION();
+        inputs.fee_precision = Traits::FEE_PRECISION();
+        return eval_fee_model(fee_params, fee_state, inputs);
     }
 
     // _xcp: cross-product invariant in xcp units
@@ -303,6 +319,67 @@ private:
     }
 
 public:
+    FeeBreakdown<T> state_fee_breakdown(const std::array<T, 2>& xp) const {
+        return _swap_fee_breakdown(xp, 0, 1, Traits::ZERO(), Traits::ZERO());
+    }
+
+    T state_fee(const std::array<T, 2>& xp) const {
+        return state_fee_breakdown(xp).total_fee;
+    }
+
+    T quote_fee(
+        const std::array<T, 2>& xp,
+        size_t idx_i,
+        size_t idx_j,
+        const T& cex_price,
+        const T& dx = Traits::ZERO()
+    ) const {
+        return _swap_fee_breakdown(xp, idx_i, idx_j, dx, cex_price).total_fee;
+    }
+
+    ExchangePreview<T> preview_exchange(
+        size_t idx_i,
+        size_t idx_j,
+        T dx,
+        T cex_price = Traits::ZERO()
+    ) const {
+        if (idx_i == idx_j || idx_i >= N_COINS || idx_j >= N_COINS) {
+            throw std::invalid_argument("coin index out of range");
+        }
+        if (dx == Traits::ZERO()) {
+            throw std::invalid_argument("zero dx");
+        }
+
+        ExchangePreview<T> preview;
+        const T price_scale = cached_price_scale;
+        const auto A_gamma = std::array<T, 2>{ A, gamma };
+
+        auto balances_local = balances;
+        balances_local[idx_i] += dx;
+        auto xp = _xp(balances_local, price_scale);
+
+        auto y_out = Ops::get_y(A_gamma[0], A_gamma[1], xp, D, idx_j);
+        T dy_xp = xp[idx_j] - y_out.value;
+        xp[idx_j] -= dy_xp;
+
+        T dy_tokens = dy_xp - PoolTraits<T>::ROUNDING_UNIT_XP();
+        if (idx_j > 0) {
+            dy_tokens = dy_tokens * Traits::PRECISION() / price_scale;
+        }
+        dy_tokens = dy_tokens / precisions[idx_j];
+
+        const T D_candidate = Ops::newton_D(A_gamma[0], A_gamma[1], xp, T(0));
+        preview.spot_post = (
+            MathOps<T>::get_p(xp, D_candidate, A_gamma) * price_scale
+        ) / PoolTraits<T>::PRECISION();
+        preview.fees = _swap_fee_breakdown(xp, idx_i, idx_j, dx, cex_price);
+        preview.fee_tokens = (
+            preview.fees.total_fee * dy_tokens
+        ) / PoolTraits<T>::FEE_PRECISION();
+        preview.dy_after_fee = dy_tokens - preview.fee_tokens;
+        return preview;
+    }
+
     // Cheap tick to update EMA/oracle and possibly adjust price_scale without a swap
     void tick() {
         auto A_gamma = std::array<T, 2>{ A, gamma };
@@ -457,7 +534,8 @@ public:
         T i,
         T j,
         T dx,
-        T min_dy
+        T min_dy,
+        T cex_price = Traits::ZERO()
     ) {
         size_t idx_i = static_cast<size_t>(i);
         size_t idx_j = static_cast<size_t>(j);
@@ -470,36 +548,20 @@ public:
         }
 
         T price_scale = cached_price_scale;
-
-        auto balances_local = balances;
-        balances_local[idx_i] += dx;
-        auto xp = _xp(balances_local, price_scale);
-
         auto A_gamma = std::array<T, 2>{ A, gamma };
 
-        auto y_out = Ops::get_y(A_gamma[0], A_gamma[1], xp, D, idx_j);
-        T dy_xp = xp[idx_j] - y_out.value;
-        xp[idx_j] -= dy_xp;
-
-        T dy_tokens = dy_xp - PoolTraits<T>::ROUNDING_UNIT_XP();
-        if (idx_j > 0) {
-            dy_tokens = dy_tokens * Traits::PRECISION() / price_scale;
-        }
-        dy_tokens = dy_tokens / precisions[idx_j];
-
-        T fee = _fee(xp) * dy_tokens / PoolTraits<T>::FEE_PRECISION();
-        T dy_after_fee = dy_tokens - fee;
-        if (dy_after_fee < min_dy) {
+        auto preview = preview_exchange(idx_i, idx_j, dx, cex_price);
+        if (preview.dy_after_fee < min_dy) {
             throw std::runtime_error("slippage");
         }
 
         balances[idx_i] += dx;
-        balances[idx_j] -= dy_after_fee;
+        balances[idx_j] -= preview.dy_after_fee;
         auto xp_new = _xp(balances, price_scale);
         T D_new = Ops::newton_D(A_gamma[0], A_gamma[1], xp_new, 0);
         D = D_new;
         T new_price_scale = tweak_price(A_gamma, xp_new, D_new);
-        return { dy_after_fee, fee, new_price_scale };
+        return { preview.dy_after_fee, preview.fee_tokens, new_price_scale };
     }
 
     T tweak_price(
@@ -515,7 +577,6 @@ public:
         }();
         T price_oracle = cached_price_oracle;
         T price_scale  = cached_price_scale;
-
         // EMA update
         uint64_t last_ts = last_timestamp;
         if (last_ts < block_timestamp) {
@@ -551,6 +612,16 @@ public:
         last_prices = (
             MathOps<T>::get_p(xp, _D, _A_gamma) * price_scale
         ) / PoolTraits<T>::PRECISION();
+
+        FeeStateInputs<T> fee_state_inputs{};
+        fee_state_inputs.spot = last_prices;
+        fee_state_inputs.price_oracle = price_oracle;
+        fee_state_inputs.price_scale = price_scale;
+        fee_state_inputs.last_prices = last_prices;
+        fee_state_inputs.block_timestamp = block_timestamp;
+        fee_state_inputs.ma_time = ma_time;
+        fee_state_inputs.precision = Traits::PRECISION();
+        step_fee_state(fee_params, fee_state, fee_state_inputs);
 
         // Compute current virtual price and profits
         T total_supply      = totalSupply;
@@ -743,6 +814,8 @@ public:
         block_timestamp = ts;
         if (D == Traits::ZERO() && totalSupply == Traits::ZERO()) {
             last_timestamp = ts;
+            fee_state[FEE_STATE_LAST_UPDATE_TS] = static_cast<T>(ts);
+            fee_state[FEE_STATE_LAST_SPOT] = last_prices;
         }
     }
 
