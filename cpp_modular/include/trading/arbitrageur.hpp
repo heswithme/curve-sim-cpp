@@ -287,7 +287,6 @@ Decision<T> decide_trade_numeric(
         dx_best,
         cex_price
     );
-    T dy_after_fee = sim.first;
 
     d.do_trade = true;
     d.i = sel_i;

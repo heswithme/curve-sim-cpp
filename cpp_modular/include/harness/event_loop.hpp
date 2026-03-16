@@ -136,7 +136,7 @@ EventLoopResult<T> run_event_loop(
             }
         }
 
-        auto dec = trading::decide_trade(
+        auto dec = trading::decide_trade_numeric(
             pool, cex_price, costs,
             volume_cap,
             min_swap_frac, max_swap_frac
