@@ -254,12 +254,13 @@ Decision<T> decide_trade_numeric(
     }
 
     T dx_best = (fc > fe) ? c : e;
-    T profit = std::max(fc, fe);
-
-    if (!(profit > T(0))) return d;
-
     auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx_best);
     T dy_after_fee = sim.first;
+    T profit = (sel_i == 0)
+        ? (dy_after_fee * cex_price * (T(1) - fee_cex) - dx_best - costs.gas_coin0)
+        : (dy_after_fee - dx_best * cex_price * (T(1) + fee_cex) - costs.gas_coin0);
+
+    if (!(profit > T(0))) return d;
 
     d.do_trade = true;
     d.i = sel_i;

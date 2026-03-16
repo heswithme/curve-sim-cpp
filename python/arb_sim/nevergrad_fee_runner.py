@@ -86,7 +86,7 @@ TEMPLATE_POOL = {
     "initial_liq_coin0": 10_000_000.0,
     "mid_fee_bps": 1.0,
     "out_fee_bps": 1.0,
-    "fee_gamma": 0.003,
+    "fee_gamma": 0.000,
 }
 
 TEMPLATE_COSTS = {

@@ -55,6 +55,10 @@ inline T dyn_fee(
     const T& out_fee,
     const T& fee_gamma
 ) {
+    if (fee_gamma == PoolTraits<T>::ZERO()) {
+        return mid_fee;
+    }
+
     const T Bsum = xp[0] + xp[1];
     if (!(Bsum > T(0))) {
         return mid_fee;

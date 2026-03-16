@@ -48,18 +48,18 @@ EventLoopResult<T> run_event_loop(
     Metrics<T>& m = result.metrics;
     TimeWeightedMetrics<T>& tw = result.tw_metrics;
     SlippageProbes<T>& sp = result.slippage_probes;
-    
+
     const size_t n_events = max_events > 0 ? std::min(max_events, events.size()) : events.size();
     if (n_events == 0) return result;
-    
+
     // Record timestamps
     result.t_start = events.front().ts;
     result.t_end = events[n_events - 1].ts;
-    
+
     // Record initial state
     result.tvl_start = pool.balances[0] + pool.balances[1] * pool.cached_price_scale;
     result.donation_apy = dcfg.apy;
-    
+
     // Probe sizes for slippage: 1%, 5%, 10% of initial TVL (coin0 terms)
     std::array<T, SlippageProbes<T>::N_SIZES> probe_sizes_coin0{};
     if (enable_slippage_probes) {
@@ -67,7 +67,7 @@ EventLoopResult<T> run_event_loop(
             probe_sizes_coin0[k] = result.tvl_start * static_cast<T>(SlippageProbes<T>::SIZE_FRACS[k]);
         }
     }
-    
+
     // Initialize loggers
     ActionLogger<T> action_logger(save_actions);
     DetailedLogger<T> detailed_logger(detailed_log, detailed_interval);
@@ -75,13 +75,13 @@ EventLoopResult<T> run_event_loop(
     if (detailed_logger.enabled() && candles == nullptr) {
         throw std::invalid_argument("detailed_log enabled but candles were not provided");
     }
-    
+
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
         if (!enable_slippage_probes || !(p_cex > T(0))) return;
         for (size_t k = 0; k < SlippageProbes<T>::N_SIZES; ++k) {
             sp.accumulate_previous(k, ts);
-            
+
             const T S = probe_sizes_coin0[k];
             // 0 -> 1
             {
@@ -104,7 +104,7 @@ EventLoopResult<T> run_event_loop(
             }
         }
     };
-    
+
     auto sample_pre_trade = [&](uint64_t ts, T cex_price) {
         tw.sample_price_error(ts, pool.cached_price_scale, cex_price);
 
@@ -139,7 +139,7 @@ EventLoopResult<T> run_event_loop(
             }
         }
 
-        auto dec = trading::decide_trade(
+        auto dec = trading::decide_trade_numeric(
             pool, cex_price, costs,
             volume_cap,
             min_swap_frac, max_swap_frac
@@ -279,11 +279,11 @@ EventLoopResult<T> run_event_loop(
             );
         }
     }
-    
+
     // Move logged data into result
     result.actions = action_logger.take_actions();
     result.detailed_entries = detailed_logger.take_entries();
-    
+
     return result;
 }
 
