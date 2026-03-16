@@ -151,3 +151,8 @@ todo.txt
 yb-curve-sim-cpp
 comparison-results/
 legacy_sim/
+autoresearch/observations.md
+autoresearch/fee_autoresearch_baseline.json
+autoresearch/fee_autoresearch_candidate.json
+autoresearch/fee_autoresearch_runs.jsonl
+autoresearch/codex-loop/
