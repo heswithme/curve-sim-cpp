@@ -51,6 +51,7 @@ FAIL_PENALTY = 1_000_000.0
 FEE_PARAM_COUNT = 20
 
 FEE_PARAM_FEE_VALUE = 0
+ACTIVE_SEARCH_SPEC_MODEL = "constant_fee_v1"
 
 FEE_PARAM_LABELS = [
     "fee_value",
@@ -75,6 +76,13 @@ FEE_PARAM_LABELS = [
     "reserved_19",
 ]
 
+# ============================================================================
+# HUMAN-OWNED EVALUATION / OBJECTIVE DEFAULTS
+#
+# AGENT RULE:
+# - Do not auto-modify these defaults in autonomous fee-model experiments.
+# - These settings define the fixed evaluation environment around the fee model.
+# ============================================================================
 DEFAULT_SERVER_CONFIG = {
     "pool_index": 0,
     "n_candles": 0,
@@ -112,7 +120,7 @@ DEFAULT_ROBUST_EVAL = {
 
 DEFAULT_OPTIMIZATION = {
     "optimizer": "TwoPointsDE",
-    "budget": 5000,
+    "budget": 2500,
     "seed": 0,
     "verbose_every": 10,
     "workers": 16,
@@ -174,9 +182,14 @@ def fee_bps(value: float) -> int:
     return wad(value / 10_000.0)
 
 
-DEFAULT_OPTIMIZABLE_VARS = {
-    "fee_param_0": scalar(0.0, 300.0 / 10_000.0, step=1.0 / 10_000.0),
-}
+# ============================================================================
+# HUMAN-OWNED BENCHMARK / OBJECTIVE DEFAULTS
+#
+# AGENT RULE:
+# - Do not auto-modify these defaults in autonomous fee-model experiments.
+# - This block fixes the benchmark pool, server behavior, and objective surface
+#   so fee-law comparisons stay comparable.
+# ============================================================================
 
 # ============================================================================
 # HUMAN-OWNED BENCHMARK POOL TEMPLATE
@@ -212,6 +225,53 @@ EMBEDDED_TEMPLATE_COSTS = {
     "use_volume_cap": False,
     "volume_cap_mult": 1.0,
 }
+
+
+# ============================================================================
+# AGENT-EDITABLE SEARCH SPEC
+#
+# AGENT RULE:
+# - You may modify only this block in Python when a new fee model needs
+#   different active slots, ranges, kinds, or step sizes.
+# - Do not change the benchmark pool, costs, server defaults, or objective
+#   defaults above.
+# - Keep the active slot set aligned with the fee model in `fee_model.hpp`.
+# ============================================================================
+def build_constant_fee_optimizable_vars() -> dict[str, dict[str, Any]]:
+    return {
+        "fee_param_0": scalar(0.0, 0.05, step=1.0 / 10_000.0),
+    }
+
+
+def build_default_optimizable_vars() -> dict[str, dict[str, Any]]:
+    if ACTIVE_SEARCH_SPEC_MODEL == "constant_fee_v1":
+        return build_constant_fee_optimizable_vars()
+    raise ValueError(
+        f"unsupported ACTIVE_SEARCH_SPEC_MODEL: {ACTIVE_SEARCH_SPEC_MODEL}"
+    )
+
+
+DEFAULT_OPTIMIZABLE_VARS = build_default_optimizable_vars()
+
+
+def validate_optimizable_vars(optimizable_vars: dict[str, dict[str, Any]]) -> None:
+    if not optimizable_vars:
+        raise ValueError("optimizable_vars must contain at least one fee_param slot")
+
+    seen_indices: list[int] = []
+    for key in optimizable_vars:
+        if not key.startswith("fee_param_"):
+            raise ValueError(f"unsupported optimizable var key: {key}")
+        try:
+            idx = int(key.removeprefix("fee_param_"))
+        except ValueError as exc:
+            raise ValueError(f"invalid fee_param key: {key}") from exc
+        if idx < 0 or idx >= FEE_PARAM_COUNT:
+            raise ValueError(f"fee_param index out of range: {key}")
+        seen_indices.append(idx)
+
+    if seen_indices != sorted(seen_indices):
+        raise ValueError("optimizable fee_param slots must be ordered by slot index")
 
 
 def scale_1e18(value: float) -> int:
@@ -1138,6 +1198,7 @@ def run_optimization(
         if optimizable_vars_override is None
         else optimizable_vars_override
     )
+    validate_optimizable_vars(optimizable_vars)
     server_config = {
         "pool_index": int(args.pool_index),
         "n_candles": int(args.n_candles),
