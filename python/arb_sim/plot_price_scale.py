@@ -81,7 +81,7 @@ def main():
     ax2.legend(loc="upper left")
     ax2.grid(True, alpha=0.3)
 
-    # Secondary y-axis for pool imbalance
+    # Secondary y-axis for pool balance
     ax3 = ax2.twinx()
     ax3.plot(
         dates,
@@ -89,10 +89,10 @@ def main():
         linewidth=0.8,
         color="blue",
         alpha=0.6,
-        label="Pool imbalance",
+        label="Pool balance",
     )
     ax3.axhline(100, color="blue", linestyle=":", linewidth=0.5, alpha=0.5)
-    ax3.set_ylabel("Pool imbalance (%)", color="blue")
+    ax3.set_ylabel("Pool balance (%)", color="blue")
     ax3.tick_params(axis="y", labelcolor="blue")
     ax3.set_ylim(0, 100)
     ax3.legend(loc="upper right")

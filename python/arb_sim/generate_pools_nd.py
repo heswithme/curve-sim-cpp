@@ -14,9 +14,9 @@ import numpy as np
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
 # -------------------- Grid Definition --------------------
-FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
+FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 
-N_DENSE = 16
+N_DENSE = 32
 
 DEMO_GRID = {
     "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
@@ -24,7 +24,7 @@ DEMO_GRID = {
     "donation_apy": np.linspace(0.036, 0.036, 1),  # 0-20%
 }
 
-ARB_FEE_BPS = 3
+ARB_FEE_BPS = 10
 
 SPARSE_FX_GRID = {
     # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
@@ -46,22 +46,22 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
-    "out_fee": np.linspace(101 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 100 / 10_000 * 10**10, N_DENSE),
-    "donation_apy": np.linspace(0.0, 0.05, 10),
+    "A": np.linspace(10 * 10_000, 120 * 10_000, N_DENSE),
+    "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
+    # "mid_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
+    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2.5, 3, 5]],
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
-    # "ma_time": [int(a / np.log(2)) for a in [600, 3600]],
+    "ma_time": [int(a / np.log(2)) for a in [3600, 4 * 3600, 12 * 3600]],
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
     # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
     # "fee_gamma": [int(a * 10**18) for a in [0.0003, 0.003, 0.03, 0.3]],  # 0.0003-0.3
-    "fee_gamma": [int(a * 10**18) for a in [4e-3]],
-    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.005, 0.01]],
+    # "fee_gamma": [int(a * 10**18) for a in [4e-3]],
+    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.003, 0.005]],
 }
-MANUAL_GRID = DEMO_GRID
+# MANUAL_GRID = DEMO_GRID
 # -------------------- Data Inputs --------------------
 _SCRIPT_DIR = Path(__file__).resolve().parent
 # DEFAULT_DATAFILE = str(
@@ -71,14 +71,15 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 #     _SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-20180101-20251231.json"
 # )
 # DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20251231.json"
+#     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20270101.json"
 # )
 # DEFAULT_DATAFILE = str(
 #     _SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json"
 # )
+DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brlusd-1m-new.json")
 
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026.json")
+# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026.json")
 
 DEFAULT_COWSWAP_FILE = None
 DEFAULT_COWSWAP_FEE_BPS = 0.0
@@ -96,7 +97,7 @@ BASE_POOL = {
     ],
     "A": int(3.5 * 10_000),
     "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(1 / 10_000 * 1e10),
+    "mid_fee": int(5 / 10_000 * 1e10),
     "out_fee": int(101 / 10_000 * 1e10),
     "fee_gamma": int(0.003 * 1e18),
     "allowed_extra_profit": int(1e-10 * 10**18),
@@ -151,7 +152,6 @@ def build_grid() -> tuple[list, dict]:
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
             pool["out_fee"] = mid if FEE_EQUALIZE else max(mid, out) + 1
-
         pools.append(
             {
                 "tag": "__".join(tag_parts),

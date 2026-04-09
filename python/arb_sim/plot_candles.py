@@ -227,14 +227,11 @@ def plot_candles(ts: List[int], o: List[float], h: List[float], l: List[float], 
 
     # Formatting
     ax.grid(True, linestyle=':', alpha=0.3)
-    # Date formatting on x-axis (UTC) — uniform 30 labels from start to end
-    formatter = mdates.DateFormatter('%d-%m-%Y %H:%M', tz=timezone.utc)
+    # Cap x-axis density and keep labels as dates only.
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=15, interval_multiples=True)
+    formatter = mdates.DateFormatter('%Y-%m-%d', tz=timezone.utc)
+    ax.xaxis.set_major_locator(locator)
     ax.xaxis.set_major_formatter(formatter)
-    if n > 1:
-        xticks = np.linspace(float(x[0]), float(x[-1]), 30)
-    else:
-        xticks = [float(x[0])]
-    ax.set_xticks(xticks)
     ax.set_title(title)
 
     # Auto-rotate date labels for readability
