@@ -12,7 +12,7 @@ namespace harness {
 void print_usage(const char* prog_name) {
     std::cerr << "Usage: " << prog_name
               << " <pools.json> <candles.json> <output.json>\n"
-              << "       [--n-candles N] [--save-actions]\n"
+              << "       [--n-candles N] [--start-time TS] [--save-actions]\n"
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
               << "       [--dustswapfreq S]\n"
@@ -40,6 +40,15 @@ CliArgs parse_cli(int argc, char* argv[]) {
         try {
             if (arg == "--n-candles" && i + 1 < argc) {
                 args.max_candles = static_cast<size_t>(std::stoll(argv[++i]));
+            } else if (arg == "--start-time" && i + 1 < argc) {
+                size_t pos = 0;
+                const std::string value = argv[++i];
+                args.start_ts = static_cast<uint64_t>(std::stoull(value, &pos));
+                if (pos != value.size()) {
+                    args.valid = false;
+                    args.error_msg = "Invalid value for " + arg;
+                    return args;
+                }
             } else if (arg == "--save-actions") {
                 args.save_actions = true;
             } else if (arg == "--min-swap" && i + 1 < argc) {
@@ -76,6 +85,11 @@ CliArgs parse_cli(int argc, char* argv[]) {
             }
             // Unknown flags are silently ignored (matches original behavior)
         } catch (...) {
+            if (arg == "--start-time") {
+                args.valid = false;
+                args.error_msg = "Invalid value for " + arg;
+                return args;
+            }
             // Ignore parse errors for individual flags (matches original behavior)
         }
     }

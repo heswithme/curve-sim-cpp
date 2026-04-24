@@ -46,14 +46,15 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "A": np.linspace(10 * 10_000, 120 * 10_000, N_DENSE),
-    "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
-    # "mid_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
+    "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
     "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
+    # "A": np.linspace(10 * 10_000, 120 * 10_000, N_DENSE),
+    # "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
+    # "mid_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2.5, 3, 5]],
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
-    "ma_time": [int(a / np.log(2)) for a in [3600, 4 * 3600, 12 * 3600]],
+    # "ma_time": [int(a / np.log(2)) for a in [3600, 4 * 3600, 12 * 3600]],
     # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
     # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
@@ -95,15 +96,15 @@ BASE_POOL = {
         int(INIT_LIQ * 1e18 // 2),
         int(INIT_LIQ * 1e18 // 2 / INIT_PRICE),
     ],
-    "A": int(3.5 * 10_000),
+    # Fixed to Polygon pool 0xdcb72c163de84618417bec9aef7ae32b5336d70e.
+    "A": int(50 * 10_000),
     "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(5 / 10_000 * 1e10),
-    "out_fee": int(101 / 10_000 * 1e10),
-    "fee_gamma": int(0.003 * 1e18),
+    "mid_fee": int(4 / 10_000 * 1e10),
+    "out_fee": int(30 / 10_000 * 1e10),
+    "fee_gamma": int(0.001 * 10**18),
     "allowed_extra_profit": int(1e-10 * 10**18),
     "adjustment_step": int(0.005 * 10**18),
-    # "adjustment_step": int(1e-7 * 10**18), # ONLY FOR OLD POOLS
-    "ma_time": 866,
+    "ma_time": 89_466,
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,
     "donation_apy": 0.05,
@@ -146,12 +147,13 @@ def build_grid() -> tuple[list, dict]:
             pool[name] = val
             tag_parts.append(f"{name}_{val}")
 
-        # Enforce out_fee >= mid_fee
-        if "mid_fee" in pool:
+        # Enforce out_fee >= mid_fee only when the grid varies fee axes.
+        # Fixed Polygon pool values should stay byte-for-byte unchanged.
+        if "mid_fee" in names or "out_fee" in names:
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
-            pool["out_fee"] = mid if FEE_EQUALIZE else max(mid, out) + 1
+            pool["out_fee"] = mid if FEE_EQUALIZE else max(mid, out)
         pools.append(
             {
                 "tag": "__".join(tag_parts),

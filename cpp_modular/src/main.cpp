@@ -137,7 +137,11 @@ int main(int argc, char* argv[]) {
         auto t_read0 = std::chrono::high_resolution_clock::now();
         
         // Load candles and generate events
-        auto candles = arb::load_candles(args.candles_path, args.max_candles, args.candle_filter_pct / 100.0);
+        auto candles = arb::load_candles(
+            args.candles_path,
+            args.max_candles,
+            args.candle_filter_pct / 100.0,
+            args.start_ts);
         const size_t n_candles = candles.size();
         auto events = arb::gen_events(candles);
 
@@ -172,6 +176,7 @@ int main(int argc, char* argv[]) {
         arb::harness::RunConfig<RealT> run_cfg{};
         run_cfg.min_swap_frac = static_cast<RealT>(args.min_swap_frac);
         run_cfg.max_swap_frac = static_cast<RealT>(args.max_swap_frac);
+        run_cfg.start_ts = args.start_ts;
         run_cfg.dustswap_freq_s = args.dustswap_freq_s;
         run_cfg.user_swap_freq_s = args.user_swap_freq_s;
         run_cfg.user_swap_size_frac = static_cast<RealT>(args.user_swap_size_frac);

@@ -16,7 +16,8 @@ namespace arb {
 
 std::vector<Candle> load_candles(const std::string& path,
                                   size_t max_candles,
-                                  double squeeze_frac) {
+                                  double squeeze_frac,
+                                  uint64_t start_ts) {
     std::vector<Candle> out;
     out.reserve(1024);
 
@@ -31,8 +32,7 @@ std::vector<Candle> load_candles(const std::string& path,
     if (!val.is_array()) throw std::runtime_error("Candles JSON must be an array of arrays");
 
     const auto& arr = val.as_array();
-    const size_t limit = (max_candles ? std::min(max_candles, arr.size()) : arr.size());
-    out.reserve(limit);
+    out.reserve(max_candles ? std::min(max_candles, arr.size()) : arr.size());
 
     auto to_d = [](const json::value& v) -> double {
         if (v.is_double()) return v.as_double();
@@ -41,7 +41,7 @@ std::vector<Candle> load_candles(const std::string& path,
         return 0.0;
     };
 
-    for (size_t idx = 0; idx < limit; ++idx) {
+    for (size_t idx = 0; idx < arr.size(); ++idx) {
         const auto& a = arr[idx].as_array();
         if (a.size() < 6) continue;
 
@@ -52,6 +52,7 @@ std::vector<Candle> load_candles(const std::string& path,
         else if (tsv.is_int64()) ts = static_cast<uint64_t>(tsv.as_int64());
         else if (tsv.is_double()) ts = static_cast<uint64_t>(tsv.as_double());
         if (ts > 10000000000ULL) ts /= 1000ULL; // ms->s
+        if (start_ts > 0 && ts < start_ts) continue;
         c.ts = ts;
 
         c.open   = to_d(a[1]);
@@ -71,6 +72,7 @@ std::vector<Candle> load_candles(const std::string& path,
             }
         }
         out.push_back(c);
+        if (max_candles > 0 && out.size() >= max_candles) break;
     }
     
     // Sort candles by timestamp (input may not be ordered)

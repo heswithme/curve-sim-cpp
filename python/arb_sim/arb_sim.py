@@ -11,9 +11,21 @@ Arbitrage runner for the C++ arb_harness (multi-pool, threaded in C++).
 import argparse
 import json
 import subprocess
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 from datetime import datetime, timezone
+
+
+def parse_start_time(value: str | None) -> int | None:
+    if value is None:
+        return None
+    if value.isdigit():
+        return int(value)
+    if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", value):
+        raise ValueError("--start-time must be a Unix timestamp or DD-MM-YYYY")
+    dt = datetime.strptime(value, "%d-%m-%Y").replace(tzinfo=timezone.utc)
+    return int(dt.timestamp())
 
 
 class ArbHarnessRunner:
@@ -82,6 +94,7 @@ class ArbHarnessRunner:
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
         candle_filter: float | None = None,
+        start_time: int | None = None,
         disable_slippage_probes: bool = False,
     ) -> Dict[str, Any]:
         print("Running arb_harness...")
@@ -120,6 +133,8 @@ class ArbHarnessRunner:
             cmd += ["--cowswap-fee-bps", str(cowswap_fee_bps)]
         if candle_filter is not None:
             cmd += ["--candle-filter", str(candle_filter)]
+        if start_time is not None:
+            cmd += ["--start-time", str(start_time)]
         if disable_slippage_probes:
             cmd += ["--disable-slippage-probes"]
         # Stream harness stdout/stderr directly to the console for live progress
@@ -161,6 +176,12 @@ def main() -> int:
         type=int,
         default=0,
         help="Limit to first N candles (default: all)",
+    )
+    parser.add_argument(
+        "--start-time",
+        type=str,
+        default=None,
+        help="Skip candles before Unix timestamp or DD-MM-YYYY at 00:00 UTC",
     )
     parser.add_argument(
         "--save-actions",
@@ -287,6 +308,7 @@ def main() -> int:
     candles_path = resolve_candles_path()
     if not candles_path.exists():
         raise FileNotFoundError(f"Candles file not found: {candles_path}")
+    start_ts = parse_start_time(args.start_time)
 
     # Resolve cowswap trades path if --cow enabled
     cowswap_path: str | None = None
@@ -337,6 +359,7 @@ def main() -> int:
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,
         candle_filter=args.candle_filter,
+        start_time=start_ts,
         disable_slippage_probes=args.disable_slippage_probes,
     )
 

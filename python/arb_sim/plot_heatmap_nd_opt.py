@@ -212,14 +212,26 @@ def _nearest_index(values: List[float], coord: float) -> int:
     return idx
 
 
-def _edges_from_centers(centers: List[float]) -> np.ndarray:
+def _edges_from_centers(centers: List[float], log_scale: bool = False) -> np.ndarray:
     c = np.asarray(centers, dtype=float)
     if c.size == 0:
         return np.array([0, 1])
     if c.size == 1:
         x0 = float(c[0])
+        if log_scale:
+            if x0 <= 0:
+                raise ValueError("log-scale edges require positive centers")
+            return np.array([x0 / math.sqrt(2.0), x0 * math.sqrt(2.0)])
         d = abs(x0) * 0.5 if x0 != 0 else 0.5
         return np.array([x0 - d, x0 + d])
+    if log_scale:
+        if np.any(c <= 0):
+            raise ValueError("log-scale edges require all centers > 0")
+        logs = np.log(c)
+        mids = (logs[:-1] + logs[1:]) / 2.0
+        first = logs[0] - (mids[0] - logs[0])
+        last = logs[-1] + (logs[-1] - mids[-1])
+        return np.exp(np.concatenate([[first], mids, [last]]))
     mids = (c[:-1] + c[1:]) / 2.0
     first = c[0] - (mids[0] - c[0])
     last = c[-1] + (c[-1] - mids[-1])
@@ -474,6 +486,7 @@ class NDHeatmapExplorerOpt:
         clamp: bool,
         price_thr_bps: float,
         imbalance_thr_pct: float,
+        log_axes: set[str] | None = None,
     ):
         self.data = data
         self.metrics = metrics
@@ -483,6 +496,7 @@ class NDHeatmapExplorerOpt:
         self.clamp = clamp
         self.price_thr_bps = max(1.0, float(price_thr_bps))
         self.imbalance_thr_pct = max(0.0, float(imbalance_thr_pct))
+        self.log_axes = log_axes or set()
         self.has_price_thr_slider = (
             "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
         )
@@ -526,6 +540,17 @@ class NDHeatmapExplorerOpt:
 
         self.x_name = self.dim_names[0]
         self.y_name = self.dim_names[1]
+
+        unknown_log_axes = sorted(self.log_axes - set(self.dim_names))
+        if unknown_log_axes:
+            raise SystemExit(
+                "Unknown --log-axis value(s): "
+                + ", ".join(unknown_log_axes)
+                + f". Available axes: {', '.join(self.dim_names)}"
+            )
+        for name in sorted(self.log_axes):
+            if any(v <= 0 for v in self.dim_values[name]):
+                raise SystemExit(f"--log-axis {name} requires all axis values to be > 0")
 
         self.slider_indices: Dict[str, int] = {}
         self._init_slider_indices()
@@ -707,8 +732,10 @@ class NDHeatmapExplorerOpt:
         xlabels = [xlab_full[i] for i in xticks]
         ylabels = [ylab_full[i] for i in yticks]
 
-        Xedges = _edges_from_centers(xs)
-        Yedges = _edges_from_centers(ys)
+        log_x = self.x_name in self.log_axes
+        log_y = self.y_name in self.log_axes
+        Xedges = _edges_from_centers(xs, log_x)
+        Yedges = _edges_from_centers(ys, log_y)
 
         self.axes = []
         self.meshes = []
@@ -726,6 +753,10 @@ class NDHeatmapExplorerOpt:
                 Z = self._slice_metric(metric)
 
                 mesh = ax.pcolormesh(Xedges, Yedges, Z, cmap=self.cmap, shading="auto")
+                if log_x:
+                    ax.set_xscale("log")
+                if log_y:
+                    ax.set_yscale("log")
 
                 ny, nx = Z.shape
                 try:
@@ -1404,8 +1435,10 @@ class NDHeatmapExplorerOpt:
         xlabels = [xlab_full[i] for i in xticks]
         ylabels = [ylab_full[i] for i in yticks]
 
-        Xedges = _edges_from_centers(xs)
-        Yedges = _edges_from_centers(ys)
+        log_x = self.x_name in self.log_axes
+        log_y = self.y_name in self.log_axes
+        Xedges = _edges_from_centers(xs, log_x)
+        Yedges = _edges_from_centers(ys, log_y)
 
         n = len(self.metrics)
         cols = min(self.ncol, n)
@@ -1419,6 +1452,10 @@ class NDHeatmapExplorerOpt:
             Z = self._slice_metric(metric)
 
             mesh = ax.pcolormesh(Xedges, Yedges, Z, cmap=self.cmap, shading="auto")
+            if log_x:
+                ax.set_xscale("log")
+            if log_y:
+                ax.set_yscale("log")
 
             ny, nx = Z.shape
             try:
@@ -1664,6 +1701,12 @@ def main() -> int:
     ap.add_argument("--clamp", action="store_true", default=False)
     ap.add_argument("--pricethr", type=float, default=100.0)
     ap.add_argument("--imbalancethr", type=float, default=0.0)
+    ap.add_argument(
+        "--log-axis",
+        action="append",
+        default=[],
+        help="Plot the named axis on a log scale. Can be repeated, e.g. --log-axis fee_gamma.",
+    )
     args = ap.parse_args()
 
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
@@ -1684,6 +1727,7 @@ def main() -> int:
         clamp=args.clamp,
         price_thr_bps=args.pricethr,
         imbalance_thr_pct=args.imbalancethr,
+        log_axes=set(args.log_axis),
     )
     explorer.show()
 

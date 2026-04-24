@@ -93,6 +93,7 @@ template <typename T>
 struct RunConfig {
     T min_swap_frac{T(1e-6)};
     T max_swap_frac{T(1.0)};
+    uint64_t start_ts{0};
     uint64_t dustswap_freq_s{3600};
     uint64_t user_swap_freq_s{0};
     T user_swap_size_frac{T(0.01)};
@@ -158,7 +159,7 @@ PoolResult<T> run_single_pool(
         );
 
         // Set initial timestamp
-        uint64_t init_ts = pool_init.start_ts;
+        uint64_t init_ts = cfg.start_ts ? cfg.start_ts : pool_init.start_ts;
         if (init_ts == 0 && !events.empty()) {
             init_ts = events.front().ts;
         }

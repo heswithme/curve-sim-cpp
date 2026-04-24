@@ -16,6 +16,7 @@ struct CliArgs {
 
     // Options
     size_t max_candles{0};           // 0 = all
+    uint64_t start_ts{0};            // 0 = start at first candle
     bool save_actions{false};
     double min_swap_frac{1e-6};
     double max_swap_frac{1.0};
