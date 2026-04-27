@@ -487,6 +487,7 @@ class NDHeatmapExplorerOpt:
         price_thr_bps: float,
         imbalance_thr_pct: float,
         log_axes: set[str] | None = None,
+        start_time: str | None = None,
     ):
         self.data = data
         self.metrics = metrics
@@ -497,6 +498,7 @@ class NDHeatmapExplorerOpt:
         self.price_thr_bps = max(1.0, float(price_thr_bps))
         self.imbalance_thr_pct = max(0.0, float(imbalance_thr_pct))
         self.log_axes = log_axes or set()
+        self.start_time = start_time
         self.has_price_thr_slider = (
             "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
         )
@@ -562,12 +564,14 @@ class NDHeatmapExplorerOpt:
         if not isinstance(self.base_pool, dict):
             self.base_pool = {}
         self.candles_file = None
+        self.config_start_time = None
         if isinstance(meta, dict):
             self.candles_file = (
                 meta.get("candles_file")
                 or meta.get("datafile")
                 or meta.get("remote_candles")
             )
+            self.config_start_time = meta.get("start_time")
 
         self.repo_root = Path(__file__).resolve().parents[2]
         self.python_dir = HERE.parent
@@ -1557,6 +1561,8 @@ class NDHeatmapExplorerOpt:
             meta["datafile"] = str(candles_path)
         if self.base_pool:
             meta["base_pool"] = self.base_pool
+        if self.start_time or self.config_start_time:
+            meta["start_time"] = self.start_time or self.config_start_time
         payload = {"meta": meta, "pools": [pool_config]}
         self.inspect_pool_path.parent.mkdir(parents=True, exist_ok=True)
         self.inspect_pool_path.write_text(json.dumps(payload, indent=2))
@@ -1596,6 +1602,8 @@ class NDHeatmapExplorerOpt:
                 "--pool-config",
                 str(inspect_path),
             ]
+            if self.start_time:
+                cmd += ["--start-time", self.start_time]
             # First click rebuilds, subsequent clicks skip build
             if self._inspect_built_once:
                 cmd.append("--skip-build")
@@ -1707,6 +1715,12 @@ def main() -> int:
         default=[],
         help="Plot the named axis on a log scale. Can be repeated, e.g. --log-axis fee_gamma.",
     )
+    ap.add_argument(
+        "--start-time",
+        type=str,
+        default=None,
+        help="Forward Unix timestamp or DD-MM-YYYY to shift-click inspect simulations.",
+    )
     args = ap.parse_args()
 
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
@@ -1728,6 +1742,7 @@ def main() -> int:
         price_thr_bps=args.pricethr,
         imbalance_thr_pct=args.imbalancethr,
         log_axes=set(args.log_axis),
+        start_time=args.start_time,
     )
     explorer.show()
 

@@ -129,8 +129,16 @@ void append_core_metrics(
     };
     summary["cowswap_trades"] = static_cast<uint64_t>(m.cowswap_trades);
     summary["cowswap_skipped"] = static_cast<uint64_t>(m.cowswap_skipped);
+    const size_t cowswap_processed = m.cowswap_trades + m.cowswap_skipped;
+    summary["cowswap_attraction_rate"] = (cowswap_processed > 0)
+        ? static_cast<double>(m.cowswap_trades) / static_cast<double>(cowswap_processed)
+        : -1.0;
     summary["cowswap_notional_coin0"] = static_cast<double>(m.cowswap_notional_coin0);
     summary["cowswap_lp_fee_coin0"] = static_cast<double>(m.cowswap_lp_fee_coin0);
+    const T total_swap_notional = m.notional + m.cowswap_notional_coin0;
+    summary["cowswap_vol_rate"] = (total_swap_notional > T(0))
+        ? static_cast<double>(m.cowswap_notional_coin0 / total_swap_notional)
+        : -1.0;
     summary["pool_exec_ms"] = r.elapsed_ms;
 }
 

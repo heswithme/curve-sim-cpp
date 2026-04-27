@@ -308,13 +308,14 @@ def main() -> int:
     candles_path = resolve_candles_path()
     if not candles_path.exists():
         raise FileNotFoundError(f"Candles file not found: {candles_path}")
-    start_ts = parse_start_time(args.start_time)
+    meta = cfg.get("meta") if isinstance(cfg, dict) else None
+    config_start_time = meta.get("start_time") if isinstance(meta, dict) else None
+    start_ts = parse_start_time(args.start_time or config_start_time)
 
     # Resolve cowswap trades path if --cow enabled
     cowswap_path: str | None = None
     cowswap_fee_bps: float | None = None
     if args.cow:
-        meta = cfg.get("meta") if isinstance(cfg, dict) else None
         cowswap_file = meta.get("cowswap_file") if isinstance(meta, dict) else None
         if cowswap_file:
             cpath = Path(cowswap_file)

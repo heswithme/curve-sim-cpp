@@ -16,7 +16,7 @@ from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 # -------------------- Grid Definition --------------------
 FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
 
-N_DENSE = 32
+N_DENSE = 24
 
 DEMO_GRID = {
     "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
@@ -46,11 +46,13 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
-    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
-    # "A": np.linspace(10 * 10_000, 120 * 10_000, N_DENSE),
+    "A": [int(a * 10_000) for a in np.linspace(20, 200, 24)],
+    "mid_fee": [int(1 / 10_000 * 10**10)],
+    "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(5, 100, 24)],
+    "donation_apy": [0.02 * i for i in range(11)],
+    # "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
+    # "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
     # "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
-    # "mid_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
     # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
     # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2.5, 3, 5]],
     # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
@@ -82,8 +84,9 @@ DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brlusd-1m-new.js
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
 # DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026.json")
 
-DEFAULT_COWSWAP_FILE = None
+DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brl_cowswap.csv")
 DEFAULT_COWSWAP_FEE_BPS = 0.0
+DEFAULT_START_TIME = "01-09-2024"
 
 START_TS = _first_candle_ts(DEFAULT_DATAFILE)
 INIT_PRICE = _initial_price_from_file(DEFAULT_DATAFILE)
@@ -101,13 +104,13 @@ BASE_POOL = {
     "gamma": int(1e-4 * 10**18),
     "mid_fee": int(4 / 10_000 * 1e10),
     "out_fee": int(30 / 10_000 * 1e10),
-    "fee_gamma": int(0.001 * 10**18),
+    "fee_gamma": int(0.1 * 10**18),
     "allowed_extra_profit": int(1e-10 * 10**18),
     "adjustment_step": int(0.005 * 10**18),
-    "ma_time": 89_466,
+    "ma_time": int(4 * 3600 / np.log(2)),
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,
-    "donation_apy": 0.05,
+    "donation_apy": 0.07,
     "donation_frequency": 86400,
     "donation_coins_ratio": 0.5,
 }
@@ -174,6 +177,7 @@ def main():
             "datafile": DEFAULT_DATAFILE,
             "cowswap_file": DEFAULT_COWSWAP_FILE,
             "cowswap_fee_bps": DEFAULT_COWSWAP_FEE_BPS,
+            "start_time": DEFAULT_START_TIME,
             "base_pool": strify_pool(BASE_POOL),
         },
         "pools": pools,
