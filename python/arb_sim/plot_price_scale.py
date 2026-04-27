@@ -25,7 +25,7 @@ def main():
         data = json.load(f)
 
     # Downsample to max 10k points for plotting
-    MAX_POINTS = 1_000
+    MAX_POINTS = 10_000
     n = len(data)
     if n > MAX_POINTS:
         indices = np.linspace(0, n - 1, MAX_POINTS, dtype=int)

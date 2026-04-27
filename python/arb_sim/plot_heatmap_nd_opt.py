@@ -572,6 +572,13 @@ class NDHeatmapExplorerOpt:
                 or meta.get("remote_candles")
             )
             self.config_start_time = meta.get("start_time")
+        if not self.config_start_time:
+            runs = data.get("runs") if isinstance(data, dict) else None
+            if isinstance(runs, list) and runs:
+                first_params = runs[0].get("params") if isinstance(runs[0], dict) else None
+                first_pool = first_params.get("pool") if isinstance(first_params, dict) else None
+                if isinstance(first_pool, dict):
+                    self.config_start_time = first_pool.get("start_timestamp")
 
         self.repo_root = Path(__file__).resolve().parents[2]
         self.python_dir = HERE.parent

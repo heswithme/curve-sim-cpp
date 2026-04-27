@@ -46,10 +46,10 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "A": [int(a * 10_000) for a in np.linspace(20, 200, 24)],
-    "mid_fee": [int(1 / 10_000 * 10**10)],
-    "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(5, 100, 24)],
-    "donation_apy": [0.02 * i for i in range(11)],
+    "A": [int(a * 10_000) for a in np.linspace(20, 200, 16)],
+    "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2, 4, 6, 8, 10]],
+    "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(10, 100, 16)],
+    "donation_apy": [0.02 * i for i in range(6)],
     # "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
     # "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
     # "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
@@ -88,9 +88,41 @@ DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brl_cowswap.
 DEFAULT_COWSWAP_FEE_BPS = 0.0
 DEFAULT_START_TIME = "01-09-2024"
 
-START_TS = _first_candle_ts(DEFAULT_DATAFILE)
-INIT_PRICE = _initial_price_from_file(DEFAULT_DATAFILE)
-INIT_LIQ = 10_000_000  # in coin0
+
+def _parse_start_time(value: str | None) -> int | None:
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+    return int(datetime.strptime(value, "%d-%m-%Y").replace(tzinfo=timezone.utc).timestamp())
+
+
+def _start_candle_ts_and_price(path: str, start_ts: int | None) -> tuple[int, float]:
+    if start_ts is None:
+        return _first_candle_ts(path), _initial_price_from_file(path)
+
+    with open(path, "r") as f:
+        root = json.load(f)
+    arr = root if isinstance(root, list) else root.get("candles") or root.get("data") or root.get("events")
+    if not arr:
+        raise ValueError(f"No data array found in {path}")
+
+    for row in arr:
+        if not isinstance(row, list) or len(row) < 2:
+            continue
+        ts = int(row[0])
+        if ts > 10_000_000_000:
+            ts //= 1000
+        if ts < start_ts:
+            continue
+        price = float(row[4] if len(row) >= 5 else row[1])
+        return ts, price
+    raise ValueError(f"No candle found at or after start_ts={start_ts} in {path}")
+
+
+REQUESTED_START_TS = _parse_start_time(DEFAULT_START_TIME)
+START_TS, INIT_PRICE = _start_candle_ts_and_price(DEFAULT_DATAFILE, REQUESTED_START_TS)
+INIT_LIQ = 500_000  # in coin0
 print(f"START_TS: {START_TS}")
 print(f"INIT_PRICE: {INIT_PRICE}")
 # -------------------- Base Templates --------------------
@@ -156,7 +188,7 @@ def build_grid() -> tuple[list, dict]:
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
-            pool["out_fee"] = mid if FEE_EQUALIZE else max(mid, out)
+            pool["out_fee"] = mid if FEE_EQUALIZE else out
         pools.append(
             {
                 "tag": "__".join(tag_parts),
