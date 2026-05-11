@@ -18,6 +18,33 @@ from cpp_pool.cpp_pool_runner import run_cpp_pool as run_cpp_pool_mode
 from vyper_pool.vyper_pool_runner import run_vyper_pool
 
 
+PARITY_METRICS = [
+    "balances",
+    "admin_balances",
+    "xp",
+    "D",
+    "virtual_price",
+    "xcp_profit",
+    "lp_xcp_profit",
+    "totalSupply",
+    "price_scale",
+    "price_oracle",
+    "last_prices",
+    "donation_shares",
+    "donation_shares_unlocked",
+    "donation_protection_expiry_ts",
+    "last_donation_release_ts",
+]
+
+
+def result_key(test: Dict[str, Any]) -> str:
+    pool = test.get("pool_config") or test.get("pool_name")
+    sequence = test.get("sequence")
+    if sequence:
+        return f"{pool}_{sequence}"
+    return str(pool)
+
+
 def run_cpp_benchmark(
     pool_configs_file: str, sequences_file: str, output_dir: str
 ) -> Dict:
@@ -36,7 +63,7 @@ def run_cpp_benchmark(
     # Extract states for each test
     cpp_states = {}
     for test in results["results"]:
-        key = f"{test['pool_config']}_{test['sequence']}"
+        key = result_key(test)
         if test["result"]["success"]:
             st = test["result"].get("states")
             cpp_states[key] = (
@@ -62,7 +89,7 @@ def run_cpp_double_benchmark(
 
     cpp_states = {}
     for test in results["results"]:
-        key = f"{test['pool_config']}_{test['sequence']}"
+        key = result_key(test)
         if test["result"]["success"]:
             # accept either states or final_state
             st = test["result"].get("states")
@@ -139,7 +166,7 @@ def run_vyper_benchmark(
     # Extract states for each test (Vyper runner may not include 'sequence')
     vyper_states = {}
     for test in results.get("results", []):
-        key = test.get("pool_config") or test.get("pool_name")
+        key = result_key(test)
         if not key:
             continue
         if test.get("result", {}).get("success"):
@@ -195,15 +222,8 @@ def compare_results(cpp_results: Dict, vyper_results: Dict = None) -> Dict:
             # Compare final snapshot
             c_final = c_states[-1] if isinstance(c_states, list) else c_states
             v_final = v_states[-1] if isinstance(v_states, list) else v_states
-            metric_list = [
-                "balances",
-                "D",
-                "virtual_price",
-                "totalSupply",
-                "price_scale",
-            ]
             any_diff = False
-            for m in metric_list:
+            for m in PARITY_METRICS:
                 if m in c_final and m in v_final:
                     if norm(c_final[m]) != norm(v_final[m]):
                         any_diff = True
@@ -235,7 +255,7 @@ def compare_final_precision(baseline: Dict, approx: Dict) -> Dict:
             continue
         b_final = b_states[-1] if isinstance(b_states, list) else b_states
         a_final = a_states[-1] if isinstance(a_states, list) else a_states
-        metrics = ["balances", "D", "virtual_price", "totalSupply", "price_scale"]
+        metrics = PARITY_METRICS
         diffs[key] = {}
         for m in metrics:
             if m in b_final and m in a_final:
@@ -267,7 +287,7 @@ def compute_precision_stats(
     Returns per-metric stats: count, max_abs, mean_abs, max_rel_pct, mean_rel_pct.
     For list metrics (e.g., balances), computes stats across all elements.
     """
-    metrics = ["balances", "D", "virtual_price", "totalSupply", "price_scale"]
+    metrics = PARITY_METRICS
     stats: Dict[str, Dict[str, float]] = {
         m: {
             "count": 0,

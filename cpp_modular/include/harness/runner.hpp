@@ -53,12 +53,14 @@ struct PoolResult {
 
     // Final pool state
     std::array<T, 2> balances{T(0), T(0)};
+    std::array<T, 2> admin_balances{T(0), T(0)};
     T D{0};
     T totalSupply{0};
     T price_scale{0};
     T price_oracle{0};
     T virtual_price{0};
     T xcp_profit{0};
+    T lp_xcp_profit{0};
     T vp_boosted{0};
     T donation_shares{0};
     T donation_unlocked{0};
@@ -151,11 +153,13 @@ PoolResult<T> run_single_pool(
             pool_init.mid_fee,
             pool_init.out_fee,
             pool_init.fee_gamma,
-            pool_init.allowed_extra_profit,
-            pool_init.adjustment_step,
+            pool_init.adjustment_step_min,
+            pool_init.adjustment_step_max,
             pool_init.ma_time,
             initial_price,
-            pool_init.lp_profit_fraction
+            pool_init.reserved_profit_fraction,
+            pool_init.admin_fee,
+            pool_init.policy_kind
         );
 
         // Set initial timestamp
@@ -244,12 +248,15 @@ PoolResult<T> run_single_pool(
         // Capture final pool state
         result.balances[0] = pool.balances[0];
         result.balances[1] = pool.balances[1];
+        result.admin_balances[0] = pool.admin_balances[0];
+        result.admin_balances[1] = pool.admin_balances[1];
         result.D = pool.D;
         result.totalSupply = pool.totalSupply;
         result.price_scale = pool.cached_price_scale;
         result.price_oracle = pool.cached_price_oracle;
         result.virtual_price = pool.get_virtual_price();
         result.xcp_profit = pool.xcp_profit;
+        result.lp_xcp_profit = pool.lp_xcp_profit;
         result.vp_boosted = pool.get_vp_boosted();
         result.donation_shares = pool.donation_shares;
         result.donation_unlocked = pool.donation_unlocked();

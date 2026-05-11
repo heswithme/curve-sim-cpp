@@ -76,9 +76,11 @@ SERVER_CONFIG = {
 TEMPLATE_POOL = {
     "A": 6 * 10_000,
     "gamma": 0.0001,
-    "lp_profit_fraction": 0.5,
-    "allowed_extra_profit": 1e-10,
-    "adjustment_step": 0.005,
+    "adjustment_step_min": 0.00001,
+    "adjustment_step_max": 0.005,
+    "reserved_profit_fraction": 0.5,
+    "admin_fee": 0.5,
+    "policy": {"kind": "none"},
     "ma_time": 866.0,
     "donation_apy": 0.036,
     "donation_frequency": 86400.0,
@@ -102,7 +104,7 @@ OPTIMIZABLE_VARS = {
     # "fee_gamma": log_scale(1e-6, 0.05),
     # "A_units": scalar(2.0, 40.0, request_key="A", step=0.1, scale=10_000.0),
     # "donation_apy": scalar(0.0, 0.05, step=0.001),
-    # "lp_profit_fraction": scalar(0.1, 1.0, step=0.025),
+    # "reserved_profit_fraction": scalar(0.1, 1.0, step=0.025),
 }
 
 LOSS_CONFIG = {
@@ -153,15 +155,15 @@ def build_template_config(candles_path: Path) -> dict[str, Any]:
         "initial_liquidity": initial_liquidity,
         "A": float(TEMPLATE_POOL["A"]),
         "gamma": float(TEMPLATE_POOL["gamma"]),
-        "lp_profit_fraction": float(TEMPLATE_POOL["lp_profit_fraction"]),
         "mid_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["mid_fee_bps"])),
         "out_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["out_fee_bps"])),
         "fee_gamma": scale_1e18(float(TEMPLATE_POOL["fee_gamma"])),
-        "allowed_extra_profit": scale_1e18(
-            float(TEMPLATE_POOL["allowed_extra_profit"])
-        ),
-        "adjustment_step": scale_1e18(float(TEMPLATE_POOL["adjustment_step"])),
+        "adjustment_step_min": scale_1e18(float(TEMPLATE_POOL["adjustment_step_min"])),
+        "adjustment_step_max": scale_1e18(float(TEMPLATE_POOL["adjustment_step_max"])),
         "ma_time": float(TEMPLATE_POOL["ma_time"]),
+        "reserved_profit_fraction": fee_bps_to_1e10(float(TEMPLATE_POOL["reserved_profit_fraction"]) * 10_000.0),
+        "admin_fee": fee_bps_to_1e10(float(TEMPLATE_POOL["admin_fee"]) * 10_000.0),
+        "policy": TEMPLATE_POOL["policy"],
         "initial_price": scale_1e18(initial_price),
         "start_timestamp": int(start_ts),
         "donation_apy": float(TEMPLATE_POOL["donation_apy"]),
@@ -195,22 +197,30 @@ def build_pool_config_entry(
         pool["A"] = str(float(request_params["A"]))
     if "gamma" in request_params:
         pool["gamma"] = str(float(request_params["gamma"]))
-    if "lp_profit_fraction" in request_params:
-        pool["lp_profit_fraction"] = str(float(request_params["lp_profit_fraction"]))
     if "mid_fee_bps" in request_params:
         pool["mid_fee"] = str(fee_bps_to_1e10(float(request_params["mid_fee_bps"])))
     if "out_fee_bps" in request_params:
         pool["out_fee"] = str(fee_bps_to_1e10(float(request_params["out_fee_bps"])))
     if "fee_gamma" in request_params:
         pool["fee_gamma"] = str(scale_1e18(float(request_params["fee_gamma"])))
-    if "allowed_extra_profit" in request_params:
-        pool["allowed_extra_profit"] = str(
-            scale_1e18(float(request_params["allowed_extra_profit"]))
+    if "adjustment_step_min" in request_params:
+        pool["adjustment_step_min"] = str(
+            scale_1e18(float(request_params["adjustment_step_min"]))
         )
-    if "adjustment_step" in request_params:
-        pool["adjustment_step"] = str(
-            scale_1e18(float(request_params["adjustment_step"]))
+    if "adjustment_step_max" in request_params:
+        pool["adjustment_step_max"] = str(
+            scale_1e18(float(request_params["adjustment_step_max"]))
         )
+    if "reserved_profit_fraction" in request_params:
+        pool["reserved_profit_fraction"] = str(
+            fee_bps_to_1e10(float(request_params["reserved_profit_fraction"]) * 10_000.0)
+        )
+    if "admin_fee" in request_params:
+        pool["admin_fee"] = str(
+            fee_bps_to_1e10(float(request_params["admin_fee"]) * 10_000.0)
+        )
+    if "policy" in request_params:
+        pool["policy"] = request_params["policy"]
     if "ma_time" in request_params:
         pool["ma_time"] = str(float(request_params["ma_time"]))
     if "donation_apy" in request_params:
@@ -673,7 +683,7 @@ PARAM_LABELS = {
     "spread_bps": "spread",
     "fee_gamma": "gamma",
     "A_units": "A",
-    "lp_profit_fraction": "lpf",
+    "reserved_profit_fraction": "rpf",
 }
 
 
@@ -686,7 +696,7 @@ def format_value(key: str, value: float) -> str:
         return f"{value:.3e}"
     if key == "A_units":
         return f"{value:.1f}"
-    if key == "lp_profit_fraction":
+    if key == "reserved_profit_fraction":
         return f"{value:.2f}"
     if key.endswith("_apy") or key.endswith("_rate"):
         return f"{value:.4f}"

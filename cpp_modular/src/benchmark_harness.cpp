@@ -18,8 +18,10 @@ namespace json = boost::json;
 namespace {
 
 using arb::pools::twocrypto_fx::MathOps;
+using arb::pools::twocrypto_fx::PolicyKind;
 using arb::pools::twocrypto_fx::PoolTraits;
 using arb::pools::twocrypto_fx::TwoCryptoPool;
+using arb::pools::twocrypto_fx::policy_kind_from_string;
 using arb::pools::twocrypto_fx::uint256;
 
 // Import common utilities from json_utils.hpp
@@ -95,6 +97,11 @@ json::object snapshot_pool(const TwoCryptoPool<T>& pool) {
     o["D"] = to_wei_string(pool.D);
     o["virtual_price"] = to_wei_string(pool.get_virtual_price());
     o["xcp_profit"] = to_wei_string(pool.xcp_profit);
+    o["lp_xcp_profit"] = to_wei_string(pool.lp_xcp_profit);
+    o["admin_balances"] = json::array{
+        to_wei_string(pool.admin_balances[0]),
+        to_wei_string(pool.admin_balances[1])
+    };
     o["price_scale"] = to_wei_string(pool.cached_price_scale);
     o["price_oracle"] = to_wei_string(pool.cached_price_oracle);
     o["last_prices"] = to_wei_string(pool.last_prices);
@@ -121,10 +128,32 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
     const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
     const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
 
-    const T allowed_extra_profit = parse_wad<T>(get_str(p, "allowed_extra_profit"));
-    const T adjustment_step = parse_wad<T>(get_str(p, "adjustment_step"));
+    if (p.contains("allowed_extra_profit") || p.contains("adjustment_step") || p.contains("lp_profit_fraction")) {
+        throw std::runtime_error("legacy pool config fields are not supported");
+    }
+
+    const T adjustment_step_min = parse_wad<T>(get_str(p, "adjustment_step_min"));
+    const T adjustment_step_max = parse_wad<T>(get_str(p, "adjustment_step_max"));
 
     const T ma_time = parse_raw<T>(get_str(p, "ma_time"));
+    const T reserved_profit_fraction = p.contains("reserved_profit_fraction")
+        ? parse_fee<T>(get_str(p, "reserved_profit_fraction"))
+        : PoolTraits<T>::FEE_PRECISION() / 2;
+    const T admin_fee = p.contains("admin_fee")
+        ? parse_fee<T>(get_str(p, "admin_fee"))
+        : PoolTraits<T>::FEE_PRECISION() / 2;
+    PolicyKind policy_kind = PolicyKind::None;
+    if (auto it = p.find("policy"); it != p.end()) {
+        const auto& v = it->value();
+        if (v.is_string()) {
+            policy_kind = policy_kind_from_string(std::string(v.as_string().c_str()));
+        } else if (v.is_object()) {
+            const auto& obj = v.as_object();
+            if (auto* k = obj.if_contains("kind"); k && k->is_string()) {
+                policy_kind = policy_kind_from_string(std::string(k->as_string().c_str()));
+            }
+        }
+    }
     const T initial_price = parse_wad<T>(get_str(p, "initial_price"));
 
     TwoCryptoPool<T> pool(
@@ -134,10 +163,13 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
         mid_fee,
         out_fee,
         fee_gamma,
-        allowed_extra_profit,
-        adjustment_step,
+        adjustment_step_min,
+        adjustment_step_max,
         ma_time,
-        initial_price
+        initial_price,
+        reserved_profit_fraction,
+        admin_fee,
+        policy_kind
     );
 
     const uint64_t start_ts = get_u64_opt(sequence, "start_timestamp", 0);
@@ -215,6 +247,20 @@ json::object run_one_pool(const json::object& pool_obj, const json::object& sequ
                 };
                 const bool donation = act.if_contains("donation") ? act.at("donation").as_bool() : false;
                 (void)pool.add_liquidity(amounts, PoolTraits<T>::ZERO(), donation);
+            } else if (type == "remove_liquidity") {
+                const T amount = parse_wad<T>(get_str(act, "amount"));
+                std::array<T, 2> min_amounts{PoolTraits<T>::ZERO(), PoolTraits<T>::ZERO()};
+                if (auto* mins = act.if_contains("min_amounts")) {
+                    const auto& arr = mins->as_array();
+                    if (arr.size() < 2 || !arr[0].is_string() || !arr[1].is_string()) {
+                        throw std::runtime_error("remove_liquidity.min_amounts must be [str,str]");
+                    }
+                    min_amounts = {
+                        parse_wad<T>(std::string(arr[0].as_string().c_str())),
+                        parse_wad<T>(std::string(arr[1].as_string().c_str())),
+                    };
+                }
+                (void)pool.remove_liquidity(amount, min_amounts);
             } else if (type == "time_travel") {
                 if (act.if_contains("seconds")) {
                     const int64_t secs = act.at("seconds").as_int64();

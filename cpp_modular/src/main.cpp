@@ -51,8 +51,8 @@ void test_pool(T cex_price = T(-1)) {
     T mid_fee = T(0.0001);
     T out_fee = T(0.0006);
     T fee_gamma = T(0.00023);
-    T allowed_extra_profit = T(1e-8);
-    T adjustment_step = T(0.0001);
+    T adjustment_step_min = T(0.00001);
+    T adjustment_step_max = T(0.0001);
     T ma_time = T(600.0);
     T initial_price = T(1.08);
 
@@ -60,7 +60,7 @@ void test_pool(T cex_price = T(-1)) {
         precisions,
         A, gamma,
         mid_fee, out_fee, fee_gamma,
-        allowed_extra_profit, adjustment_step, ma_time,
+        adjustment_step_min, adjustment_step_max, ma_time,
         initial_price
     );
 

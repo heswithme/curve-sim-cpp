@@ -129,6 +129,8 @@ def strify_pool(pool: dict) -> dict:
     for k, v in pool.items():
         if isinstance(v, list):
             out[k] = [str(int(x)) for x in v]
+        elif isinstance(v, dict):
+            out[k] = v
         elif isinstance(v, float):
             out[k] = str(v)
         else:

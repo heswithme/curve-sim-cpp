@@ -61,7 +61,7 @@ MANUAL_GRID = {
     # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
     # "fee_gamma": [int(a * 10**18) for a in [0.0003, 0.003, 0.03, 0.3]],  # 0.0003-0.3
     # "fee_gamma": [int(a * 10**18) for a in [4e-3]],
-    # "adjustment_step": [int(a * 10**18) for a in [0.001, 0.003, 0.005]],
+    # "adjustment_step_max": [int(a * 10**18) for a in [0.001, 0.003, 0.005]],
 }
 # MANUAL_GRID = DEMO_GRID
 # -------------------- Data Inputs --------------------
@@ -136,9 +136,12 @@ BASE_POOL = {
     "mid_fee": int(4 / 10_000 * 1e10),
     "out_fee": int(30 / 10_000 * 1e10),
     "fee_gamma": int(0.1 * 10**18),
-    "allowed_extra_profit": int(1e-10 * 10**18),
-    "adjustment_step": int(0.005 * 10**18),
+    "adjustment_step_min": int(0.00001 * 10**18),
+    "adjustment_step_max": int(0.005 * 10**18),
     "ma_time": int(4 * 3600 / np.log(2)),
+    "reserved_profit_fraction": int(0.5 * 10**10),
+    "admin_fee": int(0.5 * 10**10),
+    "policy": {"kind": "none"},
     "initial_price": int(INIT_PRICE * 1e18),
     "start_timestamp": START_TS,
     "donation_apy": 0.07,

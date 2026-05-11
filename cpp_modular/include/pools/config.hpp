@@ -12,6 +12,7 @@
 
 #include "core/json_utils.hpp"
 #include "trading/costs.hpp"
+#include "pools/twocrypto_fx/twocrypto.hpp"
 
 namespace arb {
 namespace pools {
@@ -25,10 +26,12 @@ struct PoolInit {
     T mid_fee{T(3e-4)};
     T out_fee{T(5e-4)};
     T fee_gamma{T(0.23)};
-    T lp_profit_fraction{T(0.5)};
-    T allowed_extra_profit{T(1e-10)};
-    T adjustment_step{T(1e-3)};
+    T adjustment_step_min{T(1e-5)};
+    T adjustment_step_max{T(1e-3)};
     T ma_time{T(600.0)};
+    T reserved_profit_fraction{T(0.5)};
+    T admin_fee{T(0.5)};
+    twocrypto_fx::PolicyKind policy_kind{twocrypto_fx::PolicyKind::None};
     T initial_price{T(1.0)};
     std::array<T, 2> initial_liq{T(1e6), T(1e6)};
     uint64_t start_ts{0};
@@ -87,13 +90,32 @@ void parse_pool_entry(
     if (auto* v = pool.if_contains("mid_fee")) out_pool.mid_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("out_fee")) out_pool.out_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("fee_gamma")) out_pool.fee_gamma = parse_scaled_1e18<T>(*v);
-    if (auto* v = pool.if_contains("lp_profit_fraction")) {
-        T fraction = parse_plain_real<T>(*v);
-        out_pool.lp_profit_fraction = std::clamp<T>(fraction, T(0), T(1));
+    if (pool.if_contains("lp_profit_fraction") || pool.if_contains("allowed_extra_profit") || pool.if_contains("adjustment_step")) {
+        throw std::runtime_error("legacy pool config fields are not supported; use reserved_profit_fraction, admin_fee, adjustment_step_min, adjustment_step_max, and policy");
     }
-    if (auto* v = pool.if_contains("allowed_extra_profit")) out_pool.allowed_extra_profit = parse_scaled_1e18<T>(*v);
-    if (auto* v = pool.if_contains("adjustment_step")) out_pool.adjustment_step = parse_scaled_1e18<T>(*v);
+    if (auto* v = pool.if_contains("adjustment_step_min")) out_pool.adjustment_step_min = parse_scaled_1e18<T>(*v);
+    if (auto* v = pool.if_contains("adjustment_step_max")) out_pool.adjustment_step_max = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("ma_time")) out_pool.ma_time = parse_plain_real<T>(*v);
+    if (auto* v = pool.if_contains("reserved_profit_fraction")) {
+        out_pool.reserved_profit_fraction = std::clamp<T>(parse_fee_1e10<T>(*v), T(0), twocrypto_fx::PoolTraits<T>::FEE_PRECISION());
+    }
+    if (auto* v = pool.if_contains("admin_fee")) {
+        out_pool.admin_fee = std::clamp<T>(parse_fee_1e10<T>(*v), T(0), twocrypto_fx::PoolTraits<T>::FEE_PRECISION());
+    }
+    if (auto* v = pool.if_contains("policy")) {
+        if (v->is_string()) {
+            out_pool.policy_kind = twocrypto_fx::policy_kind_from_string(std::string(v->as_string().c_str()));
+        } else if (v->is_object()) {
+            const auto& po = v->as_object();
+            std::string kind = "none";
+            if (auto* k = po.if_contains("kind")) {
+                if (k->is_string()) kind = std::string(k->as_string().c_str());
+            }
+            out_pool.policy_kind = twocrypto_fx::policy_kind_from_string(kind);
+        } else {
+            throw std::runtime_error("pool policy must be a string or object");
+        }
+    }
     if (auto* v = pool.if_contains("initial_price")) out_pool.initial_price = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("start_timestamp")) {
         out_pool.start_ts = static_cast<uint64_t>(parse_plain_real<T>(*v));

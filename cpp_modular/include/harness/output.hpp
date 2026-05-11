@@ -23,6 +23,7 @@ template <typename T>
 json::object pool_state_json(const PoolResult<T>& r) {
     json::object o;
     o["balances"] = json::array{to_str_1e18(r.balances[0]), to_str_1e18(r.balances[1])};
+    o["admin_balances"] = json::array{to_str_1e18(r.admin_balances[0]), to_str_1e18(r.admin_balances[1])};
     // xp = balances scaled with price_scale (matches old harness)
     o["xp"] = json::array{
         to_str_1e18(r.balances[0]),  // precisions[0] = 1 for floating types
@@ -31,6 +32,7 @@ json::object pool_state_json(const PoolResult<T>& r) {
     o["D"] = to_str_1e18(r.D);
     o["virtual_price"] = to_str_1e18(r.virtual_price);
     o["xcp_profit"] = to_str_1e18(r.xcp_profit);
+    o["lp_xcp_profit"] = to_str_1e18(r.lp_xcp_profit);
     o["price_scale"] = to_str_1e18(r.price_scale);
     o["price_oracle"] = to_str_1e18(r.price_oracle);
     o["last_prices"] = to_str_1e18(r.last_prices);
