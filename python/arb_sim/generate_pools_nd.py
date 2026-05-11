@@ -14,7 +14,7 @@ import numpy as np
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
 # -------------------- Grid Definition --------------------
-FEE_EQUALIZE = False  # If true, force out_fee == mid_fee
+FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
 
 N_DENSE = 24
 
@@ -46,9 +46,8 @@ ZOOM_FX_GRID = {
 }
 
 MANUAL_GRID = {
-    "A": [int(a * 10_000) for a in np.linspace(20, 200, 16)],
-    "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2, 4, 6, 8, 10]],
-    "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(10, 100, 16)],
+    "A": [int(a * 10_000) for a in np.linspace(10, 200, N_DENSE)],
+    "mid_fee": [int(a / 10_000 * 10**10) for a in np.linspace(1, 60, N_DENSE)],
     "donation_apy": [0.02 * i for i in range(6)],
     # "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
     # "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
