@@ -35,6 +35,7 @@ PARITY_METRICS = [
     "donation_protection_expiry_ts",
     "last_donation_release_ts",
 ]
+POLICY_KINDS = ("none", "twocrypto_policy", "zero_stub", "oracle_x2")
 
 
 def result_key(test: Dict[str, Any]) -> str:
@@ -502,6 +503,12 @@ def main():
         default=0,
         help="Use only the first N actions from the sequence (0 = no limit)",
     )
+    parser.add_argument(
+        "--policy",
+        choices=POLICY_KINDS,
+        default=None,
+        help="Override policy kind for this benchmark run without regenerating data",
+    )
     args = parser.parse_args()
 
     # Paths
@@ -529,6 +536,9 @@ def main():
 
     with open(pool_configs_path, "r") as f:
         pools = json.load(f)["pools"]
+    if args.policy is not None:
+        for pool in pools:
+            pool["policy"] = {"kind": args.policy}
     with open(sequences_path, "r") as f:
         sequences = json.load(f)["sequences"]
     if not sequences:
@@ -554,7 +564,8 @@ def main():
         actions_used = original_count
 
     # Save a copy of inputs in the run dir
-    _write_json(os.path.join(run_dir, "inputs_pools.json"), {"pools": pools})
+    pool_configs_for_run = os.path.join(run_dir, "inputs_pools.json")
+    _write_json(pool_configs_for_run, {"pools": pools})
     # Always save the full/original sequence for reproducibility
     _write_json(
         os.path.join(run_dir, "inputs_sequences_full.json"), {"sequences": [sequence]}
@@ -568,6 +579,8 @@ def main():
         )
 
     print(f"Testing {len(pools)} pools")
+    if args.policy is not None:
+        print(f"Policy override: {args.policy}")
     if actions_used:
         if actions_used != original_count:
             print(
@@ -596,16 +609,16 @@ def main():
             os.environ["SAVE_LAST_ONLY"] = "1"
 
         # Run each side once over all pools
-        cpp_info = run_cpp_benchmark(pool_configs_path, sequences_for_run, run_dir)
+        cpp_info = run_cpp_benchmark(pool_configs_for_run, sequences_for_run, run_dir)
         cpp_time = cpp_info["time"]
 
         cppf_info = run_cpp_double_benchmark(
-            pool_configs_path, sequences_for_run, run_dir
+            pool_configs_for_run, sequences_for_run, run_dir
         )
         cppf_time = cppf_info["time"]
 
         vy_info = run_vyper_benchmark(
-            pool_configs_path, sequences_for_run, run_dir, n_py=args.n_py
+            pool_configs_for_run, sequences_for_run, run_dir, n_py=args.n_py
         )
         vy_time = vy_info["time"]
     finally:

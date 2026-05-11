@@ -4,15 +4,16 @@ Generate benchmark pool configs and one mixed action sequence.
 
 Time travel actions use absolute timestamps ("timestamp").
 """
+
 from __future__ import annotations
 
 import argparse
-from collections import Counter
-from dataclasses import dataclass
 import json
 import math
 import os
 import random
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
 Action = dict[str, Any]
@@ -29,7 +30,7 @@ MINIMUM_LIQUIDITY = 10**4
 INITIAL_POOL_TOKENS = (3_000, 10_000)
 INITIAL_LIQUIDITY_JITTER_BPS = (9_500, 10_500)
 
-SWAP_INITIAL_BPS = (10, 99)  # 0.10% to 0.99% of initial input balance
+SWAP_INITIAL_BPS = (10, 20)  # 0.10% to 0.99% of initial input balance
 SWAP_OUTPUT_CAP_BPS = 500  # Avoid draining scarce output balances in long runs.
 SWAP_DIRECTION_BATCH = 10
 
@@ -55,6 +56,7 @@ RANDOM_ACTION_MIX = (
     (0.85, "donation"),
     (1.00, "remove_liquidity"),
 )
+POLICY_KINDS = ("none", "twocrypto_policy", "zero_stub", "oracle_x2")
 
 
 @dataclass
@@ -103,7 +105,10 @@ class SequenceState:
     def can_accept_donation(self, minted_estimate: int) -> bool:
         new_total = self.total_lp + minted_estimate
         new_donation = self.donation_lp + minted_estimate
-        return new_total > 0 and new_donation * WAD // new_total <= DONATION_CAP_RATIO_ESTIMATE
+        return (
+            new_total > 0
+            and new_donation * WAD // new_total <= DONATION_CAP_RATIO_ESTIMATE
+        )
 
     def record_donation(self, amounts: tuple[int, int], minted_estimate: int) -> None:
         self.record_deposit(amounts)
@@ -164,7 +169,10 @@ def jitter_bps(amount: int, bounds: tuple[int, int]) -> int:
     return amount * random.randint(bounds[0], bounds[1]) // BPS
 
 
-def generate_pool_configs(num_pools: int = 3) -> list[PoolConfig]:
+def generate_pool_configs(
+    num_pools: int = 3,
+    policy_kind: str = "none",
+) -> list[PoolConfig]:
     pools: list[PoolConfig] = []
     base_liquidity = random.randint(*INITIAL_POOL_TOKENS) * WAD
 
@@ -185,7 +193,7 @@ def generate_pool_configs(num_pools: int = 3) -> list[PoolConfig]:
                 ),
                 "reserved_profit_fraction": str(FEE_SCALE // 2),
                 "admin_fee": str(FEE_SCALE // 2),
-                "policy": {"kind": "none"},
+                "policy": {"kind": policy_kind},
                 "ma_time": str(1 + int(random.randint(60, 3_600) / math.log(2))),
                 "initial_price": str(WAD),
                 "initial_liquidity": [
@@ -354,6 +362,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output directory (default: python/benchmark_pool/data)",
     )
+    parser.add_argument(
+        "--policy",
+        choices=POLICY_KINDS,
+        default="none",
+        help="External policy mode written into generated pool configs",
+    )
     return parser.parse_args()
 
 
@@ -366,7 +380,7 @@ def main() -> int:
     os.makedirs(data_dir, exist_ok=True)
 
     print("Generating pool configurations...")
-    pools = generate_pool_configs(num_pools=args.pools)
+    pools = generate_pool_configs(num_pools=args.pools, policy_kind=args.policy)
     write_json(os.path.join(data_dir, "pools.json"), {"pools": pools})
     print(f"✓ Generated {len(pools)} pool configurations")
 

@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include "policy.hpp"
 #include "stableswap_math.hpp"
 
 namespace arb {
@@ -79,37 +80,6 @@ struct PoolTraits<long double> {
     static T min(const T& a, const T& b) { return a < b ? a : b; }
 };
 
-enum class PolicyKind {
-    None,
-    TwocryptoPolicy,
-    ZeroStub,
-};
-
-inline PolicyKind policy_kind_from_string(const std::string& kind) {
-    if (kind.empty() || kind == "none") {
-        return PolicyKind::None;
-    }
-    if (kind == "twocrypto_policy") {
-        return PolicyKind::TwocryptoPolicy;
-    }
-    if (kind == "zero_stub") {
-        return PolicyKind::ZeroStub;
-    }
-    throw std::invalid_argument("unsupported policy kind: " + kind);
-}
-
-template <typename T>
-struct PolicyState {
-    std::array<T, 2> xp{PoolTraits<T>::ZERO(), PoolTraits<T>::ZERO()};
-    T price_scale{PoolTraits<T>::ZERO()};
-    T price_oracle{PoolTraits<T>::ZERO()};
-    T last_prices{PoolTraits<T>::ZERO()};
-    T virtual_price{PoolTraits<T>::ZERO()};
-    T xcp_profit{PoolTraits<T>::ZERO()};
-    T D{PoolTraits<T>::ZERO()};
-    uint64_t ts{0};
-};
-
 template <typename T>
 class TwoCryptoPool {
 public:
@@ -139,8 +109,7 @@ public:
     T ma_time = Traits::ONE();
     T reserved_profit_fraction = Traits::FEE_PRECISION() / 2;
     T admin_fee = Traits::FEE_PRECISION() / 2;
-    PolicyKind policy_kind = PolicyKind::None;
-    PolicyState<T> policy_state{};
+    PolicyModel<T> policy{};
 
     // Profit tracking
     T xcp_profit = Traits::PRECISION();
@@ -192,7 +161,15 @@ public:
         ma_time = _ma_time;
         reserved_profit_fraction = _reserved_profit_fraction;
         admin_fee = _admin_fee;
-        policy_kind = _policy_kind;
+        policy = PolicyModel<T>(_policy_kind);
+        policy.configure_pool(
+            mid_fee,
+            out_fee,
+            fee_gamma,
+            ma_time,
+            Traits::PRECISION(),
+            Traits::FEE_PRECISION()
+        );
 
         cached_price_scale = initial_price;
         cached_price_oracle = initial_price;
@@ -247,65 +224,17 @@ private:
 
     // _fee: dynamic fee between mid_fee and out_fee based on balance skew
     T _fee(const std::array<T, 2>& xp) const {
-        if (policy_kind == PolicyKind::ZeroStub) {
-            return _clamp_fee(_native_fee(xp));
+        T native_fee = _native_fee(xp);
+        T policy_fee = policy.get_fee(xp);
+        if (policy_fee != Traits::ZERO()) {
+            return _clamp_fee(policy_fee);
         }
-        if (policy_kind == PolicyKind::TwocryptoPolicy) {
-            T policy_fee = _native_fee(xp);
-            if (policy_fee != Traits::ZERO()) {
-                return _clamp_fee(policy_fee);
-            }
-        }
-        return _clamp_fee(_native_fee(xp));
+        return _clamp_fee(native_fee);
     }
 
-    T _policy_price_target(uint64_t ts) const {
-        if (policy_kind == PolicyKind::None || policy_kind == PolicyKind::ZeroStub) {
-            return Traits::ZERO();
-        }
-        const auto& state = policy_state;
-        if (state.ts == 0) {
-            return Traits::ZERO();
-        }
-
-        T price_scale = state.price_scale;
-        T price_oracle = state.price_oracle;
-        if (price_scale == Traits::ZERO()) {
-            return Traits::ZERO();
-        }
-
-        if (state.ts < ts) {
-            T dt = T(ts - state.ts);
-            if constexpr (std::is_same_v<T, uint256>) {
-                auto neg = int256(
-                    -(
-                        int256(dt) *
-                        int256(Traits::PRECISION()) /
-                        int256(ma_time)
-                    )
-                );
-                T alpha = MathOps<T>::wad_exp(neg);
-                T ema_input = state.last_prices;
-                T lower = price_scale / 2;
-                if (ema_input < lower) ema_input = lower;
-                T upper = price_scale * 2;
-                if (ema_input > upper) ema_input = upper;
-                price_oracle = (
-                    ema_input * (Traits::PRECISION() - alpha) + price_oracle * alpha
-                ) / Traits::PRECISION();
-            } else {
-                auto alpha = std::exp(
-                    - static_cast<double>(dt) / static_cast<double>(ma_time)
-                );
-                T ema_input = state.last_prices;
-                T lower = price_scale / 2;
-                if (ema_input < lower) ema_input = lower;
-                T upper = price_scale * 2;
-                if (ema_input > upper) ema_input = upper;
-                price_oracle = ema_input * (T(1) - T(alpha)) + price_oracle * T(alpha);
-            }
-        }
-        return price_oracle;
+    T _policy_price_target(uint64_t ts, const T& current_price_oracle) {
+        policy.prepare_price_scale_call(ts, current_price_oracle);
+        return policy.get_price_scale();
     }
 
     void _update_policy_state(
@@ -317,14 +246,16 @@ private:
         const T& profit,
         const T& d_value
     ) {
-        policy_state.xp = xp;
-        policy_state.price_scale = price_scale;
-        policy_state.price_oracle = price_oracle;
-        policy_state.last_prices = prices;
-        policy_state.virtual_price = vp;
-        policy_state.xcp_profit = profit;
-        policy_state.D = d_value;
-        policy_state.ts = last_timestamp;
+        policy.update_state(
+            xp,
+            price_scale,
+            price_oracle,
+            prices,
+            vp,
+            profit,
+            d_value,
+            last_timestamp
+        );
     }
 
     T _apply_admin_d_token_fee(
@@ -623,6 +554,19 @@ public:
             D = Traits::ZERO();
         }
 
+        if (amount > Traits::ZERO()) {
+            T price_scale = cached_price_scale;
+            _update_policy_state(
+                _xp(balances, price_scale),
+                price_scale,
+                cached_price_oracle,
+                last_prices,
+                virtual_price,
+                xcp_profit,
+                D
+            );
+        }
+
         return withdrawn;
     }
 
@@ -820,7 +764,7 @@ public:
         // Price adjustment path
         if ((vp_boosted > lp_xcp_profit) && (last_ts < block_timestamp)) {
             T target_price = price_oracle;
-            T p_policy = _policy_price_target(block_timestamp);
+            T p_policy = _policy_price_target(block_timestamp, price_oracle);
             if (p_policy > Traits::ZERO()) {
                 T policy_bound = price_oracle / 5;
                 T lo = price_oracle - policy_bound;

@@ -8,6 +8,12 @@ import os
 import sys
 from typing import Dict, List, Any, Tuple
 import boa
+from boa import interpret
+
+if cache_dir := os.getenv("BOA_CACHE_DIR"):
+    interpret.set_cache_dir(cache_dir)
+elif os.getenv("BOA_DISABLE_CACHE") == "1":
+    interpret.disable_cache()
 
 
 class VyperPoolRunner:
@@ -117,6 +123,11 @@ class VyperPoolRunner:
                 self.contracts_path, "tests/mocks/ZeroStubPolicy.vy"
             )
             return boa.load(policy_path)
+        if kind in ("oracle_x2", "price_oracle_x2", "oracle_x2_sequential_fee"):
+            policy_path = os.path.join(
+                self.contracts_path, "tests/mocks/OracleX2SequentialFeePolicy.vy"
+            )
+            return boa.load(policy_path, pool.address)
         raise ValueError(f"unsupported policy kind: {kind}")
 
     def configure_pool(self, pool: Any, params: Dict[str, Any]) -> None:
@@ -203,7 +214,26 @@ class VyperPoolRunner:
 
         # Compute unlocked donation shares directly via internal function
         # This mirrors _donation_shares(True) exactly
-        donation_shares_unlocked = pool.internal._donation_shares()
+        timestamp = boa.env.timestamp
+        if donation_shares == 0:
+            donation_shares_unlocked = 0
+        else:
+            elapsed = timestamp - last_donation_release_ts
+            donation_shares_unlocked = min(
+                donation_shares,
+                donation_shares * elapsed // donation_duration,
+            )
+            protection_factor = 0
+            if donation_protection_expiry_ts > timestamp:
+                protection_factor = min(
+                    (donation_protection_expiry_ts - timestamp)
+                    * 10**18
+                    // donation_protection_period,
+                    10**18,
+                )
+            donation_shares_unlocked = (
+                donation_shares_unlocked * (10**18 - protection_factor) // 10**18
+            )
 
         return {
             "balances": [str(b) for b in balances],
