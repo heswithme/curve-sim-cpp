@@ -51,7 +51,7 @@ void test_pool(T cex_price = T(-1)) {
     T mid_fee = T(0.0001);
     T out_fee = T(0.0006);
     T fee_gamma = T(0.00023);
-    T adjustment_step_min = T(0.00001);
+    T adjustment_step_min = T(0.000001);
     T adjustment_step_max = T(0.0001);
     T ma_time = T(600.0);
     T initial_price = T(1.08);
@@ -96,10 +96,12 @@ void test_pool(T cex_price = T(-1)) {
     // Arbitrage decision
     if (cex_price > T(0)) {
         arb::trading::Costs<T> costs{};
+        const T fee_cex = costs.arb_fee_bps / T(10000);
         auto dec = arb::trading::decide_trade(
             pool, cex_price, costs,
             std::numeric_limits<T>::infinity(),
-            T(0.001), T(0.1)
+            T(0.001), T(0.1),
+            T(1) - fee_cex, T(1) + fee_cex
         );
         std::cout << "\nArb decision:\n";
         std::cout << "  do_trade = " << dec.do_trade << "\n";
@@ -154,8 +156,10 @@ int main(int argc, char* argv[]) {
             std::vector<arb::Candle>().swap(candles);
         }
 
-        std::cout << "loaded " << n_candles << " candles -> "
-                  << events.size() << " events from " << args.candles_path << "\n" << std::flush;
+        if (!args.quiet) {
+            std::cout << "loaded " << n_candles << " candles -> "
+                      << events.size() << " events from " << args.candles_path << "\n" << std::flush;
+        }
         
         auto t_read1 = std::chrono::high_resolution_clock::now();
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
@@ -166,11 +170,13 @@ int main(int argc, char* argv[]) {
         if (pool_configs.empty()) {
             throw std::runtime_error("No pool configurations found in " + args.pools_path);
         }
-        std::cout << "loaded " << pool_configs.size() << " pools";
-        if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
-            std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+        if (!args.quiet) {
+            std::cout << "loaded " << pool_configs.size() << " pools";
+            if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
+                std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+            }
+            std::cout << "\n" << std::flush;
         }
-        std::cout << "\n" << std::flush;
         
         // Build run configuration from CLI args
         arb::harness::RunConfig<RealT> run_cfg{};
@@ -200,7 +206,7 @@ int main(int argc, char* argv[]) {
         auto results = arb::harness::run_pools_parallel(
             pool_configs, events, run_cfg,
             args.n_threads,
-            true,  // verbose - prints progress per pool
+            !args.quiet,
             candles_ptr
         );
         
@@ -212,9 +218,18 @@ int main(int argc, char* argv[]) {
             bool ok = arb::harness::write_results_json(
                 args.out_path,
                 results,
+                n_candles,
                 events.size(),
                 args.candles_path,
+                args.pools_path,
+                TYPE_NAME,
                 args.n_threads,
+                run_cfg,
+                args.max_candles,
+                args.candle_filter_pct,
+                args.pool_start,
+                args.pool_end,
+                args.quiet,
                 candles_read_ms,
                 exec_ms
             );

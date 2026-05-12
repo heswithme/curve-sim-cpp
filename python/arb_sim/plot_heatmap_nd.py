@@ -11,6 +11,7 @@ Usage:
   uv run python arb_sim/plot_heatmap_nd.py
   uv run python arb_sim/plot_heatmap_nd.py --metrics apy_net,apy_corr,tw_real_slippage
   uv run python arb_sim/plot_heatmap_nd.py --arb path/to/arb_run.json --ncol 4
+  uv run python arb_sim/plot_heatmap_nd.py --arb path/to/arb_run.json --out heatmap_nd.png
 """
 
 from __future__ import annotations
@@ -18,20 +19,25 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
-# Force interactive backend
 import matplotlib
 
-for backend in ["macosx", "TkAgg", "Qt5Agg"]:
-    try:
-        matplotlib.use(backend)
-        break
-    except Exception:
-        continue
+HAS_OUT_ARG = any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:])
+
+if HAS_OUT_ARG:
+    matplotlib.use("Agg")
+elif not os.environ.get("MPLBACKEND"):
+    for backend in ["macosx", "TkAgg", "Qt5Agg"]:
+        try:
+            matplotlib.use(backend)
+            break
+        except Exception:
+            continue
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons
@@ -212,6 +218,7 @@ def _metric_scale_flags(m: str) -> Tuple[bool, bool]:
         or "geom_mean" in mlow
         or "rel_price_diff" in mlow
         or "tw_avg_pool_fee" in mlow
+        or "pool_fee" in mlow
     )
     return scale_1e18, scale_percent
 
@@ -221,6 +228,8 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
+    if "fee_bps" in key:
+        return 1.0, " (bps)"
     if "fee" in key and "gamma" not in key:
         return 0.0, " (bps)"
     if "ma_time" in key:
@@ -239,6 +248,9 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
     if suffix and suffix not in display_name:
         display_name = f"{display_name}{suffix}"
 
+    if "fee_bps" in key:
+        labels = [f"{v:.2f}" for v in values]
+        return labels, display_name
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         labels = [f"{(v / 1e10 * 1e4):.2f}" for v in values]
         return labels, f"{name} (bps)"
@@ -259,6 +271,8 @@ def _format_slider_value(name: str, value: float) -> str:
     """Format a value for slider display."""
     scale, _ = _axis_normalization(name)
     key = (name or "").lower()
+    if "fee_bps" in key:
+        return f"{value:.1f} bps"
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         return f"{(value / 1e10 * 1e4):.1f} bps"
     if name == "A" or key == "a":
@@ -552,7 +566,6 @@ class NDHeatmapExplorer:
 
                 # Title
                 _, scale_percent = _metric_scale_flags(m)
-                _, scale_1e18 = _metric_scale_flags(m)
                 title_scale = " (%)" if scale_percent else ""
                 ax.set_title(f"{m}{title_scale}", fontsize=title_font)
 
@@ -1084,6 +1097,12 @@ class NDHeatmapExplorer:
         print("\nClose both windows to exit.")
         plt.show()
 
+    def save(self, out_path: Path):
+        """Save the current heatmap slice without opening an interactive window."""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fig_main.savefig(out_path, dpi=150)
+        print(f"Saved N-D heatmap to {out_path}")
+
 
 def main() -> int:
     import argparse
@@ -1104,6 +1123,12 @@ def main() -> int:
     )
     ap.add_argument(
         "--ncol", type=int, default=3, help="Number of columns (default: 3)"
+    )
+    ap.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Save current heatmap slice to this image instead of opening windows",
     )
     args = ap.parse_args()
 
@@ -1126,7 +1151,10 @@ def main() -> int:
         cmap=args.cmap,
         max_ticks=args.max_ticks,
     )
-    explorer.show()
+    if args.out:
+        explorer.save(Path(args.out))
+    else:
+        explorer.show()
 
     return 0
 

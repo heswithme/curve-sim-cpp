@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
+
 import numpy as np
 from scipy import ndimage as ndi
 
@@ -50,7 +52,12 @@ def _ordered_grid(
     metadata: Dict[str, Any],
 ) -> Tuple[List[str], List[List[float]], List[str]]:
     grid = metadata.get("grid", {})
-    keys = sorted(grid.keys(), key=lambda k: int(k[1:]))
+    if not isinstance(grid, dict):
+        return [], [], []
+    keys = sorted(
+        (k for k in grid.keys() if isinstance(k, str) and k[1:].isdigit()),
+        key=lambda k: int(k[1:]),
+    )
     names = [grid[k]["name"] for k in keys]
     values = [grid[k]["values"] for k in keys]
     return names, values, keys
@@ -67,13 +74,17 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
-def _add_env(env: Dict[str, float], src: Any) -> None:
+def _add_env(env: Dict[str, float], src: Any, prefix: str = "") -> None:
     if not isinstance(src, dict):
         return
     for key, val in src.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(val, dict):
+            _add_env(env, val, name)
+            continue
         num = _to_float(val)
-        if num is not None and key not in env:
-            env[key] = num
+        if num is not None and name not in env:
+            env[name] = num
 
 
 def _build_env(run: Dict[str, Any]) -> Dict[str, float]:
@@ -110,7 +121,7 @@ def _run_coord_values(
     names: List[str],
 ) -> List[float]:
     x_val_keys = [f"{k}_val" for k in x_keys]
-    if all(k in run for k in x_val_keys):
+    if x_keys and all(k in run for k in x_val_keys):
         values: List[float] = []
         for k in x_val_keys:
             num = _to_float(run.get(k))
@@ -119,16 +130,12 @@ def _run_coord_values(
             values.append(num)
         return values
 
-    pool = run.get("pool")
-    if not isinstance(pool, dict):
-        params = run.get("params")
-        if isinstance(params, dict):
-            pool = params.get("pool")
+    pool = pool_for_run(run)
 
-    if isinstance(pool, dict):
+    if pool:
         values = []
         for name in names:
-            num = _to_float(pool.get(name))
+            num = _to_float(pool_value(pool, name))
             if num is None:
                 raise ValueError(f"Non-numeric pool value for {name}")
             values.append(num)
@@ -202,11 +209,15 @@ def _coord_dict(
         if name == "A":
             disp = val / 10_000
             formatted[name] = str(f"{disp:4.2f}")
+        elif "fee_bps" in name:
+            formatted[name] = str(f"{val:4.2f}")
         elif name in {"mid_fee", "out_fee"}:
             disp = int(val / 10**10 * 10_000)
             formatted[name] = str(f"{disp:d}")
         elif name == "donation_apy":
             formatted[name] = str(f"{val:4.3f}")
+        elif name.endswith("_wad"):
+            formatted[name] = str(f"{val / 1e18:0.6f}")
         elif name == "fee_gamma":
             formatted[name] = str(f"{val / 1e18:0.6f}")
         else:
@@ -258,6 +269,10 @@ def main() -> None:
         raise SystemExit("No runs found in JSON")
 
     names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
+    if not names:
+        names, grid_values, x_keys = infer_grid_from_runs(runs)
+    if not names:
+        raise SystemExit("No grid dimensions found in metadata or params.pool")
     metric = _build_metric_grid(
         runs, names, x_keys, grid_values, args.metric, args.pricethr
     )

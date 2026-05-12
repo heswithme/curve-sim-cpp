@@ -53,6 +53,31 @@ def _to_float(x: Any) -> float:
             return float("nan")
 
 
+def _lookup_dotted(obj: Dict[str, Any], name: str) -> Any:
+    cur: Any = obj
+    for part in str(name).split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return None
+        cur = cur[part]
+    return cur
+
+
+def _lookup_axis_value(pool_obj: Dict[str, Any], name: str) -> Any:
+    direct = _lookup_dotted(pool_obj, name)
+    if direct is not None:
+        return direct
+
+    key = str(name)
+    if key.endswith("_wad"):
+        return _lookup_dotted(pool_obj, key[: -len("_wad")])
+    if key.endswith("_fee_bps"):
+        raw_fee = _lookup_dotted(pool_obj, key[: -len("_bps")])
+        if raw_fee is None:
+            return None
+        return _to_float(raw_fee) / 1e10 * 1e4
+    return None
+
+
 def _extract_grid(
     data: Dict[str, Any], metric: str, scale_percent: bool, scale_1e18: bool
 ) -> Tuple[str, str, List[float], List[float], np.ndarray]:
@@ -80,8 +105,8 @@ def _extract_grid(
         yv_raw = r.get("x2_val")
         if xv_raw is None or yv_raw is None:
             pool_obj = (r.get("params") or {}).get("pool", {})
-            xv_raw = pool_obj.get(x_name) if xv_raw is None else xv_raw
-            yv_raw = pool_obj.get(y_name) if yv_raw is None else yv_raw
+            xv_raw = _lookup_axis_value(pool_obj, x_name) if xv_raw is None else xv_raw
+            yv_raw = _lookup_axis_value(pool_obj, y_name) if yv_raw is None else yv_raw
         xv = _to_float(xv_raw) if xv_raw is not None else float("nan")
         yv = _to_float(yv_raw) if yv_raw is not None else float("nan")
         fs = r.get("final_state", {})
@@ -168,9 +193,11 @@ def _build_ref_grid(
         key = (name or "").lower()
         if name == "A" or key == "a":
             return 1e4  # new stores A with 1e4 multiplier
-        if "fee" in key:
+        if "fee_bps" in key:
+            return 1.0  # already user-facing bps
+        if "fee" in key and "gamma" not in key:
             return 1e10  # new stores fees with 1e10 multiplier
-        if "xcp_profit" in key:
+        if key.endswith("_wad") or "gamma" in key or "xcp_profit" in key:
             return 1e18  # new stores xcp_profit with 1e18 multiplier
         return 1.0
 
@@ -209,8 +236,16 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
-    if "fee" in key:
+    if "fee_bps" in key:
+        return 1.0, " (bps)"
+    if "fee" in key and "gamma" not in key:
         return 0.0, " (bps)"  # sentinel for bps
+    if "ma_time" in key:
+        return 1.0, " (hrs)" if "hrs" not in key else ""
+    if key.endswith("_wad"):
+        return 1e18, " (/1e18)"
+    if "gamma" in key:
+        return 1e18, " (/1e18)"
     if "liquidity" in key or "balance" in key:
         return 1e18, " (/1e18)"
     if "xcp_profit" in key:
@@ -220,13 +255,29 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
 
 def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]:
     scale, suffix = _axis_normalization(name)
-    if scale == 0.0 and "fee" in (name or "").lower():
+    key = (name or "").lower()
+    display_name = name or ""
+    if suffix and suffix not in display_name:
+        display_name = f"{display_name}{suffix}"
+    if "fee_bps" in key:
+        labels = [f"{v:.2f}" for v in values]
+        return labels, display_name
+    if scale == 0.0 and "fee" in key and "gamma" not in key:
         labels = [f"{(v / 1e10 * 1e4):.2f}" for v in values]
         return labels, f"{name} (bps)"
+    if "ma_time" in key:
+        labels = [f"{v:.3f}" if abs(v) < 1 else f"{v:.2f}" for v in values]
+        return labels, display_name
+    if key.endswith("_wad"):
+        labels = [f"{(v / 1e18):.6g}" for v in values]
+        return labels, display_name
+    if "gamma" in key:
+        labels = [f"{(v / 1e18):.5f}" for v in values]
+        return labels, display_name
     if scale != 1.0:
         labels = [f"{(v / scale):.2f}" for v in values]
-        return labels, f"{name}{suffix}"
-    return [f"{v:.2f}" for v in values], name
+        return labels, display_name
+    return [f"{v:.4g}" for v in values], display_name
 
 
 def _edges_from_centers(centers: List[float]) -> np.ndarray:
@@ -414,7 +465,7 @@ def main() -> int:
             )
             if c == 0:
                 ax.set_yticklabels(ylabels_sel, fontsize=args.font_size)
-                ax.set_ylabel(y_name, fontsize=args.font_size + 2)
+                ax.set_ylabel(ylabel, fontsize=args.font_size + 2)
             else:
                 ax.set_yticklabels([])
             ax.set_xlabel(xlabel, fontsize=args.font_size + 2)

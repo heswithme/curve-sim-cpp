@@ -1,91 +1,82 @@
 #!/usr/bin/env python3
-"""
-Generate an N-dimensional grid of pool configurations.
+"""Generate an N-dimensional grid of pool configurations.
 
-Writes pretty JSON to python/arb_sim/run_data/pool_config.json.
+This is intentionally an explicit script: edit the active setup block below,
+then run it. The helpers only keep the repetitive unit conversions and JSON
+assembly out of the way.
 """
 
+from __future__ import annotations
+
+import copy
 import itertools
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
 
-# -------------------- Grid Definition --------------------
-FEE_EQUALIZE = True  # If true, force out_fee == mid_fee
+SCRIPT_DIR = Path(__file__).resolve().parent
+RUN_DATA_DIR = SCRIPT_DIR / "run_data"
 
-N_DENSE = 24
-
-DEMO_GRID = {
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 300 / 10_000 * 10**10, N_DENSE),  # 1
-    "A": np.linspace(2 * 10_000, 20 * 10_000, N_DENSE),
-    "donation_apy": np.linspace(0.036, 0.036, 1),  # 0-20%
-}
-
-ARB_FEE_BPS = 10
-
-SPARSE_FX_GRID = {
-    # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
-    "A": np.linspace(2 * 10_000, 200 * 10_000, N_DENSE),  # 2-200
-    "donation_apy": np.linspace(0.0, 0.2, N_DENSE),  # 0-20%
-    # "mid_fee": np.linspace(1 / 10_000 * 10**10, 1 / 10_000 * 10**10, 1), # 1
-    # "out_fee": np.linspace(10 / 10_000 * 10**10, 200 / 10_000 * 10**10, 39), # 10-200
-    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], # 0.0003-0.3
-}
+A_MULTIPLIER = 10_000
+FEE_SCALE = 10**10
+WAD = 10**18
 
 
-ZOOM_FX_GRID = {
-    # generic grid (~150k pools for first look at a forex pair. Wide A & out_fee & boost range, mid_fee = 1bps.
-    "A": np.linspace(10 * 10_000, 100 * 10_000, N_DENSE),  #
-    "donation_apy": np.linspace(0.0, 0.05, 11),  #
-    "mid_fee": np.linspace(1 / 10_000 * 10**10, 20 / 10_000 * 10**10, 5),  # 1
-    "out_fee": np.linspace(20 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),  #
-    # "fee_gamma": [int(a*10**18) for a in [0.0003, 0.003, 0.03, 0.3]], #
-}
+# -------------------- Active setup --------------------
+# Edit this block for a run.
 
-MANUAL_GRID = {
-    "A": [int(a * 10_000) for a in np.linspace(10, 200, N_DENSE)],
-    "mid_fee": [int(a / 10_000 * 10**10) for a in np.linspace(1, 60, N_DENSE)],
-    "donation_apy": [0.02 * i for i in range(6)],
+
+# Point these paths at the pair being simulated. Set COWSWAP_FILE to None when
+# no organic trade replay file should be associated with the generated config.
+DATAFILE = SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026.json"
+COWSWAP_FILE = None
+COWSWAP_FEE_BPS = 0.0
+
+# Use either START_TIME or LAST_YEARS. If START_TIME is set, it wins.
+START_TIME: str | None = "24-09-2025"  # Unix timestamp or DD-MM-YYYY
+LAST_YEARS: float | None = None
+
+OUT_PATH = RUN_DATA_DIR / "pool_config.json"
+
+INIT_LIQ = 500_000  # coin0 notional
+ARB_FEE_BPS = 3
+FEE_EQUALIZE = True
+
+BASE_DONATION_APY = 0.10
+BASE_DONATION_FREQUENCY = 7 * 86400
+BASE_DONATION_COINS_RATIO = 0.5
+
+N_DENSE = 16
+GRID: dict[str, Any] = {
+    "A": [int(a * 10_000) for a in np.linspace(1, 50, N_DENSE)],
+    "policy.fee_bps": np.linspace(10, 200, N_DENSE),
+    # For 16^3 or 24^3 runs, set N_DENSE accordingly and uncomment:
+    "donation_apy": np.linspace(0.0, 0.1, N_DENSE),
+    # Other common axes:
+    # "mid_fee": [int(a / 10_000 * 10**10) for a in np.linspace(1, 60, N_DENSE)],
+    # "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(10, 200, N_DENSE)],
     # "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
-    # "donation_apy": np.linspace(0.0, 0.2, N_DENSE),
-    # "out_fee": np.linspace(5 / 10_000 * 10**10, 50 / 10_000 * 10**10, N_DENSE),
-    # "A": [int(a * 10_000) for a in [2, 2.5, 3, 3.5]],
-    # "mid_fee": [int(a / 10_000 * 10**10) for a in [1, 2.5, 3, 5]],
-    # # "ma_time": [int(a / np.log(2)) for a in [600, 3600, 3600 * 4]],
-    # "ma_time": [int(a / np.log(2)) for a in [3600, 4 * 3600, 12 * 3600]],
-    # # "donation_apy": [0.0, 0.025, 0.05], #, 0.075, 0.1],
-    # "fee_gamma": np.geomspace(0.0001 * 10**18, 0.1 * 10**18, N_DENSE),
-    # "fee_gamma": [int(a*10**18) for a in [0.001, 0.003, 0.01, 0.05, 0.3, 0.5, 1.0]],
-    # "fee_gamma": [int(a * 10**18) for a in [0.0003, 0.003, 0.03, 0.3]],  # 0.0003-0.3
-    # "fee_gamma": [int(a * 10**18) for a in [4e-3]],
-    # "adjustment_step_max": [int(a * 10**18) for a in [0.001, 0.003, 0.005]],
+    # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
-# MANUAL_GRID = DEMO_GRID
-# -------------------- Data Inputs --------------------
-_SCRIPT_DIR = Path(__file__).resolve().parent
-# DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "usdchf" / "usdchf-20180101-20251231.json"
-# )
-# DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "chfusd" / "chfusd-20180101-20251231.json"
-# )
-# DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "eurusd" / "eurusd-20180101-20270101.json"
-# )
-# DEFAULT_DATAFILE = str(
-#     _SCRIPT_DIR / "trade_data" / "eurchf" / "eurchf-20180101-20251231.json"
-# )
-DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brlusd-1m-new.json")
 
-# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "ethusd" / "ethusdt-2yup.json")
-# DEFAULT_DATAFILE = str(_SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026.json")
+# Alternative manual-FX style recipe:
+# DATAFILE = SCRIPT_DIR / "trade_data" / "<pair>" / "<candles>.json"
+# COWSWAP_FILE = SCRIPT_DIR / "trade_data" / "<pair>" / "<cowswap>.csv"
+# START_TIME = "01-09-2024"
+# LAST_YEARS = None
+# BASE_DONATION_APY = 0.07
+# BASE_DONATION_FREQUENCY = 86400
+# GRID = {
+#     "A": [int(a * 10_000) for a in np.linspace(10, 200, 24)],
+#     "mid_fee": [int(a / 10_000 * 10**10) for a in np.linspace(1, 60, 24)],
+#     "donation_apy": [0.02 * i for i in range(6)],
+# }
 
-DEFAULT_COWSWAP_FILE = str(_SCRIPT_DIR / "trade_data" / "brlusd" / "brl_cowswap.csv")
-DEFAULT_COWSWAP_FEE_BPS = 0.0
-DEFAULT_START_TIME = "01-09-2024"
+# -------------------- Helpers --------------------
 
 
 def _parse_start_time(value: str | None) -> int | None:
@@ -93,20 +84,40 @@ def _parse_start_time(value: str | None) -> int | None:
         return None
     if value.isdigit():
         return int(value)
-    return int(datetime.strptime(value, "%d-%m-%Y").replace(tzinfo=timezone.utc).timestamp())
+    return int(
+        datetime.strptime(value, "%d-%m-%Y").replace(tzinfo=timezone.utc).timestamp()
+    )
 
 
-def _start_candle_ts_and_price(path: str, start_ts: int | None) -> tuple[int, float]:
-    if start_ts is None:
-        return _first_candle_ts(path), _initial_price_from_file(path)
-
-    with open(path, "r") as f:
+def _data_array(path: Path) -> list[Any]:
+    with path.open("r") as f:
         root = json.load(f)
-    arr = root if isinstance(root, list) else root.get("candles") or root.get("data") or root.get("events")
+    arr = (
+        root
+        if isinstance(root, list)
+        else root.get("candles") or root.get("data") or root.get("events")
+    )
     if not arr:
         raise ValueError(f"No data array found in {path}")
+    return arr
 
-    for row in arr:
+
+def _last_candle_ts(path: Path) -> int:
+    for row in reversed(_data_array(path)):
+        if not isinstance(row, list) or not row:
+            continue
+        ts = int(row[0])
+        if ts > 10_000_000_000:
+            ts //= 1000
+        return ts
+    raise ValueError(f"No candle timestamp found in {path}")
+
+
+def _start_candle_ts_and_price(path: Path, start_ts: int | None) -> tuple[int, float]:
+    if start_ts is None:
+        return _first_candle_ts(str(path)), _initial_price_from_file(str(path))
+
+    for row in _data_array(path):
         if not isinstance(row, list) or len(row) < 2:
             continue
         ts = int(row[0])
@@ -119,58 +130,86 @@ def _start_candle_ts_and_price(path: str, start_ts: int | None) -> tuple[int, fl
     raise ValueError(f"No candle found at or after start_ts={start_ts} in {path}")
 
 
-REQUESTED_START_TS = _parse_start_time(DEFAULT_START_TIME)
-START_TS, INIT_PRICE = _start_candle_ts_and_price(DEFAULT_DATAFILE, REQUESTED_START_TS)
-INIT_LIQ = 500_000  # in coin0
-print(f"START_TS: {START_TS}")
-print(f"INIT_PRICE: {INIT_PRICE}")
-# -------------------- Base Templates --------------------
-BASE_POOL = {
-    "initial_liquidity": [
-        int(INIT_LIQ * 1e18 // 2),
-        int(INIT_LIQ * 1e18 // 2 / INIT_PRICE),
-    ],
-    # Fixed to Polygon pool 0xdcb72c163de84618417bec9aef7ae32b5336d70e.
-    "A": int(50 * 10_000),
-    "gamma": int(1e-4 * 10**18),
-    "mid_fee": int(4 / 10_000 * 1e10),
-    "out_fee": int(30 / 10_000 * 1e10),
-    "fee_gamma": int(0.1 * 10**18),
-    "adjustment_step_min": int(0.00001 * 10**18),
-    "adjustment_step_max": int(0.005 * 10**18),
-    "ma_time": int(4 * 3600 / np.log(2)),
-    "reserved_profit_fraction": int(0.5 * 10**10),
-    "admin_fee": int(0.5 * 10**10),
-    "policy": {"kind": "none"},
-    "initial_price": int(INIT_PRICE * 1e18),
-    "start_timestamp": START_TS,
-    "donation_apy": 0.07,
-    "donation_frequency": 86400,
-    "donation_coins_ratio": 0.5,
-}
-
-BASE_COSTS = {
-    "arb_fee_bps": ARB_FEE_BPS,
-    "gas_coin0": 0.0,
-    "use_volume_cap": False,
-    "volume_cap_mult": 1,
-}
+def fixed_fee_policy(fee_bps: float) -> dict[str, Any]:
+    return {
+        "kind": "fixed_fee",
+        "fee_bps": float(fee_bps),
+    }
 
 
-def build_grid() -> tuple[list, dict]:
-    """Build all pool configurations from manual grid.
+def build_base_pool(
+    *,
+    datafile: Path,
+    start_time: str | None,
+    last_years: float | None,
+    init_liq: float,
+    donation_apy: float,
+    donation_frequency: int,
+    donation_coins_ratio: float,
+) -> dict[str, Any]:
+    requested_start_ts = _parse_start_time(start_time)
+    if requested_start_ts is None and last_years is not None:
+        requested_start_ts = _last_candle_ts(datafile) - int(last_years * 365 * 86400)
 
-    Returns:
-        (pools, grid_meta) tuple
-    """
-    if MANUAL_GRID is None:
-        raise ValueError("MANUAL_GRID is not set")
+    start_ts, init_price = _start_candle_ts_and_price(datafile, requested_start_ts)
+    print(f"START_TS: {start_ts}")
+    print(f"INIT_PRICE: {init_price}")
 
-    names = list(MANUAL_GRID.keys())
-    # Convert numpy arrays to lists for JSON serialization
-    axes = [
-        list(v) if isinstance(v, np.ndarray) else list(v) for v in MANUAL_GRID.values()
-    ]
+    return {
+        "initial_liquidity": [
+            int(init_liq * 1e18 // 2),
+            int(init_liq * 1e18 // 2 / init_price),
+        ],
+        # Fixed to Polygon pool 0xdcb72c163de84618417bec9aef7ae32b5336d70e.
+        "A": int(50 * A_MULTIPLIER),
+        "gamma": int(1e-4 * WAD),
+        "mid_fee": int(4 / 10_000 * 10**10),
+        "out_fee": int(30 / 10_000 * 10**10),
+        "fee_gamma": int(0.1 * WAD),
+        "adjustment_step_min": int(0.000001 * WAD),
+        "adjustment_step_max": int(0.5 / 100 * WAD),
+        "ma_time": int(600 / np.log(2)),
+        "reserved_profit_fraction": int(0.5 * FEE_SCALE),
+        "admin_fee": int(0.0 * FEE_SCALE),
+        "policy": {"kind": "none"},
+        "initial_price": int(init_price * WAD),
+        "start_timestamp": start_ts,
+        "donation_apy": donation_apy,
+        "donation_frequency": donation_frequency,
+        "donation_coins_ratio": donation_coins_ratio,
+    }
+
+
+def build_costs(arb_fee_bps: float) -> dict[str, Any]:
+    return {
+        "arb_fee_bps": arb_fee_bps,
+        "gas_coin0": 0.0,
+        "use_volume_cap": False,
+        "volume_cap_mult": 1,
+    }
+
+
+def set_grid_value(pool: dict[str, Any], name: str, value: Any) -> None:
+    if name == "policy.fee_bps":
+        pool["policy"] = fixed_fee_policy(float(value))
+    else:
+        pool[name] = value
+
+
+def pool_field_for_axis(name: str) -> str:
+    return name
+
+
+def build_grid(
+    *,
+    base_pool: dict[str, Any],
+    base_costs: dict[str, Any],
+    grid: dict[str, list[Any]],
+    fee_equalize: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    names = list(grid.keys())
+    axes = [list(v) if isinstance(v, np.ndarray) else list(v) for v in grid.values()]
+    pool_field_names = {pool_field_for_axis(name) for name in names}
     grid_meta = {
         f"x{i}": {"name": name, "values": [float(x) for x in vals]}
         for i, (name, vals) in enumerate(zip(names, axes), 1)
@@ -178,49 +217,71 @@ def build_grid() -> tuple[list, dict]:
 
     pools = []
     for coords in itertools.product(*axes):
-        pool = dict(BASE_POOL)
+        pool = copy.deepcopy(base_pool)
         tag_parts = []
         for name, val in zip(names, coords):
-            pool[name] = val
+            set_grid_value(pool, name, val)
             tag_parts.append(f"{name}_{val}")
 
-        # Enforce out_fee >= mid_fee only when the grid varies fee axes.
-        # Fixed Polygon pool values should stay byte-for-byte unchanged.
-        if "mid_fee" in names or "out_fee" in names:
+        if "mid_fee" in pool_field_names or "out_fee" in pool_field_names:
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
-            pool["out_fee"] = mid if FEE_EQUALIZE else out
+            pool["out_fee"] = mid if fee_equalize else out
+
         pools.append(
             {
                 "tag": "__".join(tag_parts),
                 "pool": strify_pool(pool),
-                "costs": dict(BASE_COSTS),
+                "costs": dict(base_costs),
             }
         )
+
     return pools, grid_meta
 
 
-def main():
-    pools, grid_meta = build_grid()
+def build_config() -> dict[str, Any]:
+    datafile = Path(DATAFILE)
+    cowswap_file = Path(COWSWAP_FILE) if COWSWAP_FILE else None
 
-    out = {
+    base_pool = build_base_pool(
+        datafile=datafile,
+        start_time=START_TIME,
+        last_years=LAST_YEARS,
+        init_liq=INIT_LIQ,
+        donation_apy=BASE_DONATION_APY,
+        donation_frequency=BASE_DONATION_FREQUENCY,
+        donation_coins_ratio=BASE_DONATION_COINS_RATIO,
+    )
+    base_costs = build_costs(ARB_FEE_BPS)
+    pools, grid_meta = build_grid(
+        base_pool=base_pool,
+        base_costs=base_costs,
+        grid=GRID,
+        fee_equalize=FEE_EQUALIZE,
+    )
+
+    return {
         "meta": {
             "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "grid": grid_meta,
-            "datafile": DEFAULT_DATAFILE,
-            "cowswap_file": DEFAULT_COWSWAP_FILE,
-            "cowswap_fee_bps": DEFAULT_COWSWAP_FEE_BPS,
-            "start_time": DEFAULT_START_TIME,
-            "base_pool": strify_pool(BASE_POOL),
+            "datafile": str(datafile),
+            "cowswap_file": str(cowswap_file) if cowswap_file else None,
+            "cowswap_fee_bps": COWSWAP_FEE_BPS,
+            "requested_start_time": START_TIME,
+            "start_time": str(base_pool["start_timestamp"]),
+            "last_years": LAST_YEARS,
+            "base_pool": strify_pool(base_pool),
         },
         "pools": pools,
     }
 
-    out_path = _SCRIPT_DIR / "run_data" / "pool_config.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(out, indent=2))
-    print(f"Wrote {len(pools)} pool configs to {out_path}")
+
+def main() -> None:
+    out = build_config()
+    OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OUT_PATH.write_text(json.dumps(out, indent=2))
+    print(f"Wrote {len(out['pools'])} pool configs to {OUT_PATH}")
 
 
 if __name__ == "__main__":

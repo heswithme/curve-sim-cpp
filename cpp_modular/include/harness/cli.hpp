@@ -23,6 +23,7 @@ struct CliArgs {
     size_t n_threads{std::thread::hardware_concurrency()};
     double candle_filter_pct{99.0};  // squeeze high/low within +/-X% of (O+C)/2
     uint64_t dustswap_freq_s{3600};  // EMA tick cadence when idle
+    bool quiet{false};               // suppress progress logs
     
     // Pool range (for distributed execution)
     size_t pool_start{0};            // 0-based inclusive

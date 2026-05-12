@@ -76,6 +76,10 @@ EventLoopResult<T> run_event_loop(
         throw std::invalid_argument("detailed_log enabled but candles were not provided");
     }
 
+    const T fee_cex = costs.arb_fee_bps / T(10000);
+    const T cex_fee_discount = T(1) - fee_cex;
+    const T cex_fee_markup = T(1) + fee_cex;
+
     // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
         if (!enable_slippage_probes || !(p_cex > T(0))) return;
@@ -113,10 +117,7 @@ EventLoopResult<T> run_event_loop(
         tw.sample_imbalance(ts, x0p, x1p);
 
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        const T cur_fee = pools::twocrypto_fx::dyn_fee(
-            xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma
-        );
-        tw.sample_fee(ts, cur_fee);
+        tw.sample_fee(ts, pool.fee(xp_now));
     };
 
     auto apply_donation = [&](uint64_t ts) {
@@ -139,29 +140,52 @@ EventLoopResult<T> run_event_loop(
             }
         }
 
-        auto dec = trading::decide_trade_numeric(
+        auto dec = trading::decide_trade(
             pool, cex_price, costs,
             volume_cap,
-            min_swap_frac, max_swap_frac
+            min_swap_frac, max_swap_frac,
+            cex_fee_discount, cex_fee_markup
         );
+        if (dec.edge_seen) {
+            m.arb_edge_candidates += 1;
+        }
+        if (dec.rejected_invalid_size) {
+            m.arb_invalid_size_rejections += 1;
+        }
+        if (dec.rejected_nonpositive_profit) {
+            m.arb_nonpositive_profit_rejections += 1;
+            if (dec.profit < T(0)) {
+                m.arb_guarded_loss_coin0 += -dec.profit;
+            }
+        }
         if (!dec.do_trade) {
             return false;
         }
 
         try {
             const T ps_before = pool.cached_price_scale;
-            const T oracle_before = pool.cached_price_oracle;
-            const T xcp_profit_before = pool.xcp_profit;
-            const T vp_before = pool.get_vp_boosted();
-            const T p_pool_before = pool.get_p();
-            const uint64_t last_ts_before = pool.last_timestamp;
-            const T lp_before = pool.last_prices;
+            T oracle_before{};
+            T xcp_profit_before{};
+            T vp_before{};
+            T p_pool_before{};
+            uint64_t last_ts_before{0};
+            T lp_before{};
+            const bool log_actions = action_logger.enabled();
+            if (log_actions) {
+                oracle_before = pool.cached_price_oracle;
+                xcp_profit_before = pool.xcp_profit;
+                vp_before = pool.get_vp_boosted();
+                p_pool_before = pool.get_p();
+                last_ts_before = pool.last_timestamp;
+                lp_before = pool.last_prices;
+            }
 
-            auto res = pool.exchange(
-                static_cast<T>(dec.i),
-                static_cast<T>(dec.j),
+            auto res = pool.exchange_from_preview(
+                static_cast<size_t>(dec.i),
+                static_cast<size_t>(dec.j),
                 dec.dx,
-                T(0)
+                dec.dy_after_fee,
+                dec.fee_tokens
             );
 
             const T dy_after_fee = res[0];
@@ -184,12 +208,16 @@ EventLoopResult<T> run_event_loop(
                 m.n_rebalances += 1;
             }
 
-            sample_slippage_probes(ev.ts, cex_price);
+            if (enable_slippage_probes) {
+                sample_slippage_probes(ev.ts, cex_price);
+            }
 
-            action_logger.log_exchange(ev.ts, dec.i, dec.j, dec.dx, dy_after_fee, fee_tokens,
-                                       dec.profit, cex_price, p_pool_before,
-                                       oracle_before, ps_before, last_ts_before, lp_before,
-                                       xcp_profit_before, vp_before, pool, tw);
+            if (log_actions) {
+                action_logger.log_exchange(ev.ts, dec.i, dec.j, dec.dx, dy_after_fee, fee_tokens,
+                                           dec.profit, cex_price, p_pool_before,
+                                           oracle_before, ps_before, last_ts_before, lp_before,
+                                           xcp_profit_before, vp_before, pool, tw);
+            }
             return true;
         } catch (...) {
             return false;
@@ -225,19 +253,30 @@ EventLoopResult<T> run_event_loop(
     };
 
     auto apply_idle_tick = [&](uint64_t ts, T cex_price) -> bool {
-        const T ps_before = pool.cached_price_scale;
-        const T oracle_before = pool.cached_price_oracle;
-        const T xcp_profit_before = pool.xcp_profit;
-        const T vp_before = pool.get_vp_boosted();
+        T ps_before{};
+        T oracle_before{};
+        T xcp_profit_before{};
+        T vp_before{};
+        const bool log_actions = action_logger.enabled();
+        if (log_actions) {
+            ps_before = pool.cached_price_scale;
+            oracle_before = pool.cached_price_oracle;
+            xcp_profit_before = pool.xcp_profit;
+            vp_before = pool.get_vp_boosted();
+        }
 
         const bool did_tick = try_idle_tick(pool, icfg, ts, m);
         if (!did_tick) {
             return false;
         }
 
-        sample_slippage_probes(ts, cex_price);
-        action_logger.log_tick(ts, cex_price, ps_before, oracle_before,
-                               xcp_profit_before, vp_before, pool);
+        if (enable_slippage_probes) {
+            sample_slippage_probes(ts, cex_price);
+        }
+        if (log_actions) {
+            action_logger.log_tick(ts, cex_price, ps_before, oracle_before,
+                                   xcp_profit_before, vp_before, pool);
+        }
         return true;
     };
 

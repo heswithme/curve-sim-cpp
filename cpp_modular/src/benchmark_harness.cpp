@@ -4,8 +4,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include <boost/json.hpp>
@@ -18,6 +20,7 @@ namespace json = boost::json;
 namespace {
 
 using arb::pools::twocrypto_fx::MathOps;
+using arb::pools::twocrypto_fx::PolicyConfig;
 using arb::pools::twocrypto_fx::PolicyKind;
 using arb::pools::twocrypto_fx::PoolTraits;
 using arb::pools::twocrypto_fx::TwoCryptoPool;
@@ -62,6 +65,66 @@ T parse_fee(const std::string& s) {
     } else {
         return static_cast<T>(std::strtold(s.c_str(), nullptr) / FEE_SCALE);
     }
+}
+
+inline std::string scalar_to_string(const json::value& v) {
+    if (v.is_string()) return std::string(v.as_string().c_str());
+    if (v.is_int64()) return std::to_string(v.as_int64());
+    if (v.is_uint64()) return std::to_string(v.as_uint64());
+    if (v.is_double()) {
+        std::ostringstream oss;
+        oss.precision(17);
+        oss << v.as_double();
+        return oss.str();
+    }
+    return "0";
+}
+
+inline bool is_number_or_string(const json::value& v) {
+    return v.is_string() || v.is_double() || v.is_int64() || v.is_uint64();
+}
+
+template <typename T>
+T parse_bps_fee(const json::value& v) {
+    const std::string s = scalar_to_string(v);
+    if constexpr (std::is_same_v<T, uint256>) {
+        return uint256(s) * PoolTraits<T>::FEE_PRECISION() / uint256(10000);
+    } else {
+        return static_cast<T>(std::strtold(s.c_str(), nullptr) / 10000.0L);
+    }
+}
+
+template <typename T>
+PolicyConfig<T> parse_policy_config_json(const json::value& v) {
+    PolicyConfig<T> cfg{};
+    if (v.is_string()) {
+        cfg.kind = policy_kind_from_string(std::string(v.as_string().c_str()));
+        return cfg;
+    }
+    if (!v.is_object()) {
+        throw std::runtime_error("policy must be a string or object");
+    }
+    const auto& obj = v.as_object();
+    std::string kind = "none";
+    if (auto* k = obj.if_contains("kind")) {
+        if (!k->is_string()) {
+            throw std::runtime_error("policy kind must be a string");
+        }
+        kind = std::string(k->as_string().c_str());
+    }
+    cfg.kind = policy_kind_from_string(kind);
+    if (auto* fee = obj.if_contains("fee")) {
+        if (!is_number_or_string(*fee)) {
+            throw std::runtime_error("policy fee must be a string or number");
+        }
+        cfg.fee = parse_fee<T>(scalar_to_string(*fee));
+    } else if (auto* fee_bps = obj.if_contains("fee_bps")) {
+        if (!is_number_or_string(*fee_bps)) {
+            throw std::runtime_error("policy fee_bps must be a string or number");
+        }
+        cfg.fee = parse_bps_fee<T>(*fee_bps);
+    }
+    return cfg;
 }
 
 template <typename T>
@@ -128,7 +191,13 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
     const T out_fee = parse_fee<T>(get_str(p, "out_fee"));
     const T fee_gamma = parse_wad<T>(get_str(p, "fee_gamma"));
 
-    if (p.contains("allowed_extra_profit") || p.contains("adjustment_step") || p.contains("lp_profit_fraction")) {
+    if (
+        p.contains("allowed_extra_profit") ||
+        p.contains("adjustment_step") ||
+        p.contains("lp_profit_fraction") ||
+        p.contains("fee_params") ||
+        p.contains("fee_model_name")
+    ) {
         throw std::runtime_error("legacy pool config fields are not supported");
     }
 
@@ -143,16 +212,10 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
         ? parse_fee<T>(get_str(p, "admin_fee"))
         : PoolTraits<T>::FEE_PRECISION() / 2;
     PolicyKind policy_kind = PolicyKind::None;
+    PolicyConfig<T> policy_config{};
     if (auto it = p.find("policy"); it != p.end()) {
-        const auto& v = it->value();
-        if (v.is_string()) {
-            policy_kind = policy_kind_from_string(std::string(v.as_string().c_str()));
-        } else if (v.is_object()) {
-            const auto& obj = v.as_object();
-            if (auto* k = obj.if_contains("kind"); k && k->is_string()) {
-                policy_kind = policy_kind_from_string(std::string(k->as_string().c_str()));
-            }
-        }
+        policy_config = parse_policy_config_json<T>(it->value());
+        policy_kind = policy_config.kind;
     }
     const T initial_price = parse_wad<T>(get_str(p, "initial_price"));
 
@@ -169,7 +232,8 @@ TwoCryptoPool<T> make_pool_from_json(const json::object& p, const json::object& 
         initial_price,
         reserved_profit_fraction,
         admin_fee,
-        policy_kind
+        policy_kind,
+        policy_config
     );
 
     const uint64_t start_ts = get_u64_opt(sequence, "start_timestamp", 0);

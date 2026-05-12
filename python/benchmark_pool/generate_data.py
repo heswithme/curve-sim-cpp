@@ -30,7 +30,7 @@ MINIMUM_LIQUIDITY = 10**4
 INITIAL_POOL_TOKENS = (3_000, 10_000)
 INITIAL_LIQUIDITY_JITTER_BPS = (9_500, 10_500)
 
-SWAP_INITIAL_BPS = (10, 20)  # 0.10% to 0.99% of initial input balance
+SWAP_INITIAL_BPS = (10, 20)  # 0.10% to 0.20% of initial input balance
 SWAP_OUTPUT_CAP_BPS = 500  # Avoid draining scarce output balances in long runs.
 SWAP_DIRECTION_BATCH = 10
 

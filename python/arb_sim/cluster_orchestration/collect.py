@@ -94,6 +94,16 @@ def extract_grid_values(run: Dict[str, Any], grid: Dict[str, Any]) -> Dict[str, 
     pool_params = run.get("params", {}).get("pool", {})
     values = {}
 
+    def pool_value(name: str) -> Any:
+        current: Any = pool_params
+        for part in name.split("."):
+            if not isinstance(current, dict):
+                return None
+            current = current.get(part)
+            if current is None:
+                return None
+        return current
+
     for key, dim_info in grid.items():
         if not key.startswith("x") or not key[1:].isdigit():
             continue
@@ -101,7 +111,7 @@ def extract_grid_values(run: Dict[str, Any], grid: Dict[str, Any]) -> Dict[str, 
         if not name:
             continue
 
-        raw_val = pool_params.get(name)
+        raw_val = pool_value(name)
         if raw_val is not None:
             try:
                 values[name] = float(raw_val)
@@ -228,6 +238,9 @@ def collect(
             "harness_args": {
                 "dustswapfreq": cfg.get("dustswap_freq"),
                 "candle_filter": cfg.get("candle_filter"),
+                "start_time": cfg.get("start_time"),
+                "disable_slippage_probes": cfg.get("disable_slippage_probes"),
+                "quiet_harness": cfg.get("quiet_harness"),
             },
             # Include grid metadata for visualization compatibility
             "grid": grid,

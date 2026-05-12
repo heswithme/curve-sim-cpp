@@ -7,7 +7,13 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+
+import matplotlib
+
+HAS_OUT_ARG = any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:])
+if HAS_OUT_ARG:
+    matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -18,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="Plot price_scale vs CEX midpoint")
     parser.add_argument("filepath", type=Path, help="Path to detailed-output.json")
     parser.add_argument("--no-save", action="store_true", help="Don't save PNG file")
+    parser.add_argument("--out", type=Path, default=None, help="Output PNG path")
     args = parser.parse_args()
 
     filepath = args.filepath
@@ -48,7 +55,7 @@ def main():
     imbalance *= 100.0  # as percentage
 
     # Convert timestamps to datetime
-    dates = [datetime.utcfromtimestamp(t) for t in timestamps]
+    dates = [datetime.fromtimestamp(t, timezone.utc) for t in timestamps]
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
@@ -106,11 +113,13 @@ def main():
     plt.tight_layout()
 
     if not args.no_save:
-        out_path = filepath.with_suffix(".png")
+        out_path = args.out or filepath.with_suffix(".png")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(out_path, dpi=150)
         print(f"Saved plot to {out_path}")
 
-    plt.show()
+    if args.out is None:
+        plt.show()
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -75,6 +75,9 @@ def run_blade_job(
     threads: int,
     dustswap_freq: int,
     candle_filter: Optional[float],
+    start_time: Optional[str] = None,
+    disable_slippage_probes: bool = False,
+    quiet_harness: bool = False,
     stream_output: bool = False,
     line_buffered: bool = False,
     retries: int = 3,
@@ -111,6 +114,12 @@ def run_blade_job(
             ]
             if candle_filter is not None:
                 cmd_parts.extend(["--candle-filter", str(candle_filter)])
+            if start_time is not None:
+                cmd_parts.extend(["--start-time", str(start_time)])
+            if disable_slippage_probes:
+                cmd_parts.append("--disable-slippage-probes")
+            if quiet_harness:
+                cmd_parts.append("--quiet")
 
             cmd_str = " ".join(cmd_parts)
             if attempt == 1:
@@ -210,6 +219,9 @@ def run_parallel(
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
                 dustswap_freq=cfg.get("dustswap_freq", 600),
                 candle_filter=cfg.get("candle_filter"),
+                start_time=cfg.get("start_time"),
+                disable_slippage_probes=cfg.get("disable_slippage_probes", False),
+                quiet_harness=cfg.get("quiet_harness", False),
                 stream_output=stream_blade == blade,
                 line_buffered=False,
             )
@@ -257,7 +269,7 @@ def run(
         }
         for blade, r in results.items()
     }
-    manifest["run_completed_at"] = datetime.utcnow().isoformat()
+    manifest["run_completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # Save updated manifest
     with open(manifest_path, "w") as f:

@@ -14,6 +14,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -25,19 +26,25 @@ try:
 except Exception:
     orjson = None
 
-# Force interactive backend
 import matplotlib
 
-for backend in ["macosx", "TkAgg", "Qt5Agg"]:
-    try:
-        matplotlib.use(backend)
-        break
-    except Exception:
-        continue
+HAS_OUT_ARG = any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:])
+if HAS_OUT_ARG:
+    matplotlib.use("Agg")
+else:
+    # Force interactive backend for the normal explorer workflow.
+    for backend in ["macosx", "TkAgg", "Qt5Agg"]:
+        try:
+            matplotlib.use(backend)
+            break
+        except Exception:
+            continue
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons
 from matplotlib.ticker import FormatStrFormatter
+
+from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
 
 HERE = Path(__file__).resolve().parent
 RUN_DIR = HERE / "run_data"
@@ -140,10 +147,14 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
+    if "fee_bps" in key:
+        return 1.0, " (bps)"
     if "fee" in key and "gamma" not in key:
         return 0.0, " (bps)"
     if "ma_time" in key:
         return 1.0, " (hrs)" if "hrs" not in key else ""
+    if key.endswith("_wad"):
+        return 1e18, " (/1e18)"
     if "gamma" in key:
         return 1e18, " (/1e18)"
     if "liquidity" in key or "balance" in key:
@@ -158,11 +169,17 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
     if suffix and suffix not in display_name:
         display_name = f"{display_name}{suffix}"
 
+    if "fee_bps" in key:
+        labels = [f"{v:.2f}" for v in values]
+        return labels, display_name
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         labels = [f"{(v / 1e10 * 1e4):.2f}" for v in values]
         return labels, f"{name} (bps)"
     if "ma_time" in key:
         labels = [f"{v:.3f}" if abs(v) < 1 else f"{v:.2f}" for v in values]
+        return labels, display_name
+    if key.endswith("_wad"):
+        labels = [f"{(v / 1e18):.6g}" for v in values]
         return labels, display_name
     if "gamma" in key:
         labels = [f"{(v / 1e18):.5f}" for v in values]
@@ -177,10 +194,14 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
 def _format_slider_value(name: str, value: float) -> str:
     scale, _ = _axis_normalization(name)
     key = (name or "").lower()
+    if "fee_bps" in key:
+        return f"{value:.1f} bps"
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         return f"{(value / 1e10 * 1e4):.1f} bps"
     if name == "A" or key == "a":
         return f"{value / 1e4:.2f}"
+    if key.endswith("_wad"):
+        return f"{value / 1e18:.6g}"
     if "gamma" in key:
         return f"{value / 1e18:.6f}"
     if "apy" in key or "ratio" in key:
@@ -189,6 +210,8 @@ def _format_slider_value(name: str, value: float) -> str:
 
 
 def _stringify_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _stringify_value(val) for key, val in value.items()}
     if isinstance(value, list):
         return [_stringify_value(v) for v in value]
     if isinstance(value, float):
@@ -282,7 +305,7 @@ def _metric_scale_flags(metric: str) -> Tuple[bool, bool]:
         or "tw_real_slippage" in mlow
         or "geom_mean" in mlow
         or "rel_price_diff" in mlow
-        or "tw_avg_pool_fee" in mlow
+        or "pool_fee" in mlow
         or "imbalance" in mlow
     )
     return scale_1e18, scale_percent
@@ -300,12 +323,12 @@ def _metric_scale_info(metric: str) -> Tuple[float, str]:
 
 
 def _extract_coord(run: Dict[str, Any], dim_names: List[str]) -> List[float] | None:
-    pool = run.get("pool", {})
+    pool = pool_for_run(run)
     coords: List[float] = []
     for i, name in enumerate(dim_names):
         raw = run.get(f"x{i + 1}_val")
         if raw is None:
-            raw = pool.get(name)
+            raw = pool_value(pool, name)
         v = _to_float(raw) if raw is not None else float("nan")
         if not math.isfinite(v):
             return None
@@ -331,10 +354,13 @@ def _extract_nd_arrays(
         raise SystemExit("No runs[] found in arb_run JSON")
 
     dims = _parse_grid_dims(data)
+    if not dims:
+        inferred_names, _, inferred_keys = infer_grid_from_runs(runs)
+        dims = list(zip(inferred_keys, inferred_names))
     if dims:
         dim_names = [name for _, name in dims]
     else:
-        pool = runs[0].get("pool", {})
+        pool = pool_for_run(runs[0])
         if not pool:
             raise SystemExit("No grid dimensions found in metadata or pool")
         dim_names = sorted(pool.keys())
@@ -424,7 +450,9 @@ def _extract_nd_arrays(
         metrics_lookup[idx_tuple] = metrics_dict
 
         params = r.get("params", {})
-        pool = params.get("pool") or r.get("pool")
+        if not isinstance(params, dict):
+            params = {}
+        pool = pool_for_run(r)
         costs = params.get("costs")
         if pool:
             if costs is not None:
@@ -1698,6 +1726,11 @@ class NDHeatmapExplorerOpt:
         print("Close all windows to exit.")
         plt.show()
 
+    def save(self, out_path: Path):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fig_main.savefig(out_path, dpi=150)
+        print(f"Saved optimized N-D heatmap to {out_path}")
+
 
 def main() -> int:
     import argparse
@@ -1728,6 +1761,12 @@ def main() -> int:
         default=None,
         help="Forward Unix timestamp or DD-MM-YYYY to shift-click inspect simulations.",
     )
+    ap.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Save current heatmap slice to this image instead of opening windows.",
+    )
     args = ap.parse_args()
 
     arb_path = Path(args.arb) if args.arb else _latest_arb_run()
@@ -1751,7 +1790,10 @@ def main() -> int:
         log_axes=set(args.log_axis),
         start_time=args.start_time,
     )
-    explorer.show()
+    if args.out:
+        explorer.save(Path(args.out))
+    else:
+        explorer.show()
 
     return 0
 

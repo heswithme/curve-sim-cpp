@@ -11,7 +11,7 @@ Since all blades share /home/heswithme, we only upload once:
 
 import json
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Tuple, Optional
 
@@ -108,6 +108,8 @@ def distribute(
     threads_per_blade: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
     candle_filter: Optional[float] = None,
+    disable_slippage_probes: bool = False,
+    quiet_harness: bool = False,
     output_prefix: str = "cluster_sweep",
 ) -> dict:
     """
@@ -200,7 +202,7 @@ def distribute(
     # Build manifest
     manifest = {
         "job_id": job_id,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "remote_candles": remote_candles,
         "remote_pools": remote_pools,
         "total_pools": n_pools,
@@ -209,6 +211,9 @@ def distribute(
             "threads_per_blade": threads_per_blade,
             "dustswap_freq": dustswap_freq,
             "candle_filter": candle_filter,
+            "disable_slippage_probes": disable_slippage_probes,
+            "quiet_harness": quiet_harness,
+            "start_time": meta.get("start_time"),
             "output_prefix": output_prefix,
         },
         "local_job_dir": str(local_job_dir),
@@ -241,6 +246,11 @@ def main():
     parser.add_argument("--candles", type=Path, help="Override candles file (optional)")
     parser.add_argument("--blades", nargs="+", default=DEFAULT_BLADES)
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
+    parser.add_argument("--dustswap-freq", type=int, default=600)
+    parser.add_argument("--candle-filter", type=float)
+    parser.add_argument("--disable-slippage-probes", action="store_true")
+    parser.add_argument("--quiet-harness", action="store_true")
+    parser.add_argument("--output-prefix", default="cluster_sweep")
     parser.add_argument("--job-id", type=str)
     args = parser.parse_args()
 
@@ -250,6 +260,11 @@ def main():
         job_id=args.job_id,
         candles_file=args.candles,
         threads_per_blade=args.threads,
+        dustswap_freq=args.dustswap_freq,
+        candle_filter=args.candle_filter,
+        disable_slippage_probes=args.disable_slippage_probes,
+        quiet_harness=args.quiet_harness,
+        output_prefix=args.output_prefix,
     )
     print(f"\nNext: python run.py --manifest {manifest['local_job_dir']}/manifest.json")
 

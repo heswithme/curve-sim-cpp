@@ -182,6 +182,9 @@ def main(
     harness_args = {
         "dustswapfreq": dustswapfreq,
     }
+    start_time = meta.get("start_time")
+    if start_time is not None:
+        harness_args["start_time"] = start_time
     if candle_filter is not None:
         harness_args["candle_filter"] = candle_filter
 

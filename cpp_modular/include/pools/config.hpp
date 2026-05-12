@@ -26,12 +26,13 @@ struct PoolInit {
     T mid_fee{T(3e-4)};
     T out_fee{T(5e-4)};
     T fee_gamma{T(0.23)};
-    T adjustment_step_min{T(1e-5)};
+    T adjustment_step_min{T(1e-6)};
     T adjustment_step_max{T(1e-3)};
     T ma_time{T(600.0)};
     T reserved_profit_fraction{T(0.5)};
     T admin_fee{T(0.5)};
     twocrypto_fx::PolicyKind policy_kind{twocrypto_fx::PolicyKind::None};
+    twocrypto_fx::PolicyConfig<T> policy_config{};
     T initial_price{T(1.0)};
     std::array<T, 2> initial_liq{T(1e6), T(1e6)};
     uint64_t start_ts{0};
@@ -50,6 +51,46 @@ struct PoolInit {
 };
 
 // JSON parsing helpers live in core/json_utils.hpp
+
+inline bool is_number_or_string(const boost::json::value& v) {
+    return v.is_string() || v.is_double() || v.is_int64() || v.is_uint64();
+}
+
+template <typename T>
+twocrypto_fx::PolicyConfig<T> parse_policy_config(const boost::json::value& policy) {
+    twocrypto_fx::PolicyConfig<T> cfg{};
+    if (policy.is_string()) {
+        cfg.kind = twocrypto_fx::policy_kind_from_string(std::string(policy.as_string().c_str()));
+        return cfg;
+    }
+    if (!policy.is_object()) {
+        throw std::runtime_error("pool policy must be a string or object");
+    }
+
+    const auto& po = policy.as_object();
+    std::string kind = "none";
+    if (auto* k = po.if_contains("kind")) {
+        if (!k->is_string()) {
+            throw std::runtime_error("pool policy kind must be a string");
+        }
+        kind = std::string(k->as_string().c_str());
+    }
+    cfg.kind = twocrypto_fx::policy_kind_from_string(kind);
+
+    if (auto* fee = po.if_contains("fee")) {
+        if (!is_number_or_string(*fee)) {
+            throw std::runtime_error("pool policy fee must be a string or number");
+        }
+        cfg.fee = parse_fee_1e10<T>(*fee);
+    } else if (auto* fee_bps = po.if_contains("fee_bps")) {
+        if (!is_number_or_string(*fee_bps)) {
+            throw std::runtime_error("pool policy fee_bps must be a string or number");
+        }
+        cfg.fee = parse_plain_real<T>(*fee_bps) *
+            twocrypto_fx::PoolTraits<T>::FEE_PRECISION() / T(10000);
+    }
+    return cfg;
+}
 
 // Parse a single pool entry from JSON object
 // Entry format: { "pool": {...}, "costs": {...}, "tag": "..." }
@@ -90,7 +131,13 @@ void parse_pool_entry(
     if (auto* v = pool.if_contains("mid_fee")) out_pool.mid_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("out_fee")) out_pool.out_fee = parse_fee_1e10<T>(*v);
     if (auto* v = pool.if_contains("fee_gamma")) out_pool.fee_gamma = parse_scaled_1e18<T>(*v);
-    if (pool.if_contains("lp_profit_fraction") || pool.if_contains("allowed_extra_profit") || pool.if_contains("adjustment_step")) {
+    if (
+        pool.if_contains("lp_profit_fraction") ||
+        pool.if_contains("allowed_extra_profit") ||
+        pool.if_contains("adjustment_step") ||
+        pool.if_contains("fee_params") ||
+        pool.if_contains("fee_model_name")
+    ) {
         throw std::runtime_error("legacy pool config fields are not supported; use reserved_profit_fraction, admin_fee, adjustment_step_min, adjustment_step_max, and policy");
     }
     if (auto* v = pool.if_contains("adjustment_step_min")) out_pool.adjustment_step_min = parse_scaled_1e18<T>(*v);
@@ -103,18 +150,8 @@ void parse_pool_entry(
         out_pool.admin_fee = std::clamp<T>(parse_fee_1e10<T>(*v), T(0), twocrypto_fx::PoolTraits<T>::FEE_PRECISION());
     }
     if (auto* v = pool.if_contains("policy")) {
-        if (v->is_string()) {
-            out_pool.policy_kind = twocrypto_fx::policy_kind_from_string(std::string(v->as_string().c_str()));
-        } else if (v->is_object()) {
-            const auto& po = v->as_object();
-            std::string kind = "none";
-            if (auto* k = po.if_contains("kind")) {
-                if (k->is_string()) kind = std::string(k->as_string().c_str());
-            }
-            out_pool.policy_kind = twocrypto_fx::policy_kind_from_string(kind);
-        } else {
-            throw std::runtime_error("pool policy must be a string or object");
-        }
+        out_pool.policy_config = parse_policy_config<T>(*v);
+        out_pool.policy_kind = out_pool.policy_config.kind;
     }
     if (auto* v = pool.if_contains("initial_price")) out_pool.initial_price = parse_scaled_1e18<T>(*v);
     if (auto* v = pool.if_contains("start_timestamp")) {

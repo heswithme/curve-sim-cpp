@@ -45,59 +45,6 @@ inline T xp_to_tokens_j(const PoolT<T>& pool, size_t j, T amount_xp, const T& pr
     return v / pool.precisions[j];
 }
 
-// -----------------------------------------------------------------------------
-// Fee + price helpers
-// -----------------------------------------------------------------------------
-template <typename T>
-inline T dyn_fee(
-    const std::array<T, 2>& xp,
-    const T& mid_fee,
-    const T& out_fee,
-    const T& fee_gamma
-) {
-    if (fee_gamma == PoolTraits<T>::ZERO()) {
-        return mid_fee;
-    }
-
-    const T Bsum = xp[0] + xp[1];
-    if (!(Bsum > T(0))) {
-        return mid_fee;
-    }
-
-    // Matches the pool's internal _fee formula; for floating types PRECISION() == 1.
-    T B = PoolTraits<T>::PRECISION() * PoolT<T>::N_COINS * PoolT<T>::N_COINS * xp[0] / Bsum * xp[1] / Bsum;
-    B = fee_gamma * B /
-        (fee_gamma * B / PoolTraits<T>::PRECISION() + PoolTraits<T>::PRECISION() - B);
-
-    return (
-        mid_fee * B + out_fee * (PoolTraits<T>::PRECISION() - B)
-    ) / PoolTraits<T>::PRECISION();
-}
-
-template <typename T>
-inline std::pair<T, T> post_trade_price_and_fee(
-    const PoolT<T>& pool,
-    size_t i,
-    size_t j,
-    T dx
-) {
-    const T ps = pool.cached_price_scale;
-
-    auto balances_local = pool.balances;
-    balances_local[i] += dx;
-    auto xp = pool_xp_from(pool, balances_local, ps);
-
-    auto y_out = MathOps<T>::get_y(pool.A, pool.gamma, xp, pool.D, j);
-    T dy_xp = xp[j] - y_out.value;
-    xp[j] -= dy_xp;
-
-    const T fee_pool = dyn_fee(xp, pool.mid_fee, pool.out_fee, pool.fee_gamma);
-    const T D_new = MathOps<T>::newton_D(pool.A, pool.gamma, xp, T(0));
-    const T p_new = MathOps<T>::get_p(xp, D_new, {pool.A, pool.gamma}) * ps / PoolTraits<T>::PRECISION();
-
-    return {p_new, fee_pool};
-}
-
 template <typename T>
 inline T balance_indicator(const PoolT<T>& pool) {
     const T ps = pool.cached_price_scale;
@@ -121,26 +68,21 @@ inline std::pair<T, T> simulate_exchange_once(
 ) {
     const T ps = pool.cached_price_scale;
 
-    auto balances_local = pool.balances;
-    balances_local[i] += dx;
-    auto xp = pool_xp_from(pool, balances_local, ps);
+    const T balance0 = pool.balances[0] + (i == 0 ? dx : T(0));
+    const T balance1 = pool.balances[1] + (i == 1 ? dx : T(0));
+    std::array<T, 2> xp{
+        balance0 * pool.precisions[0],
+        balance1 * pool.precisions[1] * ps / PoolTraits<T>::PRECISION()
+    };
 
-    auto y_out = MathOps<T>::get_y(pool.A, pool.gamma, xp, pool.D, j);
+    auto y_out = MathOps<T>::get_y_unchecked(pool.A, pool.gamma, xp, pool.D, j);
     T dy_xp = xp[j] - y_out.value;
     xp[j] -= dy_xp;
 
     T dy_tokens  = xp_to_tokens_j(pool, j, dy_xp, ps);
-    T fee_pool   = dyn_fee(xp, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+    T fee_pool   = pool.fee(xp);
     T fee_tokens = fee_pool * dy_tokens / PoolTraits<T>::FEE_PRECISION();
     return {dy_tokens - fee_tokens, fee_tokens};
-}
-
-// -----------------------------------------------------------------------------
-// Convenience conversion
-// -----------------------------------------------------------------------------
-template <typename T>
-inline T coin0_equiv(const T& amt0, const T& amt1, const T& price_scale) {
-    return amt0 + amt1 * price_scale / PoolTraits<T>::PRECISION();
 }
 
 } // namespace twocrypto_fx

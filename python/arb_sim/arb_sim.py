@@ -17,9 +17,12 @@ from typing import Any, Dict, List
 from datetime import datetime, timezone
 
 
-def parse_start_time(value: str | None) -> int | None:
+def parse_start_time(value: str | int | float | None) -> int | None:
     if value is None:
         return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    value = str(value)
     if value.isdigit():
         return int(value)
     if not re.fullmatch(r"\d{2}-\d{2}-\d{4}", value):
@@ -29,11 +32,24 @@ def parse_start_time(value: str | None) -> int | None:
 
 
 class ArbHarnessRunner:
-    def __init__(self, repo_root: Path, real: str = "double"):
+    def __init__(
+        self,
+        repo_root: Path,
+        real: str = "double",
+        exe_path: str | Path | None = None,
+    ):
         self.repo_root = Path(repo_root)
         self.cpp_dir = self.repo_root / "cpp_old"
         self.cpp_dir = self.repo_root / "cpp_modular"  # modular harness
         self.build_dir = self.cpp_dir / "build"
+        self.custom_exe = exe_path is not None
+        if self.custom_exe:
+            self.exe_path = Path(exe_path).expanduser()
+            if not self.exe_path.is_absolute():
+                self.exe_path = self.repo_root / self.exe_path
+            self.target = self.exe_path.name
+            return
+
         # Resolve binary name based on real type
         real = (real or "double").lower()
         if real in ("float", "f"):
@@ -59,6 +75,12 @@ class ArbHarnessRunner:
             raise RuntimeError("CMake configure failed")
 
     def build(self):
+        if self.custom_exe:
+            if not self.exe_path.exists():
+                raise FileNotFoundError(f"Missing executable: {self.exe_path}")
+            print(f"Using custom C++ harness: {self.exe_path}")
+            return
+
         self.configure_build()
         print(f"Building {self.target}...")
         r = subprocess.run(
@@ -96,8 +118,9 @@ class ArbHarnessRunner:
         candle_filter: float | None = None,
         start_time: int | None = None,
         disable_slippage_probes: bool = False,
+        quiet_harness: bool = False,
     ) -> Dict[str, Any]:
-        print("Running arb_harness...")
+        print("Running arb_harness...", flush=True)
         cmd = [
             str(self.exe_path),
             str(pools_json),
@@ -137,11 +160,13 @@ class ArbHarnessRunner:
             cmd += ["--start-time", str(start_time)]
         if disable_slippage_probes:
             cmd += ["--disable-slippage-probes"]
+        if quiet_harness:
+            cmd += ["--quiet"]
         # Stream harness stdout/stderr directly to the console for live progress
         r = subprocess.run(cmd)
         if r.returncode != 0:
             raise RuntimeError("arb_harness failed")
-        print(f"✓ Results: {out_json_path}")
+        print(f"✓ Results: {out_json_path}", flush=True)
         with open(out_json_path, "r") as f:
             return json.load(f)
 
@@ -170,6 +195,12 @@ def main() -> int:
         "--skip-build",
         action="store_true",
         help="Skip C++ build if binary exists",
+    )
+    parser.add_argument(
+        "--harness-exe",
+        type=str,
+        default=None,
+        help="Use an explicit arb_harness binary instead of cpp_modular/build",
     )
     parser.add_argument(
         "--n-candles",
@@ -266,10 +297,15 @@ def main() -> int:
         action="store_true",
         help="Disable slippage probes in the C++ harness",
     )
+    parser.add_argument(
+        "--quiet-harness",
+        action="store_true",
+        help="Suppress C++ harness progress logs",
+    )
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parents[2]
-    runner = ArbHarnessRunner(repo_root, real=args.real)
+    runner = ArbHarnessRunner(repo_root, real=args.real, exe_path=args.harness_exe)
     if args.skip_build:
         if not runner.exe_path.exists():
             runner.build()
@@ -341,7 +377,7 @@ def main() -> int:
         else (repo_root / "python" / "arb_sim" / "run_data" / "arb_run_1.json")
     )
     out_json_path.parent.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now()
+    run_started_at = datetime.now(timezone.utc)
     raw = runner.run(
         pool_config_path,
         candles_path,
@@ -362,10 +398,13 @@ def main() -> int:
         candle_filter=args.candle_filter,
         start_time=start_ts,
         disable_slippage_probes=args.disable_slippage_probes,
+        quiet_harness=args.quiet_harness,
     )
+    harness_done_at = datetime.now(timezone.utc)
+    harness_wall_s = (harness_done_at - run_started_at).total_seconds()
 
     runs_raw: List[Dict[str, Any]] = raw.get("runs", [])
-    print(f"Time taken: {(datetime.now() - ts).total_seconds()} seconds")
+    print(f"Time taken: {harness_wall_s} seconds")
 
     # Derive grid dimension names from pool_config meta (x1..xn format)
     def _grid_dim_names(grid: Dict[str, Any]) -> List[str]:
@@ -384,6 +423,14 @@ def main() -> int:
             return [name for _, name in sorted(numbered)]
         return []
 
+    def _get_dotted(obj: Dict[str, Any], path: str):
+        cur: Any = obj
+        for part in path.split("."):
+            if not isinstance(cur, dict) or part not in cur:
+                return None
+            cur = cur[part]
+        return cur
+
     def get_meta(conf: Dict[str, Any]):
         meta = conf.get("meta", {}) if isinstance(conf, dict) else {}
         grid = meta.get("grid", {}) if isinstance(meta, dict) else {}
@@ -392,6 +439,34 @@ def main() -> int:
         return dim_names, base_pool
 
     dim_names, base_pool_meta = get_meta(cfg)
+    grid_meta = cfg.get("meta", {}).get("grid", {}) if isinstance(cfg, dict) else {}
+
+    def _grid_axis_values() -> List[List[Any]]:
+        values: List[List[Any]] = []
+        for idx in range(1, len(dim_names) + 1):
+            dim = grid_meta.get(f"x{idx}") if isinstance(grid_meta, dict) else None
+            raw = dim.get("values") if isinstance(dim, dict) else None
+            if not isinstance(raw, list) or not raw:
+                return []
+            values.append(raw)
+        return values
+
+    axis_values = _grid_axis_values()
+
+    def _coords_from_grid_index(run_idx: int) -> List[Any] | None:
+        if not axis_values:
+            return None
+        coords: List[Any] = []
+        stride = 1
+        strides: List[int] = []
+        for vals in reversed(axis_values[1:]):
+            stride *= len(vals)
+            strides.append(stride)
+        strides = list(reversed(strides)) + [1]
+
+        for vals, axis_stride in zip(axis_values, strides):
+            coords.append(vals[(run_idx // axis_stride) % len(vals)])
+        return coords
 
     # Derive base_pool from actual pools if meta missing
     def pools_list():
@@ -427,9 +502,10 @@ def main() -> int:
     # Enrich runs with x1_key/x1_val, x2_key/x2_val, ..., xN_key/xN_val
     enriched_runs: List[Dict[str, Any]] = []
     total_trades = 0
-    for rr in runs_raw:
+    for run_idx, rr in enumerate(runs_raw):
         params_obj = rr.get("params", {}) or {}
         pool_obj = params_obj.get("pool", {}) if isinstance(params_obj, dict) else {}
+        grid_coords = _coords_from_grid_index(run_idx)
         # Accumulate total trades for metadata (no duplicate field in result)
         result_obj = rr.get("result", {}) or {}
         try:
@@ -440,7 +516,10 @@ def main() -> int:
         enriched: Dict[str, Any] = {}
         # Add x1_key/x1_val, x2_key/x2_val, etc. for each dimension
         for idx, name in enumerate(dim_names, start=1):
-            val = str(pool_obj.get(name)) if name and name in pool_obj else None
+            val_obj = _get_dotted(pool_obj, name) if name else None
+            if val_obj is None and grid_coords is not None:
+                val_obj = grid_coords[idx - 1]
+            val = str(val_obj) if val_obj is not None else None
             enriched[f"x{idx}_key"] = name
             enriched[f"x{idx}_val"] = val
 
@@ -456,14 +535,50 @@ def main() -> int:
             enriched["states"] = rr.get("states")
         enriched_runs.append(enriched)
 
+    raw_metadata = raw.get("metadata", {}) if isinstance(raw, dict) else {}
+    raw_events = raw_metadata.get("events") if isinstance(raw_metadata, dict) else None
+    candles_loaded = (
+        raw_metadata.get("n_candles_loaded", raw_metadata.get("candles"))
+        if isinstance(raw_metadata, dict)
+        else None
+    )
+    if candles_loaded is None and isinstance(raw_events, int):
+        candles_loaded = raw_events // 2
+
+    postprocess_ms = (datetime.now(timezone.utc) - harness_done_at).total_seconds() * 1000.0
     agg = {
         "metadata": {
             "candles_file": str(candles_path),
+            "pool_config_file": str(pool_config_path),
+            "harness_exe": str(runner.exe_path),
+            "real": args.real,
+            "run_started_at": run_started_at.isoformat(),
             "threads": max(1, args.threads),
+            "quiet_harness": args.quiet_harness,
+            "n_pools": raw_metadata.get("n_pools", len(runs_raw)),
+            "n_candles_requested": args.n_candles,
+            "n_candles_loaded": candles_loaded,
+            "events": raw_events,
+            "start_time": start_ts,
+            "disable_slippage_probes": args.disable_slippage_probes,
+            "save_actions": args.save_actions,
+            "min_swap": args.min_swap,
+            "max_swap": args.max_swap,
+            "dustswapfreq": args.dustswapfreq,
+            "userswapfreq": args.userswapfreq,
+            "userswapsize": args.userswapsize,
+            "userswapthresh": args.userswapthresh,
+            "candle_filter": args.candle_filter,
+            "cowswap_enabled": args.cow,
+            "cowswap_file": cowswap_path,
+            "cowswap_fee_bps": cowswap_fee_bps,
             "base_pool": base_pool,
             "grid": cfg.get("meta", {}).get("grid") if isinstance(cfg, dict) else None,
-            "candles_read_ms": raw.get("metadata", {}).get("candles_read_ms"),
-            "exec_ms": raw.get("metadata", {}).get("exec_ms"),
+            "candles_read_ms": raw_metadata.get("candles_read_ms"),
+            "exec_ms": raw_metadata.get("exec_ms"),
+            "harness_wall_ms": harness_wall_s * 1000.0,
+            "postprocess_ms": postprocess_ms,
+            "wall_ms": harness_wall_s * 1000.0 + postprocess_ms,
             "total_trades": total_trades,
         },
         "runs": enriched_runs,

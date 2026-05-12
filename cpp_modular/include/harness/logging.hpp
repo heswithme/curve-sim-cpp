@@ -165,7 +165,7 @@ public:
         entry.close = static_cast<T>(candle.close);
         entry.p_cex = p_cex;
         const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+        entry.fee = pool.fee(xp_now);
         entry.n_trades = n_trades;
         entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);

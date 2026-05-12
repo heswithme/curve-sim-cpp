@@ -115,7 +115,13 @@ void append_core_metrics(
     summary["lp_fee_coin0"] = static_cast<double>(m.lp_fee_coin0);
     summary["avg_pool_fee"] = static_cast<double>(m.avg_pool_fee());
     summary["tw_avg_pool_fee"] = tw_summary.tw_avg_pool_fee;
+    summary["min_pool_fee"] = tw_summary.min_pool_fee;
+    summary["max_pool_fee"] = tw_summary.max_pool_fee;
     summary["arb_pnl_coin0"] = static_cast<double>(m.arb_pnl_coin0);
+    summary["arb_edge_candidates"] = static_cast<uint64_t>(m.arb_edge_candidates);
+    summary["arb_invalid_size_rejections"] = static_cast<uint64_t>(m.arb_invalid_size_rejections);
+    summary["arb_nonpositive_profit_rejections"] = static_cast<uint64_t>(m.arb_nonpositive_profit_rejections);
+    summary["arb_guarded_loss_coin0"] = static_cast<double>(m.arb_guarded_loss_coin0);
 
     const double gross_lvr = static_cast<double>(m.lp_fee_coin0 + m.arb_pnl_coin0);
     summary["fee_capture_rate"] = (gross_lvr > 0.0)
@@ -158,6 +164,8 @@ inline void append_price_follow_metrics(
 ) {
     summary["avg_rel_price_diff"] = tw_summary.avg_rel_price_diff;
     summary["max_rel_price_diff"] = tw_summary.max_rel_price_diff;
+    summary["min_price_scale"] = tw_summary.min_price_scale;
+    summary["max_price_scale"] = tw_summary.max_price_scale;
     summary["avg_imbalance"] = tw_summary.avg_imbalance;
 }
 
@@ -207,19 +215,58 @@ json::object metrics_to_summary(const PoolResult<T>& r, size_t n_events) {
 template <typename T>
 json::object build_output_json(
     const std::vector<PoolResult<T>>& results,
+    size_t n_candles,
     size_t n_events,
     const std::string& data_path,
+    const std::string& pools_path,
+    const std::string& real_type,
     size_t n_threads,
+    const RunConfig<T>& run_cfg,
+    size_t n_candles_requested,
+    double candle_filter_pct,
+    size_t pool_start,
+    size_t pool_end,
+    bool quiet,
     double candles_read_ms,
     double exec_ms
 ) {
     // Metadata
     json::object meta;
     meta["candles_file"] = data_path;
+    meta["pool_config_file"] = pools_path;
+    meta["real"] = real_type;
+    meta["n_candles_requested"] = static_cast<uint64_t>(n_candles_requested);
+    meta["candles"] = static_cast<uint64_t>(n_candles);
+    meta["n_candles_loaded"] = static_cast<uint64_t>(n_candles);
     meta["events"] = static_cast<uint64_t>(n_events);
+    meta["n_pools"] = static_cast<uint64_t>(results.size());
+    meta["pool_start"] = static_cast<uint64_t>(pool_start);
+    meta["pool_end"] = (pool_end == SIZE_MAX)
+        ? json::value(nullptr)
+        : json::value(static_cast<uint64_t>(pool_end));
     meta["threads"] = static_cast<uint64_t>(n_threads);
+    meta["quiet"] = quiet;
+    meta["start_time"] = static_cast<uint64_t>(run_cfg.start_ts);
+    meta["disable_slippage_probes"] = !run_cfg.enable_slippage_probes;
+    meta["save_actions"] = run_cfg.save_actions;
+    meta["min_swap"] = static_cast<double>(run_cfg.min_swap_frac);
+    meta["max_swap"] = static_cast<double>(run_cfg.max_swap_frac);
+    meta["candle_filter"] = candle_filter_pct;
+    meta["dustswapfreq"] = static_cast<uint64_t>(run_cfg.dustswap_freq_s);
+    meta["userswapfreq"] = static_cast<uint64_t>(run_cfg.user_swap_freq_s);
+    meta["userswapsize"] = static_cast<double>(run_cfg.user_swap_size_frac);
+    meta["userswapthresh"] = static_cast<double>(run_cfg.user_swap_thresh);
+    meta["cowswap_enabled"] = !run_cfg.cowswap_path.empty();
+    meta["cowswap_file"] = run_cfg.cowswap_path;
+    meta["cowswap_fee_bps"] = static_cast<double>(run_cfg.cowswap_fee_bps);
     meta["candles_read_ms"] = candles_read_ms;
     meta["exec_ms"] = exec_ms;
+
+    uint64_t total_trades = 0;
+    for (const auto& r : results) {
+        total_trades += static_cast<uint64_t>(r.metrics.trades);
+    }
+    meta["total_trades"] = total_trades;
     
     // Build runs array
     json::array runs;
@@ -271,15 +318,25 @@ template <typename T>
 bool write_results_json(
     const std::string& output_path,
     const std::vector<PoolResult<T>>& results,
+    size_t n_candles,
     size_t n_events,
     const std::string& data_path,
+    const std::string& pools_path,
+    const std::string& real_type,
     size_t n_threads,
+    const RunConfig<T>& run_cfg,
+    size_t n_candles_requested,
+    double candle_filter_pct,
+    size_t pool_start,
+    size_t pool_end,
+    bool quiet,
     double candles_read_ms,
     double exec_ms
 ) {
     auto O = build_output_json(
-        results, n_events, data_path, n_threads,
-        candles_read_ms, exec_ms
+        results, n_candles, n_events, data_path, pools_path, real_type, n_threads,
+        run_cfg, n_candles_requested, candle_filter_pct, pool_start, pool_end,
+        quiet, candles_read_ms, exec_ms
     );
     
     std::ofstream of(output_path);

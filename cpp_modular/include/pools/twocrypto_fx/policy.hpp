@@ -19,6 +19,7 @@ enum class PolicyKind {
     TwocryptoPolicy,
     ZeroStub,
     OracleX2SequentialFee,
+    FixedFee,
 };
 
 inline PolicyKind policy_kind_from_string(const std::string& kind) {
@@ -38,8 +39,17 @@ inline PolicyKind policy_kind_from_string(const std::string& kind) {
     ) {
         return PolicyKind::OracleX2SequentialFee;
     }
+    if (kind == "fixed_fee" || kind == "fixed_fee_policy") {
+        return PolicyKind::FixedFee;
+    }
     throw std::invalid_argument("unsupported policy kind: " + kind);
 }
+
+template <typename T>
+struct PolicyConfig {
+    PolicyKind kind{PolicyKind::None};
+    T fee{T(0)};
+};
 
 template <typename T>
 struct PolicyState {
@@ -75,12 +85,16 @@ template <typename T>
 class PolicyModel {
 public:
     PolicyKind kind = PolicyKind::None;
+    PolicyConfig<T> params{};
     PolicyState<T> state{};
     PolicyPoolConfig<T> config{};
     PolicyCallContext<T> call_context{};
 
     PolicyModel() = default;
-    explicit PolicyModel(PolicyKind _kind) : kind(_kind) {}
+    explicit PolicyModel(PolicyKind _kind) : kind(_kind) {
+        params.kind = _kind;
+    }
+    explicit PolicyModel(const PolicyConfig<T>& _params) : kind(_params.kind), params(_params) {}
 
     void configure_pool(
         const T& mid_fee,
@@ -104,17 +118,20 @@ public:
     }
 
     T get_fee(const std::array<T, 2>& xp) const {
-        if (kind == PolicyKind::TwocryptoPolicy) {
-            return native_fee(xp);
+        if (kind == PolicyKind::FixedFee) {
+            return fixed_fee(xp);
         }
         if (kind == PolicyKind::OracleX2SequentialFee) {
-            return state.policy_fee;
+            return oracle_x2_sequential_fee(xp);
         }
-        return T(0);
+        if (kind == PolicyKind::TwocryptoPolicy) {
+            return twocrypto_policy_fee(xp);
+        }
+        return zero_stub_fee(xp);
     }
 
     T get_price_scale() const {
-        if (kind == PolicyKind::None || kind == PolicyKind::ZeroStub) {
+        if (kind == PolicyKind::None || kind == PolicyKind::ZeroStub || kind == PolicyKind::FixedFee) {
             return T(0);
         }
         if (kind == PolicyKind::OracleX2SequentialFee) {
@@ -172,6 +189,10 @@ public:
         const T& d_value,
         uint64_t oracle_timestamp
     ) {
+        if (kind == PolicyKind::None || kind == PolicyKind::ZeroStub || kind == PolicyKind::FixedFee) {
+            return;
+        }
+
         state.xp = xp;
         state.price_scale = price_scale;
         state.price_oracle = price_oracle;
@@ -243,7 +264,22 @@ private:
         return T(fee_bps) * fee_precision / T(BPS_SCALE);
     }
 
-    T native_fee(const std::array<T, 2>& xp) const {
+    T fixed_fee(const std::array<T, 2>& xp) const {
+        (void)xp;
+        return params.fee;
+    }
+
+    T zero_stub_fee(const std::array<T, 2>& xp) const {
+        (void)xp;
+        return T(0);
+    }
+
+    T oracle_x2_sequential_fee(const std::array<T, 2>& xp) const {
+        (void)xp;
+        return state.policy_fee;
+    }
+
+    T twocrypto_policy_fee(const std::array<T, 2>& xp) const {
         if (config.fee_gamma == T(0)) {
             return config.mid_fee;
         }

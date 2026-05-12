@@ -113,6 +113,8 @@ def sweep(
     threads: int = CORES_PER_BLADE,
     dustswap_freq: int = 600,
     candle_filter: Optional[float] = None,
+    disable_slippage_probes: bool = False,
+    quiet_harness: bool = False,
     output_prefix: str = "cluster_sweep",
     stream_blade: Optional[str] = None,
 ) -> Optional[Path]:
@@ -163,6 +165,8 @@ def sweep(
         threads_per_blade=threads,
         dustswap_freq=dustswap_freq,
         candle_filter=candle_filter,
+        disable_slippage_probes=disable_slippage_probes,
+        quiet_harness=quiet_harness,
         output_prefix=output_prefix,
     )
 
@@ -267,6 +271,8 @@ def main():
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
     parser.add_argument("--dustswap-freq", type=int, default=600)
     parser.add_argument("--candle-filter", type=float)
+    parser.add_argument("--disable-slippage-probes", action="store_true")
+    parser.add_argument("--quiet-harness", action="store_true")
     parser.add_argument("--output-prefix", default="cluster_sweep")
 
     # Workflow control
@@ -313,6 +319,8 @@ def main():
         threads=args.threads,
         dustswap_freq=args.dustswap_freq,
         candle_filter=args.candle_filter,
+        disable_slippage_probes=args.disable_slippage_probes,
+        quiet_harness=args.quiet_harness,
         output_prefix=args.output_prefix,
         stream_blade=args.stream_blade,
     )

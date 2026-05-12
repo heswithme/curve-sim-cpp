@@ -192,6 +192,7 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
 
     - A: stored with 1e4 multiplier → divide by 1e4
     - *fee*: stored with 1e10 scale → convert to bps: value/1e10 * 1e4
+    - *fee_bps*: already stored as user-facing bps
       (equivalently, scale = 1e10/1e4 = 1e6; but we compute directly for clarity)
     - *liquidity* or *balance*: stored with 1e18 → divide by 1e18
     - default: scale 1.0, no suffix
@@ -199,6 +200,8 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
+    if "fee_bps" in key:
+        return 1.0, " (bps)"
     if "fee" in key and "gamma" not in key:
         # We will compute bps directly in labels, return sentinel scale 0
         return 0.0, " (bps)"
@@ -219,6 +222,9 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
     display_name = name or ""
     if suffix and suffix not in (display_name or ""):
         display_name = f"{display_name}{suffix}"
+    if "fee_bps" in key:
+        labels = [f"{v:.2f}" for v in values]
+        return labels, display_name
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         # Convert 1e10-scaled fee to bps: val/1e10 * 1e4
         labels = [f"{(v / 1e10 * 1e4):.2f}" for v in values]
@@ -389,6 +395,7 @@ def main() -> int:
             or "tw_real_slippage" in mlow
             or "geom_mean" in mlow
             or "rel_price_diff" in mlow
+            or "pool_fee" in mlow
         )
         return scale_1e18, scale_percent
 

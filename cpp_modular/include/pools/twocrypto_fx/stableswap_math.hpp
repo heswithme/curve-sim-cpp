@@ -116,21 +116,30 @@ struct MathOpsCommon {
         const T& D,
         size_t i
     ) {
-        (void)_gamma;
-
         if (i >= Traits::N) {
             throw std::invalid_argument("i above N");
         }
+        return get_y_unchecked(_amp, _gamma, xp, D, i);
+    }
 
-        T S_  = T(0);
-        T c   = D;
+    static MathResultT<T> get_y_unchecked(
+        const T& _amp,
+        const T& _gamma,
+        const std::array<T, Traits::N>& xp,
+        const T& D,
+        size_t i
+    ) {
+        (void)_gamma;
+
+        T S_ = T(0);
+        T c = D;
         T Ann = _amp * Traits::N;
 
         for (size_t idx = 0; idx < Traits::N; ++idx) {
             if (idx == i) continue;
             T _x = xp[idx];
             S_ += _x;
-            c   = c * D / (_x * Traits::N);
+            c = c * D / (_x * Traits::N);
         }
 
         c = c * D * Traits::A_MULTIPLIER() / (Ann * Traits::N);

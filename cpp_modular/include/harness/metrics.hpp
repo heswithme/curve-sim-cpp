@@ -21,6 +21,10 @@ struct Metrics {
     T lp_fee_coin0{0};          // Total LP fees in coin0 units
     T arb_pnl_coin0{0};         // Arbitrageur profit in coin0 units
     size_t n_rebalances{0};     // Count of price_scale changes
+    size_t arb_edge_candidates{0};
+    size_t arb_invalid_size_rejections{0};
+    size_t arb_nonpositive_profit_rejections{0};
+    T arb_guarded_loss_coin0{0};
     
     // Donations
     size_t donations{0};
@@ -49,6 +53,10 @@ struct Metrics {
         lp_fee_coin0 += other.lp_fee_coin0;
         arb_pnl_coin0 += other.arb_pnl_coin0;
         n_rebalances += other.n_rebalances;
+        arb_edge_candidates += other.arb_edge_candidates;
+        arb_invalid_size_rejections += other.arb_invalid_size_rejections;
+        arb_nonpositive_profit_rejections += other.arb_nonpositive_profit_rejections;
+        arb_guarded_loss_coin0 += other.arb_guarded_loss_coin0;
         donations += other.donations;
         donation_coin0_total += other.donation_coin0_total;
         donation_amounts_total[0] += other.donation_amounts_total[0];
@@ -67,6 +75,10 @@ struct TimeWeightedSummary {
     double max_rel_price_diff{-1.0};
     double avg_imbalance{-1.0};
     double tw_avg_pool_fee{-1.0};
+    double min_price_scale{-1.0};
+    double max_price_scale{-1.0};
+    double min_pool_fee{-1.0};
+    double max_pool_fee{-1.0};
 };
 
 // Time-weighted metrics for tracking pool state over time
@@ -79,6 +91,9 @@ struct TimeWeightedMetrics {
     T last_rel_abs{0};                   // |ps/p_cex - 1| at previous event
     uint64_t last_ts_err{0};
     bool have_err{false};
+    T min_price_scale{0};
+    T max_price_scale{0};
+    bool have_price_scale{false};
 
     // Time-weighted imbalance: 4*x0'*x1'/(x0'+x1')^2, with x1' = balance1 * p_cex
     long double sum_imbalance_dt{0.0L};
@@ -93,6 +108,8 @@ struct TimeWeightedMetrics {
     T last_fee_frac{0};
     uint64_t last_ts_fee{0};
     bool have_fee{false};
+    T min_fee_frac{0};
+    T max_fee_frac{0};
     
     
     TimeWeightedSummary summarize() const {
@@ -107,11 +124,24 @@ struct TimeWeightedMetrics {
         summary.tw_avg_pool_fee = tw_fee_dt > 0.0L
             ? static_cast<double>(tw_fee_sum_dt / tw_fee_dt)
             : -1.0;
+        summary.min_price_scale = have_price_scale ? static_cast<double>(min_price_scale) : -1.0;
+        summary.max_price_scale = have_price_scale ? static_cast<double>(max_price_scale) : -1.0;
+        summary.min_pool_fee = have_fee ? static_cast<double>(min_fee_frac) : -1.0;
+        summary.max_pool_fee = have_fee ? static_cast<double>(max_fee_frac) : -1.0;
         return summary;
     }
 
     // Update methods
     void sample_price_error(uint64_t ts, T price_scale, T p_cex) {
+        if (!have_price_scale) {
+            min_price_scale = price_scale;
+            max_price_scale = price_scale;
+            have_price_scale = true;
+        } else {
+            if (price_scale < min_price_scale) min_price_scale = price_scale;
+            if (price_scale > max_price_scale) max_price_scale = price_scale;
+        }
+
         T cur_rel_abs = T(0);
         if (p_cex > T(0)) {
             cur_rel_abs = std::abs(price_scale / p_cex - T(1));
@@ -151,6 +181,13 @@ struct TimeWeightedMetrics {
     }
     
     void sample_fee(uint64_t ts, T fee_frac) {
+        if (!have_fee) {
+            min_fee_frac = fee_frac;
+            max_fee_frac = fee_frac;
+        } else {
+            if (fee_frac < min_fee_frac) min_fee_frac = fee_frac;
+            if (fee_frac > max_fee_frac) max_fee_frac = fee_frac;
+        }
         if (have_fee && ts > last_ts_fee) {
             const long double dt = static_cast<long double>(ts - last_ts_fee);
             tw_fee_sum_dt += static_cast<long double>(last_fee_frac) * dt;
@@ -160,7 +197,7 @@ struct TimeWeightedMetrics {
         last_ts_fee = ts;
         have_fee = true;
     }
-    
+
 };
 
 // Real slippage probes at fixed sizes

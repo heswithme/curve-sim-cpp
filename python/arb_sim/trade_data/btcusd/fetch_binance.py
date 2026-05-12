@@ -47,7 +47,9 @@ def parse_iso8601(value: str) -> dt.datetime:
 def resolve_timerange() -> Tuple[dt.datetime, dt.datetime]:
     if START_OVERRIDE or END_OVERRIDE:
         if not (START_OVERRIDE and END_OVERRIDE):
-            raise ValueError("Both START_OVERRIDE and END_OVERRIDE must be set together")
+            raise ValueError(
+                "Both START_OVERRIDE and END_OVERRIDE must be set together"
+            )
         start = parse_iso8601(START_OVERRIDE)
         end = parse_iso8601(END_OVERRIDE)
     else:
@@ -62,9 +64,13 @@ def resolve_timerange() -> Tuple[dt.datetime, dt.datetime]:
     now = dt.datetime.now(dt.timezone.utc)
     now_floor = now.replace(second=0, microsecond=0)
     if now_floor <= start:
-        raise ValueError("Requested range ends in the future or start is beyond available data")
+        raise ValueError(
+            "Requested range ends in the future or start is beyond available data"
+        )
     if end > now_floor:
-        print(f"Clipping end timestamp to latest available candle: {now_floor.isoformat()}")
+        print(
+            f"Clipping end timestamp to latest available candle: {now_floor.isoformat()}"
+        )
         end = now_floor
     return start, end
 
@@ -87,7 +93,7 @@ def fetch_candles(session: requests.Session, start_ms: int) -> List[Sequence[obj
         except Exception as exc:  # noqa: BLE001
             if attempt == RETRIES - 1:
                 raise
-            backoff = min(2 ** attempt, 30)
+            backoff = min(2**attempt, 30)
             print(
                 f"Retrying window starting {dt.datetime.utcfromtimestamp(start_ms / 1000)} after error: {exc}",
                 file=sys.stderr,
@@ -99,7 +105,9 @@ def fetch_candles(session: requests.Session, start_ms: int) -> List[Sequence[obj
 def iterate_candles(start: dt.datetime, end: dt.datetime) -> Iterator[Sequence[object]]:
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
-    est_requests = max(1, (end_ms - start_ms + (LIMIT * INTERVAL_MS) - 1) // (LIMIT * INTERVAL_MS))
+    est_requests = max(
+        1, (end_ms - start_ms + (LIMIT * INTERVAL_MS) - 1) // (LIMIT * INTERVAL_MS)
+    )
     print(
         f"Fetching {INTERVAL} candles for {PAIR} from {start.isoformat()} to {end.isoformat()}"
     )
@@ -201,14 +209,16 @@ def iterate_candles(start: dt.datetime, end: dt.datetime) -> Iterator[Sequence[o
 
     if not collected:
         print("No candles fetched; aborting", file=sys.stderr)
-        return iter(() )
+        return iter(())
 
     ordered_times = sorted(collected)
     print(f"Fetched {len(ordered_times):,} candles")
     return (collected[ts] for ts in ordered_times)
 
 
-def summarize_rows(rows: List[Sequence[object]], start: dt.datetime, end: dt.datetime) -> None:
+def summarize_rows(
+    rows: List[Sequence[object]], start: dt.datetime, end: dt.datetime
+) -> None:
     start_ms = int(start.timestamp() * 1000)
     end_ms = int(end.timestamp() * 1000)
     times = [int(row[0]) for row in rows]
@@ -231,6 +241,7 @@ def summarize_rows(rows: List[Sequence[object]], start: dt.datetime, end: dt.dat
     print(
         f"Collected {len(times):,} candles (expected ≈ {expected:,}); gaps detected: {missing:,}"
     )
+
 
 def transform_rows(rows: List[Sequence[object]]) -> List[List[float]]:
     transformed: List[List[float]] = []

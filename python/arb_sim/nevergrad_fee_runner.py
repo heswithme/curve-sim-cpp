@@ -76,7 +76,7 @@ SERVER_CONFIG = {
 TEMPLATE_POOL = {
     "A": 6 * 10_000,
     "gamma": 0.0001,
-    "adjustment_step_min": 0.00001,
+    "adjustment_step_min": 0.000001,
     "adjustment_step_max": 0.005,
     "reserved_profit_fraction": 0.5,
     "admin_fee": 0.5,

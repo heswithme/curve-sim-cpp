@@ -96,7 +96,8 @@ python/arb_sim/cluster_orchestration/jobs/**/downloads/
 
 # Local scratch directory used by scripts
 python/git
-
+tmp/
+notes/
 # Trade data (very large). Keep code/docs inside.
 python/arb_sim/trade_data/**
 !python/arb_sim/trade_data/**/

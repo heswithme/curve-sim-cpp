@@ -66,7 +66,9 @@ void print_usage(const char* prog) {
         << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma,\n"
         << "    adjustment_step_min, adjustment_step_max, reserved_profit_fraction, admin_fee, policy\n"
         << "  response fields:\n"
-        << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
+        << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff,\n"
+        << "    min_price_scale, max_price_scale, min_pool_fee, max_pool_fee,\n"
+        << "    arb guard counters, elapsed_ms\n";
 }
 
 bool parse_size_t(const std::string& s, std::size_t& out) {
@@ -432,18 +434,8 @@ json::object evaluate_request(
     }
     if (auto* policy = req.if_contains("policy")) {
         try {
-            if (policy->is_string()) {
-                pool.policy_kind = arb::pools::twocrypto_fx::policy_kind_from_string(std::string(policy->as_string().c_str()));
-            } else if (policy->is_object()) {
-                const auto& po = policy->as_object();
-                std::string kind = "none";
-                if (auto* k = po.if_contains("kind"); k && k->is_string()) {
-                    kind = std::string(k->as_string().c_str());
-                }
-                pool.policy_kind = arb::pools::twocrypto_fx::policy_kind_from_string(kind);
-            } else {
-                return make_error_response(req, "policy must be a string or object");
-            }
+            pool.policy_config = arb::pools::parse_policy_config<RealT>(*policy);
+            pool.policy_kind = pool.policy_config.kind;
         } catch (const std::exception& e) {
             return make_error_response(req, e.what());
         }
@@ -491,15 +483,25 @@ json::object evaluate_request(
     out["admin_fee"] = static_cast<double>(pool.admin_fee);
     out["mid_fee_bps"] = static_cast<double>(pool.mid_fee) * 10000.0;
     out["out_fee_bps"] = static_cast<double>(pool.out_fee) * 10000.0;
+    out["policy_fee_bps"] = static_cast<double>(pool.policy_config.fee) * 10000.0;
 
     out["vp"] = get_double_opt(summary, "vp", -1.0);
     out["apy"] = get_double_opt(summary, "apy", -1.0);
     out["apy_net"] = get_double_opt(summary, "apy_net", -1.0);
     out["avg_rel_price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
     out["max_rel_price_diff"] = get_double_opt(summary, "max_rel_price_diff", -1.0);
+    out["min_price_scale"] = get_double_opt(summary, "min_price_scale", -1.0);
+    out["max_price_scale"] = get_double_opt(summary, "max_price_scale", -1.0);
+    out["tw_avg_pool_fee"] = get_double_opt(summary, "tw_avg_pool_fee", -1.0);
+    out["min_pool_fee"] = get_double_opt(summary, "min_pool_fee", -1.0);
+    out["max_pool_fee"] = get_double_opt(summary, "max_pool_fee", -1.0);
 
     out["trades"] = get_double_opt(summary, "trades", 0.0);
     out["n_rebalances"] = get_double_opt(summary, "n_rebalances", 0.0);
+    out["arb_edge_candidates"] = get_double_opt(summary, "arb_edge_candidates", 0.0);
+    out["arb_invalid_size_rejections"] = get_double_opt(summary, "arb_invalid_size_rejections", 0.0);
+    out["arb_nonpositive_profit_rejections"] = get_double_opt(summary, "arb_nonpositive_profit_rejections", 0.0);
+    out["arb_guarded_loss_coin0"] = get_double_opt(summary, "arb_guarded_loss_coin0", 0.0);
     out["elapsed_ms"] = run.elapsed_ms;
     return out;
 }

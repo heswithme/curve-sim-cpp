@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <type_traits>
 #include "policy.hpp"
 #include "stableswap_math.hpp"
 
@@ -98,6 +99,11 @@ public:
     T last_prices = Traits::PRECISION();
     uint64_t last_timestamp = 0;
 
+    // Floating-only EMA helper cache. The uint branch still computes wad_exp.
+    uint64_t cached_ema_dt = 0;
+    T cached_ema_alpha = Traits::ZERO();
+    bool cached_ema_alpha_valid = false;
+
     // Parameters (normalized)
     T A = Traits::ZERO();
     T gamma = Traits::ZERO();
@@ -151,7 +157,8 @@ public:
         const T& initial_price,
         const T& _reserved_profit_fraction = PoolTraits<T>::FEE_PRECISION() / 2,
         const T& _admin_fee = PoolTraits<T>::FEE_PRECISION() / 2,
-        PolicyKind _policy_kind = PolicyKind::None
+        PolicyKind _policy_kind = PolicyKind::None,
+        PolicyConfig<T> _policy_config = PolicyConfig<T>{}
     ) {
         precisions = _precisions;
         A = _A; gamma = _gamma;
@@ -161,7 +168,10 @@ public:
         ma_time = _ma_time;
         reserved_profit_fraction = _reserved_profit_fraction;
         admin_fee = _admin_fee;
-        policy = PolicyModel<T>(_policy_kind);
+        if (_policy_config.kind == PolicyKind::None) {
+            _policy_config.kind = _policy_kind;
+        }
+        policy = PolicyModel<T>(_policy_config);
         policy.configure_pool(
             mid_fee,
             out_fee,
@@ -183,6 +193,10 @@ public:
         block_timestamp = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
         last_timestamp = block_timestamp;
+    }
+
+    T fee(const std::array<T, 2>& xp) const {
+        return _fee(xp);
     }
 
 private:
@@ -224,12 +238,11 @@ private:
 
     // _fee: dynamic fee between mid_fee and out_fee based on balance skew
     T _fee(const std::array<T, 2>& xp) const {
-        T native_fee = _native_fee(xp);
         T policy_fee = policy.get_fee(xp);
         if (policy_fee != Traits::ZERO()) {
             return _clamp_fee(policy_fee);
         }
-        return _clamp_fee(native_fee);
+        return _clamp_fee(_native_fee(xp));
     }
 
     T _policy_price_target(uint64_t ts, const T& current_price_oracle) {
@@ -241,19 +254,19 @@ private:
         const std::array<T, 2>& xp,
         const T& price_scale,
         const T& price_oracle,
-        const T& prices,
-        const T& vp,
-        const T& profit,
-        const T& d_value
+        const T& last_prices,
+        const T& virtual_price,
+        const T& xcp_profit,
+        const T& D
     ) {
         policy.update_state(
             xp,
             price_scale,
             price_oracle,
-            prices,
-            vp,
-            profit,
-            d_value,
+            last_prices,
+            virtual_price,
+            xcp_profit,
+            D,
             last_timestamp
         );
     }
@@ -592,13 +605,16 @@ public:
             ? (Traits::PRECISION() * _xcp(D, price_scale) / totalSupply)
             : virtual_price;
 
-        auto balances_local = balances;
-        balances_local[idx_i] += dx;
-        auto xp = _xp(balances_local, price_scale);
+        const T balance0 = balances[0] + (idx_i == 0 ? dx : Traits::ZERO());
+        const T balance1 = balances[1] + (idx_i == 1 ? dx : Traits::ZERO());
+        std::array<T, 2> xp{
+            balance0 * precisions[0],
+            balance1 * precisions[1] * price_scale / Traits::PRECISION()
+        };
 
         auto A_gamma = std::array<T, 2>{ A, gamma };
 
-        auto y_out = Ops::get_y(A_gamma[0], A_gamma[1], xp, D, idx_j);
+        auto y_out = Ops::get_y_unchecked(A_gamma[0], A_gamma[1], xp, D, idx_j);
         T dy_xp = xp[idx_j] - y_out.value;
         xp[idx_j] -= dy_xp;
 
@@ -633,25 +649,67 @@ public:
         return { dy_after_fee, fee, new_price_scale };
     }
 
+    // Floating arb fast path: commit an exchange whose winning preview was
+    // computed against the current pool state by simulate_exchange_once.
+    std::array<T, 3> exchange_from_preview(
+        size_t idx_i,
+        size_t idx_j,
+        T dx,
+        T dy_after_fee,
+        T fee
+    ) {
+        static_assert(std::is_floating_point_v<T>, "exchange_from_preview is floating-only");
+
+        T price_scale = cached_price_scale;
+        T vp_preop = (totalSupply > Traits::ZERO())
+            ? (Traits::PRECISION() * _xcp(D, price_scale) / totalSupply)
+            : virtual_price;
+
+        auto A_gamma = std::array<T, 2>{ A, gamma };
+
+        balances[idx_i] += dx;
+        balances[idx_j] -= dy_after_fee;
+        auto xp_new = _xp(balances, price_scale);
+        T D_new = Ops::newton_D(A_gamma[0], A_gamma[1], xp_new, 0);
+        D = D_new;
+        T admin_fee_amount = (
+            fee * reserved_profit_fraction * admin_fee
+        ) / (Traits::FEE_PRECISION() * Traits::FEE_PRECISION());
+        if (admin_fee_amount > Traits::ZERO()) {
+            admin_balances[idx_j] += admin_fee_amount;
+            balances[idx_j] -= admin_fee_amount;
+            xp_new = _xp(balances, price_scale);
+            D_new = Ops::newton_D(A_gamma[0], A_gamma[1], xp_new, 0);
+            D = D_new;
+        }
+        T new_price_scale = tweak_price(A_gamma, xp_new, D_new, vp_preop);
+        return { dy_after_fee, fee, new_price_scale };
+    }
+
     T tweak_price(
         const std::array<T, 2>& _A_gamma,
         const std::array<T, 2>& xp,
         T _D,
         T vp_preop
     ) {
+#ifdef TWOCRYPTO_ENABLE_TRACE
         static const bool trace = []() {
             if (const char* env = std::getenv("TRACE")) {
                 return std::string(env) == "1";
             }
             return false;
         }();
+#else
+        static constexpr bool trace = false;
+#endif
         T price_oracle = cached_price_oracle;
         T price_scale  = cached_price_scale;
 
         // EMA update
         uint64_t last_ts = last_timestamp;
         if (last_ts < block_timestamp) {
-            T dt = T(block_timestamp - last_ts);
+            uint64_t dt_raw = block_timestamp - last_ts;
+            T dt = T(dt_raw);
             if constexpr (std::is_same_v<T, uint256>) {
                 auto neg = int256(
                     -(
@@ -669,15 +727,23 @@ public:
                     capped * (PoolTraits<T>::PRECISION() - alpha) + price_oracle * alpha
                 ) / PoolTraits<T>::PRECISION();
             } else {
-                auto alpha = std::exp(
-                    - static_cast<double>(dt) / static_cast<double>(ma_time)
-                );
+                T alpha;
+                if (cached_ema_alpha_valid && cached_ema_dt == dt_raw) {
+                    alpha = cached_ema_alpha;
+                } else {
+                    alpha = T(std::exp(
+                        - static_cast<double>(dt) / static_cast<double>(ma_time)
+                    ));
+                    cached_ema_dt = dt_raw;
+                    cached_ema_alpha = alpha;
+                    cached_ema_alpha_valid = true;
+                }
                 T capped = last_prices;
                 T lower = price_scale / 2;
                 if (capped < lower) capped = lower;
                 if (capped > 2 * price_scale) capped = 2 * price_scale;
 
-                price_oracle = capped * (T(1) - T(alpha)) + price_oracle * T(alpha);
+                price_oracle = capped * (T(1) - alpha) + price_oracle * alpha;
             }
             cached_price_oracle = price_oracle;
             last_timestamp      = block_timestamp;
@@ -779,46 +845,46 @@ public:
                 norm = PoolTraits<T>::PRECISION() - norm;
             }
 
-            T step = PoolTraits<T>::min(norm / 5, adjustment_step_max);
+            T adjustment_step = PoolTraits<T>::min(norm / 5, adjustment_step_max);
             if (trace) {
                 if constexpr (std::is_same_v<T, uint256>) {
                     std::cout << "TRACE tp_norm norm=" << norm.template convert_to<std::string>()
-                              << " step=" << step.template convert_to<std::string>()
+                              << " step=" << adjustment_step.template convert_to<std::string>()
                               << "\n";
                 } else {
                     std::cout << "TRACE tp_norm norm=" << norm
-                              << " step=" << step
+                              << " step=" << adjustment_step
                               << "\n";
                 }
             }
 
-            if (step > adjustment_step_min) {
-                T p_new = (price_scale * (norm - step) + step * target_price) / norm;
+            if (adjustment_step > adjustment_step_min) {
+                T p_new = (price_scale * (norm - adjustment_step) + adjustment_step * target_price) / norm;
 
                 auto xp_new = xp;
                 xp_new[1] = xp[1] * p_new / price_scale;
 
-                T D_new   = MathOps<T>::newton_D(
+                T new_D   = MathOps<T>::newton_D(
                     _A_gamma[0], _A_gamma[1], xp_new, 0
                 );
-                T new_xcp = _xcp(D_new, p_new);
-                T new_vp  = (total_supply > PoolTraits<T>::ZERO())
+                T new_xcp = _xcp(new_D, p_new);
+                T new_virtual_price  = (total_supply > PoolTraits<T>::ZERO())
                     ? (PoolTraits<T>::PRECISION() * new_xcp / total_supply)
                     : PoolTraits<T>::PRECISION();
 
                 // Optional burn to hit goal virtual_price
-                T burn    = PoolTraits<T>::ZERO();
+                T donation_shares_to_burn = PoolTraits<T>::ZERO();
                 T goal_vp = PoolTraits<T>::max(lp_xcp_profit, vp);
-                if (new_vp < goal_vp) {
+                if (new_virtual_price < goal_vp) {
                     T tweaked_supply = (PoolTraits<T>::PRECISION() * new_xcp) / goal_vp;
                     if (tweaked_supply < total_supply) {
                         T diff      = total_supply - tweaked_supply;
                         T unlocked2 = _donation_shares();
-                        burn        = (diff < unlocked2) ? diff : unlocked2;
-                        if (total_supply > burn) {
-                            new_vp = (
+                        donation_shares_to_burn = (diff < unlocked2) ? diff : unlocked2;
+                        if (total_supply > donation_shares_to_burn) {
+                            new_virtual_price = (
                                 PoolTraits<T>::PRECISION() * new_xcp
-                            ) / (total_supply - burn);
+                            ) / (total_supply - donation_shares_to_burn);
                         }
                     }
                 }
@@ -826,39 +892,39 @@ public:
                 if (trace) {
                     if constexpr (std::is_same_v<T, uint256>) {
                         std::cout << "TRACE tp_candidate p_new=" << p_new.template convert_to<std::string>()
-                                  << " new_vp=" << new_vp.template convert_to<std::string>()
-                                  << " burn=" << burn.template convert_to<std::string>()
+                                  << " new_vp=" << new_virtual_price.template convert_to<std::string>()
+                                  << " burn=" << donation_shares_to_burn.template convert_to<std::string>()
                                   << "\n";
                     } else {
                         std::cout << "TRACE tp_candidate p_new=" << p_new
-                                  << " new_vp=" << new_vp
-                                  << " burn=" << burn
+                                  << " new_vp=" << new_virtual_price
+                                  << " burn=" << donation_shares_to_burn
                                   << "\n";
                     }
                 }
 
                 // Commit if within allowed region
-                if (new_vp > PoolTraits<T>::PRECISION() && new_vp >= lp_xcp_profit) {
-                    D = D_new;
-                    virtual_price      = new_vp;
+                if (new_virtual_price > PoolTraits<T>::PRECISION() && new_virtual_price >= lp_xcp_profit) {
+                    D = new_D;
+                    virtual_price      = new_virtual_price;
                     cached_price_scale = p_new;
-                    if (burn > PoolTraits<T>::ZERO()) {
+                    if (donation_shares_to_burn > PoolTraits<T>::ZERO()) {
                         T shares_unlocked  = _donation_shares(false);
                         T shares_available = _donation_shares(true);
 
                         T shares_unlocked_new = shares_unlocked;
                         if (shares_available > PoolTraits<T>::ZERO()) {
-                            shares_unlocked_new = shares_unlocked - (burn * shares_unlocked) / shares_available;
+                            shares_unlocked_new = shares_unlocked - (donation_shares_to_burn * shares_unlocked) / shares_available;
                         }
 
-                        T new_total = donation_shares - burn;
+                        T new_total = donation_shares - donation_shares_to_burn;
                         T new_elapsed = PoolTraits<T>::ZERO();
                         if (new_total > PoolTraits<T>::ZERO() && shares_unlocked_new > PoolTraits<T>::ZERO()) {
                             new_elapsed = (shares_unlocked_new * donation_duration) / new_total;
                         }
 
                         donation_shares = new_total;
-                        totalSupply    -= burn;
+                        totalSupply    -= donation_shares_to_burn;
                         last_donation_release_ts = T(block_timestamp) - new_elapsed;
                     }
                     if (trace) {
@@ -870,7 +936,7 @@ public:
                         }
                         std::cout << "\n";
                     }
-                    _update_policy_state(xp_new, p_new, price_oracle, last_prices, new_vp, xcp_profit, D_new);
+                    _update_policy_state(xp_new, p_new, price_oracle, last_prices, new_virtual_price, xcp_profit, new_D);
                     return p_new;
                 }
             }
