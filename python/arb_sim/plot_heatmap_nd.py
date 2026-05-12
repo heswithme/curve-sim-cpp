@@ -228,6 +228,8 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
+    if key in {"reserved_profit_fraction", "admin_fee"}:
+        return 1e10, " (÷1e10)"
     if "fee_bps" in key:
         return 1.0, " (bps)"
     if "fee" in key and "gamma" not in key:
@@ -273,6 +275,8 @@ def _format_slider_value(name: str, value: float) -> str:
     key = (name or "").lower()
     if "fee_bps" in key:
         return f"{value:.1f} bps"
+    if key in {"reserved_profit_fraction", "admin_fee"}:
+        return f"{value / 1e10:.4f}"
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         return f"{(value / 1e10 * 1e4):.1f} bps"
     if name == "A" or key == "a":

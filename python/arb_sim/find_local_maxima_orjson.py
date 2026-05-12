@@ -216,6 +216,8 @@ def _coord_dict(
             formatted[name] = str(f"{disp:d}")
         elif name == "donation_apy":
             formatted[name] = str(f"{val:4.3f}")
+        elif name in {"reserved_profit_fraction", "admin_fee"}:
+            formatted[name] = str(f"{val / 1e10:0.4f}")
         elif name.endswith("_wad"):
             formatted[name] = str(f"{val / 1e18:0.6f}")
         elif name == "fee_gamma":

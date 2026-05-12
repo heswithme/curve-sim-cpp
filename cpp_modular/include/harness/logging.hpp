@@ -164,8 +164,7 @@ public:
         entry.low = static_cast<T>(candle.low);
         entry.close = static_cast<T>(candle.close);
         entry.p_cex = p_cex;
-        const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        entry.fee = pool.fee(xp_now);
+        entry.fee = pools::twocrypto_fx::viewer_exchange_fee_fraction(pool, p_cex);
         entry.n_trades = n_trades;
         entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);

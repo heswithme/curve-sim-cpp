@@ -9,7 +9,12 @@ sys.path.insert(0, str(ARB_SIM_ROOT))
 if not any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:]):
     sys.argv.append("--out=/tmp/test_plot_heatmap_nd_opt.png")
 
-from plot_heatmap_nd_opt import _extract_nd_arrays, _stringify_pool  # noqa: E402
+from plot_heatmap_nd_opt import (  # noqa: E402
+    _extract_nd_arrays,
+    _format_axis_labels,
+    _format_slider_value,
+    _stringify_pool,
+)
 
 
 def test_stringify_pool_preserves_nested_policy_object() -> None:
@@ -22,6 +27,17 @@ def test_stringify_pool_preserves_nested_policy_object() -> None:
         "A": "10000",
         "policy": {"kind": "fixed_fee", "fee_bps": "77.41935483870968"},
     }
+
+
+def test_reserved_profit_fraction_axis_displays_as_fraction() -> None:
+    labels, display_name = _format_axis_labels(
+        "reserved_profit_fraction",
+        [1_900_000_000.0, 5_000_000_000.0],
+    )
+
+    assert labels == ["0.19", "0.50"]
+    assert display_name == "reserved_profit_fraction (÷1e10)"
+    assert _format_slider_value("reserved_profit_fraction", 1_900_000_000.0) == "0.1900"
 
 
 def test_extract_nd_arrays_infers_raw_harness_params_pool_axes() -> None:

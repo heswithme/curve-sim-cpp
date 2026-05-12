@@ -151,6 +151,8 @@ def _format_coord(name: str, val: float) -> str | float:
         return f"{int(val / 10**10 * 10_000)}"
     if name == "donation_apy":
         return f"{val:4.3f}"
+    if name in {"reserved_profit_fraction", "admin_fee"}:
+        return f"{val / 1e10:0.4f}"
     if name.endswith("_wad"):
         return f"{val / 1e18:0.6f}"
     if name == "fee_gamma":

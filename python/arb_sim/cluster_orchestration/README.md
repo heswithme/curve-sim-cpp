@@ -54,6 +54,9 @@ uv run python arb_sim/plot_heatmap_nd_opt.py \
 # Check cluster status (blade reachability, load, RAM)
 uv run python arb_sim/cluster_orchestration/utils.py check
 
+# Live htop-like monitor; keeps one SSH session per blade
+uv run python arb_sim/cluster_orchestration/monitor.py
+
 # Kill all running jobs
 uv run python arb_sim/cluster_orchestration/utils.py kill -y
 

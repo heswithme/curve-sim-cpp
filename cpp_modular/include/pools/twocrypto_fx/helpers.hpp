@@ -85,6 +85,69 @@ inline std::pair<T, T> simulate_exchange_once(
     return {dy_tokens - fee_tokens, fee_tokens};
 }
 
+template <typename T>
+inline T quoted_exchange_fee_fraction(
+    const PoolT<T>& pool,
+    size_t i,
+    size_t j,
+    T dx
+) {
+    if (!(dx > T(0))) {
+        return pool.fee(pool_xp_current(pool));
+    }
+
+    const T ps = pool.cached_price_scale;
+
+    const T balance0 = pool.balances[0] + (i == 0 ? dx : T(0));
+    const T balance1 = pool.balances[1] + (i == 1 ? dx : T(0));
+    std::array<T, 2> xp{
+        balance0 * pool.precisions[0],
+        balance1 * pool.precisions[1] * ps / PoolTraits<T>::PRECISION()
+    };
+
+    auto y_out = MathOps<T>::get_y_unchecked(pool.A, pool.gamma, xp, pool.D, j);
+    T dy_xp = xp[j] - y_out.value;
+    xp[j] -= dy_xp;
+
+    return pool.fee(xp);
+}
+
+template <typename T>
+inline T viewer_exchange_fee_fraction(const PoolT<T>& pool, T cex_price) {
+    const T min_dx0 = pool.balances[0] / T(1000000);
+    const T min_dx1 = pool.balances[1] / T(1000000);
+
+    if (cex_price > T(0)) {
+        const auto xp_now = pool_xp_current(pool);
+        const T p_pool = MathOps<T>::get_p(
+            xp_now,
+            pool.D,
+            {pool.A, pool.gamma}
+        ) * pool.cached_price_scale;
+        if (cex_price >= p_pool && min_dx0 > T(0)) {
+            return quoted_exchange_fee_fraction(pool, 0, 1, min_dx0);
+        }
+        if (min_dx1 > T(0)) {
+            return quoted_exchange_fee_fraction(pool, 1, 0, min_dx1);
+        }
+    }
+
+    T sum = T(0);
+    T count = T(0);
+    if (min_dx0 > T(0)) {
+        sum += quoted_exchange_fee_fraction(pool, 0, 1, min_dx0);
+        count += T(1);
+    }
+    if (min_dx1 > T(0)) {
+        sum += quoted_exchange_fee_fraction(pool, 1, 0, min_dx1);
+        count += T(1);
+    }
+    if (count > T(0)) {
+        return sum / count;
+    }
+    return pool.fee(pool_xp_current(pool));
+}
+
 } // namespace twocrypto_fx
 } // namespace pools
 } // namespace arb

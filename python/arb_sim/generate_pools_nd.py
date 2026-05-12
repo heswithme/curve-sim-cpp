@@ -37,29 +37,28 @@ COWSWAP_FILE = None
 COWSWAP_FEE_BPS = 0.0
 
 # Use either START_TIME or LAST_YEARS. If START_TIME is set, it wins.
-START_TIME: str | None = "24-09-2025"  # Unix timestamp or DD-MM-YYYY
-LAST_YEARS: float | None = None
+START_TIME: str | None = "15-04-2024"  # Unix timestamp or DD-MM-YYYY
+LAST_YEARS: float | None = None  # 2.0
 
 OUT_PATH = RUN_DATA_DIR / "pool_config.json"
 
-INIT_LIQ = 500_000  # coin0 notional
-ARB_FEE_BPS = 3
-FEE_EQUALIZE = True
+INIT_LIQ = 1_000_000  # coin0 notional
+ARB_FEE_BPS = 2
+FEE_EQUALIZE = False
 
-BASE_DONATION_APY = 0.10
+BASE_DONATION_APY = 0.0
 BASE_DONATION_FREQUENCY = 7 * 86400
 BASE_DONATION_COINS_RATIO = 0.5
 
-N_DENSE = 16
 GRID: dict[str, Any] = {
-    "A": [int(a * 10_000) for a in np.linspace(1, 50, N_DENSE)],
-    "policy.fee_bps": np.linspace(10, 200, N_DENSE),
-    # For 16^3 or 24^3 runs, set N_DENSE accordingly and uncomment:
-    "donation_apy": np.linspace(0.0, 0.1, N_DENSE),
-    # Other common axes:
-    # "mid_fee": [int(a / 10_000 * 10**10) for a in np.linspace(1, 60, N_DENSE)],
-    # "out_fee": [int(a / 10_000 * 10**10) for a in np.linspace(10, 200, N_DENSE)],
-    # "fee_gamma": [int(a * 10**18) for a in np.geomspace(1e-4, 0.1, N_DENSE)],
+    "A": [int(a * A_MULTIPLIER) for a in range(1, 12)],
+    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(10, 101, 10)],
+    "out_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(100, 201, 10)],
+    "fee_gamma": [int(round(a * WAD)) for a in [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2]],
+    "donation_apy": np.arange(0.0, 0.05001, 0.005),
+    "reserved_profit_fraction": [
+        int(round(a * FEE_SCALE)) for a in np.arange(0.15, 0.500000001, 0.025)
+    ],
     # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
 
@@ -204,7 +203,7 @@ def build_grid(
     *,
     base_pool: dict[str, Any],
     base_costs: dict[str, Any],
-    grid: dict[str, list[Any]],
+    grid: dict[str, Any],
     fee_equalize: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     names = list(grid.keys())

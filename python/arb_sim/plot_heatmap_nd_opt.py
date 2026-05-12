@@ -147,6 +147,8 @@ def _axis_normalization(name: str) -> Tuple[float, str]:
     key = (name or "").lower()
     if name == "A" or key == "a":
         return 1e4, " (÷1e4)"
+    if key in {"reserved_profit_fraction", "admin_fee"}:
+        return 1e10, " (÷1e10)"
     if "fee_bps" in key:
         return 1.0, " (bps)"
     if "fee" in key and "gamma" not in key:
@@ -196,6 +198,8 @@ def _format_slider_value(name: str, value: float) -> str:
     key = (name or "").lower()
     if "fee_bps" in key:
         return f"{value:.1f} bps"
+    if key in {"reserved_profit_fraction", "admin_fee"}:
+        return f"{value / 1e10:.4f}"
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         return f"{(value / 1e10 * 1e4):.1f} bps"
     if name == "A" or key == "a":
@@ -722,7 +726,9 @@ class NDHeatmapExplorerOpt:
                 )
             else:
                 z_val = float("nan")
-            return f"x={xs_arr[j]:.4g}, y={ys_arr[i]:.4g}, z={z_val:.4g}"
+            x_val = _format_slider_value(self.x_name, float(xs_arr[j]))
+            y_val = _format_slider_value(self.y_name, float(ys_arr[i]))
+            return f"x={x_val}, y={y_val}, z={z_val:.4g}"
 
         ax.format_coord = format_coord
 
@@ -1163,7 +1169,7 @@ class NDHeatmapExplorerOpt:
         metrics = self.metrics_lookup.get(idx_tuple)
         lines = ["coords:"]
         for name in self.dim_names:
-            lines.append(f"  {name}: {coords[name]}")
+            lines.append(f"  {name}: {_format_slider_value(name, coords[name])}")
         lines.append("")
         lines.append("metrics:")
         for metric in self.metrics:
@@ -1702,7 +1708,7 @@ class NDHeatmapExplorerOpt:
 
         print("\nSelected point:")
         for name in self.dim_names:
-            print(f"  {name}: {coords[name]}")
+            print(f"  {name}: {_format_slider_value(name, coords[name])}")
 
         if pool_config:
             print("Pool config:")
