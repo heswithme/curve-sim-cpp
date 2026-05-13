@@ -37,7 +37,7 @@ COWSWAP_FILE = None
 COWSWAP_FEE_BPS = 0.0
 
 # Use either START_TIME or LAST_YEARS. If START_TIME is set, it wins.
-START_TIME: str | None = "15-04-2024"  # Unix timestamp or DD-MM-YYYY
+START_TIME: str | None = "01-01-2024"  # Unix timestamp or DD-MM-YYYY
 LAST_YEARS: float | None = None  # 2.0
 
 OUT_PATH = RUN_DATA_DIR / "pool_config.json"
@@ -51,13 +51,13 @@ BASE_DONATION_FREQUENCY = 7 * 86400
 BASE_DONATION_COINS_RATIO = 0.5
 
 GRID: dict[str, Any] = {
-    "A": [int(a * A_MULTIPLIER) for a in range(1, 12)],
-    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(10, 101, 10)],
-    "out_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(100, 201, 10)],
-    "fee_gamma": [int(round(a * WAD)) for a in [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2]],
+    "A": [int(a * A_MULTIPLIER) for a in range(1, 13)],
+    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(10, 101, 5)],
+    "out_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(100, 201, 5)],
+    "fee_gamma": [int(round(a * WAD)) for a in [5e-4, 1e-3, 5e-3, 1e-2]],
     "donation_apy": np.arange(0.0, 0.05001, 0.005),
     "reserved_profit_fraction": [
-        int(round(a * FEE_SCALE)) for a in np.arange(0.15, 0.500000001, 0.025)
+        int(round(a * FEE_SCALE)) for a in np.arange(0.15, 0.500000001, 0.05)
     ],
     # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
@@ -165,7 +165,7 @@ def build_base_pool(
         "mid_fee": int(4 / 10_000 * 10**10),
         "out_fee": int(30 / 10_000 * 10**10),
         "fee_gamma": int(0.1 * WAD),
-        "adjustment_step_min": int(0.000001 * WAD),
+        "adjustment_step_min": int(0.0000000001 * WAD),
         "adjustment_step_max": int(0.5 / 100 * WAD),
         "ma_time": int(600 / np.log(2)),
         "reserved_profit_fraction": int(0.5 * FEE_SCALE),

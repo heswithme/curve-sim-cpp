@@ -313,6 +313,7 @@ EventLoopResult<T> run_event_loop(
                 ev.ts,
                 (*candles)[candle_idx],
                 cex_price,
+                dcfg.apy,
                 m.trades,
                 m.n_rebalances
             );

@@ -138,7 +138,8 @@ public:
     
     // Log current pool state for this event (respects interval)
     template <typename Pool>
-    void log_event(const Pool& pool, uint64_t ts, const Candle& candle, T p_cex, uint64_t n_trades, uint64_t n_rebalances) {
+    void log_event(const Pool& pool, uint64_t ts, const Candle& candle, T p_cex,
+                   T donation_apy, uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return;
         
         // Only log every interval_ events
@@ -155,6 +156,7 @@ public:
         entry.profit = entry.vp - T(1);
         entry.xcp = pool.xcp_profit;
         entry.total_supply = pool.totalSupply;
+        entry.donation_apy = donation_apy;
         entry.donation_shares = pool.donation_shares;
         entry.donation_unlocked = pool.donation_unlocked();
         entry.last_prices = pool.last_prices;

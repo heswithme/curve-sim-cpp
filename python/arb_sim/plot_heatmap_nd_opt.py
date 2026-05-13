@@ -344,7 +344,7 @@ def _extract_nd_arrays(
     data: Dict[str, Any],
     metrics: List[str],
     price_thr_bps: float,
-    imbalance_thr_pct: float,
+    max_price_thr_bps: float,
 ) -> Tuple[
     List[str],
     Dict[str, List[float]],
@@ -388,7 +388,7 @@ def _extract_nd_arrays(
     shape = tuple(len(dim_values_sorted[name]) for name in dim_names)
     metrics_to_build = list(metrics)
     if "apy_masked" in metrics_to_build or "apy_masked_imbalance" in metrics_to_build:
-        for req in ("apy_net", "avg_rel_price_diff", "avg_imbalance"):
+        for req in ("apy_net", "avg_rel_price_diff", "max_rel_price_diff"):
             if req not in metrics_to_build:
                 metrics_to_build.append(req)
     metric_arrays: Dict[str, np.ndarray] = {
@@ -408,12 +408,12 @@ def _extract_nd_arrays(
             avg_rel = _to_float(metrics_dict.get("avg_rel_price_diff"))
             if not math.isfinite(avg_rel):
                 return None
-            avg_imb = _to_float(metrics_dict.get("avg_imbalance"))
-            if not math.isfinite(avg_imb):
+            max_rel = _to_float(metrics_dict.get("max_rel_price_diff"))
+            if not math.isfinite(max_rel):
                 return None
             thr_rel = price_thr_bps / 10000.0
-            thr_imb = imbalance_thr_pct / 100.0
-            if avg_rel > thr_rel or avg_imb < thr_imb:
+            thr_max_rel = max_price_thr_bps / 10000.0
+            if avg_rel > thr_rel or max_rel > thr_max_rel:
                 return float("nan")
             return apy_net
         return None
@@ -517,7 +517,7 @@ class NDHeatmapExplorerOpt:
         max_ticks: int,
         clamp: bool,
         price_thr_bps: float,
-        imbalance_thr_pct: float,
+        max_price_thr_bps: float,
         log_axes: set[str] | None = None,
         start_time: str | None = None,
     ):
@@ -528,13 +528,13 @@ class NDHeatmapExplorerOpt:
         self.max_ticks = max_ticks
         self.clamp = clamp
         self.price_thr_bps = max(1.0, float(price_thr_bps))
-        self.imbalance_thr_pct = max(0.0, float(imbalance_thr_pct))
+        self.max_price_thr_bps = max(1.0, float(max_price_thr_bps))
         self.log_axes = log_axes or set()
         self.start_time = start_time
         self.has_price_thr_slider = (
             "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
         )
-        self.has_imbalance_thr_slider = (
+        self.has_max_price_thr_slider = (
             "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
         )
 
@@ -549,7 +549,7 @@ class NDHeatmapExplorerOpt:
             data,
             metrics,
             price_thr_bps,
-            imbalance_thr_pct,
+            max_price_thr_bps,
         )
         self.n_dims = len(self.dim_names)
 
@@ -561,13 +561,13 @@ class NDHeatmapExplorerOpt:
         if self.has_price_thr_slider:
             self.price_thr_bps = self.price_thr_max_bps
 
-        self.imbalance_thr_max_pct = (
-            self._compute_imbalance_thr_max_pct()
-            if self.has_imbalance_thr_slider
-            else max(0.0, self.imbalance_thr_pct)
+        self.max_price_thr_max_bps = (
+            self._compute_max_price_thr_max_bps()
+            if self.has_max_price_thr_slider
+            else max(1.0, self.max_price_thr_bps)
         )
-        if self.imbalance_thr_pct > self.imbalance_thr_max_pct:
-            self.imbalance_thr_pct = self.imbalance_thr_max_pct
+        if self.has_max_price_thr_slider:
+            self.max_price_thr_bps = self.max_price_thr_max_bps
 
         if self.n_dims < 2:
             raise SystemExit("Need at least 2 dimensions for a heatmap")
@@ -590,6 +590,10 @@ class NDHeatmapExplorerOpt:
         self._init_slider_indices()
 
         self.global_clim = _compute_global_clims(self.metric_arrays, clamp=self.clamp)
+        if "apy_net" in self.global_clim:
+            for metric in ("apy_masked", "apy_masked_imbalance"):
+                if metric in self.global_clim:
+                    self.global_clim[metric] = self.global_clim["apy_net"]
 
         meta = data.get("metadata", {}) if isinstance(data, dict) else {}
         self.base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
@@ -633,12 +637,9 @@ class NDHeatmapExplorerOpt:
         self.price_thr_slider = None
         self.price_thr_label = None
         self.price_thr_value_text = None
-        self.imbalance_thr_slider = None
-        self.imbalance_thr_label = None
-        self.imbalance_thr_value_text = None
-        self.imbalance_thr_slider = None
-        self.imbalance_thr_label = None
-        self.imbalance_thr_value_text = None
+        self.max_price_thr_slider = None
+        self.max_price_thr_label = None
+        self.max_price_thr_value_text = None
         self.x_radio = None
         self.y_radio = None
         self._updating_radios = False
@@ -650,7 +651,13 @@ class NDHeatmapExplorerOpt:
         self.slider_indices = {}
         for name in self.dim_names:
             if name not in (self.x_name, self.y_name):
-                self.slider_indices[name] = 0
+                self.slider_indices[name] = self._default_slider_index(name)
+
+    def _default_slider_index(self, name: str) -> int:
+        key = (name or "").lower()
+        if key in {"reserved_profit_fraction", "reserved_profit_ratio"}:
+            return max(0, len(self.dim_values.get(name, [])) - 1)
+        return 0
 
     def _get_slider_dims(self) -> List[Tuple[int, str]]:
         return [
@@ -684,15 +691,16 @@ class NDHeatmapExplorerOpt:
         if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_slice = self._slice_raw("apy_net")
             rel_slice = self._slice_raw("avg_rel_price_diff")
-            imb_slice = self._slice_raw("avg_imbalance")
-            if apy_slice is None or rel_slice is None or imb_slice is None:
+            max_rel_slice = self._slice_raw("max_rel_price_diff")
+            if apy_slice is None or rel_slice is None or max_rel_slice is None:
                 xs = self.dim_values[self.x_name]
                 ys = self.dim_values[self.y_name]
                 return np.full((len(ys), len(xs)), np.nan, dtype=float)
             thr_rel_pct = self.price_thr_bps / 100.0
+            thr_max_rel_pct = self.max_price_thr_bps / 100.0
             masked = np.array(apy_slice, copy=True)
             masked[rel_slice > thr_rel_pct] = np.nan
-            masked[imb_slice < self.imbalance_thr_pct] = np.nan
+            masked[max_rel_slice > thr_max_rel_pct] = np.nan
             return masked
 
         slice_arr = self._slice_raw(metric)
@@ -849,7 +857,7 @@ class NDHeatmapExplorerOpt:
         extra_sliders = 0
         if self.has_price_thr_slider:
             extra_sliders += 1
-        if self.has_imbalance_thr_slider:
+        if self.has_max_price_thr_slider:
             extra_sliders += 1
         n_sliders_total = n_sliders + extra_sliders
 
@@ -985,7 +993,7 @@ class NDHeatmapExplorerOpt:
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "price thr (bps):",
+                "avg pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
@@ -1035,17 +1043,17 @@ class NDHeatmapExplorerOpt:
             slider.on_changed(update_price_thr)
             slider_offset += 1
 
-        if self.has_imbalance_thr_slider:
+        if self.has_max_price_thr_slider:
             slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "imbalance thr (%):",
+                "max pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
             )
-            self.imbalance_thr_label = lbl
+            self.max_price_thr_label = lbl
             self.slider_labels.append(lbl)
 
             slider_ax = self.fig_controls.add_axes(
@@ -1058,38 +1066,38 @@ class NDHeatmapExplorerOpt:
             )
             self.slider_axes.append(slider_ax)
 
-            slider_max = max(1.0, self.imbalance_thr_max_pct)
+            slider_max = max(1.0, self.max_price_thr_max_bps)
             slider = Slider(
                 slider_ax,
                 "",
-                0,
+                1,
                 slider_max,
-                valinit=self.imbalance_thr_pct,
+                valinit=self.max_price_thr_bps,
                 valstep=1,
             )
             slider.valtext.set_visible(False)
-            self.imbalance_thr_slider = slider
+            self.max_price_thr_slider = slider
 
             val_text = self.fig_controls.text(
                 SLIDER_VALUE_X,
                 slider_y,
-                f"{self.imbalance_thr_pct:.0f}",
+                f"{int(self.max_price_thr_bps)}",
                 ha="left",
                 va="center",
                 fontsize=SLIDER_FONTSIZE,
             )
-            self.imbalance_thr_value_text = val_text
+            self.max_price_thr_value_text = val_text
             self.slider_value_texts.append(val_text)
 
-            def update_imbalance_thr(val):
-                self.imbalance_thr_pct = float(val)
-                if self.imbalance_thr_value_text is not None:
-                    self.imbalance_thr_value_text.set_text(
-                        f"{self.imbalance_thr_pct:.0f}"
+            def update_max_price_thr(val):
+                self.max_price_thr_bps = float(val)
+                if self.max_price_thr_value_text is not None:
+                    self.max_price_thr_value_text.set_text(
+                        f"{int(self.max_price_thr_bps)}"
                     )
                 self._refresh_heatmaps()
 
-            slider.on_changed(update_imbalance_thr)
+            slider.on_changed(update_max_price_thr)
 
         self.fig_controls.canvas.draw_idle()
 
@@ -1138,16 +1146,16 @@ class NDHeatmapExplorerOpt:
         if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_net = _to_float(metrics.get("apy_net"))
             avg_rel = _to_float(metrics.get("avg_rel_price_diff"))
-            avg_imb = _to_float(metrics.get("avg_imbalance"))
+            max_rel = _to_float(metrics.get("max_rel_price_diff"))
             if (
                 not math.isfinite(apy_net)
                 or not math.isfinite(avg_rel)
-                or not math.isfinite(avg_imb)
+                or not math.isfinite(max_rel)
             ):
                 return "nan"
             thr_rel = self.price_thr_bps / 10000.0
-            thr_imb = self.imbalance_thr_pct / 100.0
-            if avg_rel > thr_rel or avg_imb < thr_imb:
+            thr_max_rel = self.max_price_thr_bps / 10000.0
+            if avg_rel > thr_rel or max_rel > thr_max_rel:
                 return "nan"
             scale, _ = _metric_scale_info(metric)
             return self._format_metric_value(apy_net * scale)
@@ -1193,17 +1201,18 @@ class NDHeatmapExplorerOpt:
             return max(1.0, self.price_thr_bps)
         return max_bps
 
-    def _compute_imbalance_thr_max_pct(self) -> float:
-        arr = self.metric_arrays.get("avg_imbalance")
+    def _compute_max_price_thr_max_bps(self) -> float:
+        arr = self.metric_arrays.get("max_rel_price_diff")
         if arr is None:
-            return max(1.0, self.imbalance_thr_pct)
+            return max(1.0, self.max_price_thr_bps)
         finite = arr[np.isfinite(arr)]
         if finite.size == 0:
-            return max(1.0, self.imbalance_thr_pct)
-        max_pct = float(np.nanmax(finite))
-        if not math.isfinite(max_pct) or max_pct <= 0.0:
-            return max(1.0, self.imbalance_thr_pct)
-        return max_pct
+            return max(1.0, self.max_price_thr_bps)
+        max_percent = float(np.nanmax(finite))
+        max_bps = max_percent * 100.0
+        if not math.isfinite(max_bps) or max_bps <= 0.0:
+            return max(1.0, self.max_price_thr_bps)
+        return max_bps
 
     def _on_x_changed(self, label: str):
         if self._updating_radios:
@@ -1259,12 +1268,16 @@ class NDHeatmapExplorerOpt:
         self.price_thr_slider = None
         self.price_thr_label = None
         self.price_thr_value_text = None
+        self.max_price_thr_slider = None
+        self.max_price_thr_label = None
+        self.max_price_thr_value_text = None
 
         new_slider_indices = {}
         for name in self.dim_names:
             if name not in (self.x_name, self.y_name):
+                default_idx = self._default_slider_index(name)
                 new_slider_indices[name] = min(
-                    self.slider_indices.get(name, 0),
+                    self.slider_indices.get(name, default_idx),
                     len(self.dim_values[name]) - 1,
                 )
         self.slider_indices = new_slider_indices
@@ -1344,7 +1357,7 @@ class NDHeatmapExplorerOpt:
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "price thr (bps):",
+                "avg pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
@@ -1394,17 +1407,17 @@ class NDHeatmapExplorerOpt:
             slider.on_changed(update_price_thr)
             slider_offset += 1
 
-        if self.has_imbalance_thr_slider:
+        if self.has_max_price_thr_slider:
             slider_y = slider_start_y - slider_offset * SLIDER_HEIGHT
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "imbalance thr (%):",
+                "max pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
             )
-            self.imbalance_thr_label = lbl
+            self.max_price_thr_label = lbl
             self.slider_labels.append(lbl)
 
             slider_ax = self.fig_controls.add_axes(
@@ -1417,38 +1430,38 @@ class NDHeatmapExplorerOpt:
             )
             self.slider_axes.append(slider_ax)
 
-            slider_max = max(1.0, self.imbalance_thr_max_pct)
+            slider_max = max(1.0, self.max_price_thr_max_bps)
             slider = Slider(
                 slider_ax,
                 "",
-                0,
+                1,
                 slider_max,
-                valinit=self.imbalance_thr_pct,
+                valinit=self.max_price_thr_bps,
                 valstep=1,
             )
             slider.valtext.set_visible(False)
-            self.imbalance_thr_slider = slider
+            self.max_price_thr_slider = slider
 
             val_text = self.fig_controls.text(
                 SLIDER_VALUE_X,
                 slider_y,
-                f"{self.imbalance_thr_pct:.0f}",
+                f"{int(self.max_price_thr_bps)}",
                 ha="left",
                 va="center",
                 fontsize=SLIDER_FONTSIZE,
             )
-            self.imbalance_thr_value_text = val_text
+            self.max_price_thr_value_text = val_text
             self.slider_value_texts.append(val_text)
 
-            def update_imbalance_thr(val):
-                self.imbalance_thr_pct = float(val)
-                if self.imbalance_thr_value_text is not None:
-                    self.imbalance_thr_value_text.set_text(
-                        f"{self.imbalance_thr_pct:.0f}"
+            def update_max_price_thr(val):
+                self.max_price_thr_bps = float(val)
+                if self.max_price_thr_value_text is not None:
+                    self.max_price_thr_value_text.set_text(
+                        f"{int(self.max_price_thr_bps)}"
                     )
                 self._refresh_heatmaps()
 
-            slider.on_changed(update_imbalance_thr)
+            slider.on_changed(update_max_price_thr)
 
         self.fig_controls.canvas.draw_idle()
 
@@ -1754,7 +1767,13 @@ def main() -> int:
     ap.add_argument("--ncol", type=int, default=3)
     ap.add_argument("--clamp", action="store_true", default=False)
     ap.add_argument("--pricethr", type=float, default=100.0)
-    ap.add_argument("--imbalancethr", type=float, default=0.0)
+    ap.add_argument("--max-pricethr", "--maxpdiffthr", type=float, default=100.0)
+    ap.add_argument(
+        "--imbalancethr",
+        dest="max_pricethr",
+        type=float,
+        help=argparse.SUPPRESS,
+    )
     ap.add_argument(
         "--log-axis",
         action="append",
@@ -1792,7 +1811,7 @@ def main() -> int:
         max_ticks=args.max_ticks,
         clamp=args.clamp,
         price_thr_bps=args.pricethr,
-        imbalance_thr_pct=args.imbalancethr,
+        max_price_thr_bps=args.max_pricethr,
         log_axes=set(args.log_axis),
         start_time=args.start_time,
     )

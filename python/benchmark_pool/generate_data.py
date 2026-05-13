@@ -45,6 +45,8 @@ REMOVE_BPS = (1, 25)  # 0.01% to 0.25% of estimated removable LP.
 
 ADJUSTMENT_STEP_MIN = 10**12  # 0.000001 * 1e18
 ADJUSTMENT_STEP_MAX_BPS = (100, 2_000)  # 1% to 20%
+RESERVED_PROFIT_FRACTION_BPS = (0, BPS)
+ADMIN_FEE_BPS = (0, int(0.9 * BPS))
 
 TIME_TRAVEL_EVERY_STEPS = 4
 TIME_TRAVEL_SECONDS = (60, 3_600)
@@ -169,6 +171,10 @@ def jitter_bps(amount: int, bounds: tuple[int, int]) -> int:
     return amount * random.randint(bounds[0], bounds[1]) // BPS
 
 
+def random_fee_fraction(bounds: tuple[int, int]) -> int:
+    return random.randint(bounds[0], bounds[1]) * FEE_SCALE // BPS
+
+
 def generate_pool_configs(
     num_pools: int = 3,
     policy_kind: str = "none",
@@ -191,8 +197,10 @@ def generate_pool_configs(
                 "adjustment_step_max": str(
                     random.randint(*ADJUSTMENT_STEP_MAX_BPS) * WAD // BPS
                 ),
-                "reserved_profit_fraction": str(FEE_SCALE // 2),
-                "admin_fee": str(FEE_SCALE // 2),
+                "reserved_profit_fraction": str(
+                    random_fee_fraction(RESERVED_PROFIT_FRACTION_BPS)
+                ),
+                "admin_fee": str(random_fee_fraction(ADMIN_FEE_BPS)),
                 "policy": {"kind": policy_kind},
                 "ma_time": str(1 + int(random.randint(60, 3_600) / math.log(2))),
                 "initial_price": str(WAD),

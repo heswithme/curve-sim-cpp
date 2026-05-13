@@ -9,6 +9,7 @@ Examples:
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --arb arb_sim/run_data/arb_run_1.json
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_mask_5 --local --top 10 --enumerate
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_masked --pricethr 100 --local
+  uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_masked --pricethr 100 --max-rel-pdiff --local
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric tw_real_slippage_5pct --min --local
 """
 
@@ -151,10 +152,12 @@ def _build_metric_grid(
     grid_values: List[List[float]],
     metric_key: str,
     price_thr_bps: float,
-) -> np.ndarray:
+    price_metric_key: str,
+) -> Tuple[np.ndarray, np.ndarray]:
     arrays = [np.asarray(v, dtype=float) for v in grid_values]
     shape = [len(a) for a in arrays]
     metric = np.full(shape, np.nan, dtype=float)
+    pdiff_bps = np.full(shape, np.nan, dtype=float)
 
     for run in runs:
         if run.get("success") is False:
@@ -166,21 +169,24 @@ def _build_metric_grid(
         for i, arr in enumerate(arrays):
             idx.append(_index_for_value(arr, coord_vals[i]))
         env = _build_env(run)
+        pdiff = env.get(price_metric_key)
+        if pdiff is not None:
+            pdiff_bps[tuple(idx)] = pdiff * 10000.0
         if metric_key == "apy_masked":
             apy_net = env.get("apy_net")
-            avg_rel = env.get("avg_rel_price_diff")
-            if apy_net is None or avg_rel is None:
+            rel = env.get(price_metric_key)
+            if apy_net is None or rel is None:
                 raise KeyError(
-                    "Metric 'apy_masked' requires apy_net and avg_rel_price_diff"
+                    f"Metric 'apy_masked' requires apy_net and {price_metric_key}"
                 )
             thr = price_thr_bps / 10000.0
-            metric[tuple(idx)] = apy_net if avg_rel <= thr else np.nan
+            metric[tuple(idx)] = apy_net if rel <= thr else np.nan
         else:
             if metric_key not in env:
                 raise KeyError(f"Metric '{metric_key}' not found in run data")
             metric[tuple(idx)] = env[metric_key]
 
-    return metric
+    return metric, pdiff_bps
 
 
 def _local_maxima(metric: np.ndarray, connectivity: str) -> List[Tuple[int, ...]]:
@@ -227,6 +233,19 @@ def _coord_dict(
     return formatted
 
 
+def _pdiff_label(price_metric_key: str) -> str:
+    if price_metric_key == "max_rel_price_diff":
+        return "max_pdiff_bps"
+    return "avg_pdiff_bps"
+
+
+def _pdiff_text(pdiff_grid: np.ndarray, coord: Tuple[int, ...], label: str) -> str:
+    pdiff = float(pdiff_grid[coord])
+    if not np.isfinite(pdiff):
+        return ""
+    return f" {label}={pdiff:.2f}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON")
@@ -235,7 +254,20 @@ def main() -> None:
         "--pricethr",
         type=float,
         default=100.0,
-        help="Max avg_rel_price_diff in bps for apy_masked",
+        help="Max price-diff metric in bps for apy_masked",
+    )
+    parser.add_argument(
+        "--price-metric",
+        choices=["avg_rel_price_diff", "max_rel_price_diff"],
+        default="avg_rel_price_diff",
+        help="Price-diff metric used by apy_masked",
+    )
+    parser.add_argument(
+        "--max-rel-pdiff",
+        dest="price_metric",
+        action="store_const",
+        const="max_rel_price_diff",
+        help="Alias for --price-metric max_rel_price_diff",
     )
     parser.add_argument(
         "--local", action="store_true", help="Report local maxima on grid"
@@ -275,9 +307,16 @@ def main() -> None:
         names, grid_values, x_keys = infer_grid_from_runs(runs)
     if not names:
         raise SystemExit("No grid dimensions found in metadata or params.pool")
-    metric = _build_metric_grid(
-        runs, names, x_keys, grid_values, args.metric, args.pricethr
+    metric, pdiff_bps = _build_metric_grid(
+        runs,
+        names,
+        x_keys,
+        grid_values,
+        args.metric,
+        args.pricethr,
+        args.price_metric,
     )
+    pdiff_label = _pdiff_label(args.price_metric)
     finite_metric = np.where(np.isfinite(metric), metric, np.nan)
     if not np.isfinite(finite_metric).any():
         raise SystemExit("No finite metric values found")
@@ -287,7 +326,8 @@ def main() -> None:
         min_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
         min_val = float(metric[min_idx])
         min_coord = _coord_dict(min_idx, names, grid_values)
-        print(f"global_min {args.metric}={min_val:.6f} coords={min_coord}")
+        pdiff = _pdiff_text(pdiff_bps, min_idx, pdiff_label)
+        print(f"global_min {args.metric}={min_val:.6f}{pdiff} coords={min_coord}")
 
         if args.local:
             coords = _local_maxima(search_metric, args.connectivity)
@@ -297,18 +337,20 @@ def main() -> None:
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
+                pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
                 if args.enumerate:
                     print(
-                        f"local_min #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                        f"local_min #{rank} {args.metric}={val:.6f}{pdiff} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_min {args.metric}={val:.6f} coords={coord_dict}")
+                    print(f"local_min {args.metric}={val:.6f}{pdiff} coords={coord_dict}")
     else:
         metric = np.where(np.isfinite(metric), metric, -np.inf)
         max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
         max_val = float(metric[max_idx])
         max_coord = _coord_dict(max_idx, names, grid_values)
-        print(f"global_max {args.metric}={max_val:.6f} coords={max_coord}")
+        pdiff = _pdiff_text(pdiff_bps, max_idx, pdiff_label)
+        print(f"global_max {args.metric}={max_val:.6f}{pdiff} coords={max_coord}")
 
         if args.local:
             coords = _local_maxima(metric, args.connectivity)
@@ -318,12 +360,13 @@ def main() -> None:
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
+                pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
                 if args.enumerate:
                     print(
-                        f"local_max #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                        f"local_max #{rank} {args.metric}={val:.6f}{pdiff} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_max {args.metric}={val:.6f} coords={coord_dict}")
+                    print(f"local_max {args.metric}={val:.6f}{pdiff} coords={coord_dict}")
 
 
 if __name__ == "__main__":

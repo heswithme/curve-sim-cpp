@@ -25,6 +25,7 @@ struct DetailedEntry {
     T vp_boosted;         // virtual price with donation boost
     T xcp;                // raw xcp_profit value
     T total_supply;       // total LP supply
+    T donation_apy;       // annual donation rate used by the harness
     T donation_shares;    // donation shares balance
     T donation_unlocked;  // unlocked donation shares
     T last_prices;        // last spot price used for EMA
@@ -60,6 +61,7 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
             << ", \"vp_boosted\": " << e.vp_boosted
             << ", \"xcp\": " << e.xcp
             << ", \"total_supply\": " << e.total_supply
+            << ", \"donation_apy\": " << e.donation_apy
             << ", \"donation_shares\": " << e.donation_shares
             << ", \"donation_unlocked\": " << e.donation_unlocked
             << ", \"last_prices\": " << e.last_prices
