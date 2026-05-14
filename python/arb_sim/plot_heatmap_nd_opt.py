@@ -45,6 +45,7 @@ from matplotlib.widgets import Slider, RadioButtons
 from matplotlib.ticker import FormatStrFormatter
 
 from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
+from arb_run_npz import NpzRun, grid_shape, load_json_or_npz, ordered_grid
 
 HERE = Path(__file__).resolve().parent
 RUN_DIR = HERE / "run_data"
@@ -52,6 +53,8 @@ RUN_DIR = HERE / "run_data"
 LN2 = math.log(2)
 SECONDS_PER_HOUR = 3600.0
 MA_TIME_TO_HOURS = LN2 / SECONDS_PER_HOUR
+MASK_MAX_PRICE_METRIC = "max_7d_rel_price_diff"
+MASK_MAX_PRICE_FALLBACK_METRIC = "max_rel_price_diff"
 
 # ==================== LAYOUT CONSTANTS ====================
 CTRL_FIG_WIDTH = 3.2
@@ -105,18 +108,19 @@ INSPECT_DETAILED_INTERVAL = 1000
 
 
 def _latest_arb_run() -> Path:
-    files = list(RUN_DIR.glob("arb_run_*.json"))
+    files = [
+        p
+        for p in RUN_DIR.glob("arb_run_*")
+        if p.is_dir() or p.suffix == ".json"
+    ]
     if not files:
-        raise SystemExit(f"No arb_run_*.json found under {RUN_DIR}")
+        raise SystemExit(f"No arb_run_* result found under {RUN_DIR}")
     files.sort(key=lambda p: os.path.getmtime(p))
     return files[-1]
 
 
 def _load(path: Path) -> Dict[str, Any]:
-    if orjson is not None:
-        return orjson.loads(path.read_bytes())
-    with path.open("r") as f:
-        return json.load(f)
+    return load_json_or_npz(path)
 
 
 def _to_float(x: Any) -> float:
@@ -124,6 +128,13 @@ def _to_float(x: Any) -> float:
         return float(x)
     except Exception:
         return float("nan")
+
+
+def _max_mask_price_diff(metrics: Dict[str, Any]) -> float:
+    value = _to_float(metrics.get(MASK_MAX_PRICE_METRIC))
+    if math.isfinite(value):
+        return value
+    return _to_float(metrics.get(MASK_MAX_PRICE_FALLBACK_METRIC))
 
 
 def _parse_grid_dims(data: Dict[str, Any]) -> List[Tuple[str, str]]:
@@ -227,6 +238,18 @@ def _stringify_value(value: Any) -> Any:
 
 def _stringify_pool(pool: Dict[str, Any]) -> Dict[str, Any]:
     return {key: _stringify_value(val) for key, val in pool.items()}
+
+
+def _set_dotted(obj: Dict[str, Any], path: str, value: Any) -> None:
+    cur = obj
+    parts = path.split(".")
+    for part in parts[:-1]:
+        nxt = cur.get(part)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cur[part] = nxt
+        cur = nxt
+    cur[parts[-1]] = value
 
 
 def _nearest_index(values: List[float], coord: float) -> int:
@@ -340,8 +363,23 @@ def _extract_coord(run: Dict[str, Any], dim_names: List[str]) -> List[float] | N
     return coords
 
 
-def _extract_nd_arrays(
-    data: Dict[str, Any],
+def _metrics_to_build(metrics: List[str]) -> List[str]:
+    metrics_to_build = list(metrics)
+    if "apy_masked" in metrics_to_build or "apy_masked_imbalance" in metrics_to_build:
+        for req in (
+            "apy_net",
+            "avg_rel_price_diff",
+            MASK_MAX_PRICE_METRIC,
+            MASK_MAX_PRICE_FALLBACK_METRIC,
+        ):
+            if req not in metrics_to_build:
+                metrics_to_build.append(req)
+    return metrics_to_build
+
+
+def _extract_nd_arrays_npz(
+    npz_run: NpzRun,
+    metadata: Dict[str, Any],
     metrics: List[str],
     price_thr_bps: float,
     max_price_thr_bps: float,
@@ -353,6 +391,94 @@ def _extract_nd_arrays(
     Dict[Tuple[int, ...], Dict[str, Any]],
     Dict[Tuple[int, ...], Dict[str, Any]],
 ]:
+    dim_names, grid_values, _ = ordered_grid(metadata)
+    if not dim_names:
+        raise SystemExit("NPZ arb run requires metadata.grid")
+
+    shape = grid_shape(metadata, npz_run.n_pools)
+    if len(shape) != len(dim_names):
+        raise SystemExit("NPZ grid shape does not match metadata.grid")
+
+    dim_values_sorted = {
+        name: values for name, values in zip(dim_names, grid_values)
+    }
+    metrics_to_build = _metrics_to_build(metrics)
+    metric_scale = {
+        m: _metric_scale_info(m)[0] for m in metrics_to_build
+    }
+    metric_arrays: Dict[str, np.ndarray] = {}
+
+    success_mask: np.ndarray | None = None
+    try:
+        success_mask = npz_run.load_array("success").astype(bool).reshape(shape)
+    except KeyError:
+        pass
+
+    for metric in metrics_to_build:
+        if metric in {"apy_masked", "apy_masked_imbalance"}:
+            continue
+        try:
+            raw = npz_run.load_array(metric).astype(float, copy=False).reshape(shape)
+        except KeyError:
+            metric_arrays[metric] = np.full(shape, np.nan, dtype=float)
+            continue
+        arr = raw * metric_scale[metric]
+        if success_mask is not None:
+            arr = np.where(success_mask, arr, np.nan)
+        metric_arrays[metric] = arr
+
+    for metric in metrics_to_build:
+        if metric not in {"apy_masked", "apy_masked_imbalance"}:
+            continue
+        apy = metric_arrays.get("apy_net")
+        avg_rel = metric_arrays.get("avg_rel_price_diff")
+        max_rel = metric_arrays.get(MASK_MAX_PRICE_METRIC)
+        if max_rel is None or not np.isfinite(max_rel).any():
+            max_rel = metric_arrays.get(MASK_MAX_PRICE_FALLBACK_METRIC)
+        if apy is None or avg_rel is None or max_rel is None:
+            metric_arrays[metric] = np.full(shape, np.nan, dtype=float)
+            continue
+        masked = np.array(apy, copy=True)
+        masked[avg_rel > price_thr_bps / 100.0] = np.nan
+        masked[max_rel > max_price_thr_bps / 100.0] = np.nan
+        metric_arrays[metric] = masked
+
+    return (
+        dim_names,
+        dim_values_sorted,
+        metric_arrays,
+        metric_scale,
+        {},
+        {},
+    )
+
+
+def _extract_nd_arrays(
+    data: Dict[str, Any],
+    metrics: List[str],
+    price_thr_bps: float,
+    max_price_thr_bps: float | None = None,
+    **_compat: Any,
+) -> Tuple[
+    List[str],
+    Dict[str, List[float]],
+    Dict[str, np.ndarray],
+    Dict[str, float],
+    Dict[Tuple[int, ...], Dict[str, Any]],
+    Dict[Tuple[int, ...], Dict[str, Any]],
+]:
+    if max_price_thr_bps is None:
+        max_price_thr_bps = price_thr_bps
+    npz_run = data.get("_npz_run")
+    if isinstance(npz_run, NpzRun):
+        return _extract_nd_arrays_npz(
+            npz_run,
+            data.get("metadata", {}),
+            metrics,
+            price_thr_bps,
+            max_price_thr_bps,
+        )
+
     runs = data.get("runs", [])
     if not runs:
         raise SystemExit("No runs[] found in arb_run JSON")
@@ -386,11 +512,7 @@ def _extract_nd_arrays(
     }
 
     shape = tuple(len(dim_values_sorted[name]) for name in dim_names)
-    metrics_to_build = list(metrics)
-    if "apy_masked" in metrics_to_build or "apy_masked_imbalance" in metrics_to_build:
-        for req in ("apy_net", "avg_rel_price_diff", "max_rel_price_diff"):
-            if req not in metrics_to_build:
-                metrics_to_build.append(req)
+    metrics_to_build = _metrics_to_build(metrics)
     metric_arrays: Dict[str, np.ndarray] = {
         m: np.full(shape, np.nan, dtype=float) for m in metrics_to_build
     }
@@ -408,7 +530,7 @@ def _extract_nd_arrays(
             avg_rel = _to_float(metrics_dict.get("avg_rel_price_diff"))
             if not math.isfinite(avg_rel):
                 return None
-            max_rel = _to_float(metrics_dict.get("max_rel_price_diff"))
+            max_rel = _max_mask_price_diff(metrics_dict)
             if not math.isfinite(max_rel):
                 return None
             thr_rel = price_thr_bps / 10000.0
@@ -599,8 +721,13 @@ class NDHeatmapExplorerOpt:
         self.base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
         if not isinstance(self.base_pool, dict):
             self.base_pool = {}
+        self.base_costs = meta.get("base_costs") if isinstance(meta, dict) else None
+        if not isinstance(self.base_costs, dict):
+            self.base_costs = {}
+        self.fee_equalize = bool(meta.get("fee_equalize")) if isinstance(meta, dict) else False
         self.candles_file = None
         self.config_start_time = None
+        self.config_disable_slippage_probes = False
         if isinstance(meta, dict):
             self.candles_file = (
                 meta.get("candles_file")
@@ -608,6 +735,16 @@ class NDHeatmapExplorerOpt:
                 or meta.get("remote_candles")
             )
             self.config_start_time = meta.get("start_time")
+            if not self.config_start_time:
+                harness_args = meta.get("harness_args")
+                if isinstance(harness_args, dict):
+                    self.config_start_time = harness_args.get("start_time")
+            disable_slippage_probes = meta.get("disable_slippage_probes")
+            if disable_slippage_probes is None:
+                harness_args = meta.get("harness_args")
+                if isinstance(harness_args, dict):
+                    disable_slippage_probes = harness_args.get("disable_slippage_probes")
+            self.config_disable_slippage_probes = disable_slippage_probes is True
         if not self.config_start_time:
             runs = data.get("runs") if isinstance(data, dict) else None
             if isinstance(runs, list) and runs:
@@ -691,7 +828,9 @@ class NDHeatmapExplorerOpt:
         if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_slice = self._slice_raw("apy_net")
             rel_slice = self._slice_raw("avg_rel_price_diff")
-            max_rel_slice = self._slice_raw("max_rel_price_diff")
+            max_rel_slice = self._slice_raw(MASK_MAX_PRICE_METRIC)
+            if max_rel_slice is None or not np.isfinite(max_rel_slice).any():
+                max_rel_slice = self._slice_raw(MASK_MAX_PRICE_FALLBACK_METRIC)
             if apy_slice is None or rel_slice is None or max_rel_slice is None:
                 xs = self.dim_values[self.x_name]
                 ys = self.dim_values[self.y_name]
@@ -1048,7 +1187,7 @@ class NDHeatmapExplorerOpt:
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "max pdiff thr (bps):",
+                "max 7d pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
@@ -1146,7 +1285,7 @@ class NDHeatmapExplorerOpt:
         if metric in {"apy_masked", "apy_masked_imbalance"}:
             apy_net = _to_float(metrics.get("apy_net"))
             avg_rel = _to_float(metrics.get("avg_rel_price_diff"))
-            max_rel = _to_float(metrics.get("max_rel_price_diff"))
+            max_rel = _max_mask_price_diff(metrics)
             if (
                 not math.isfinite(apy_net)
                 or not math.isfinite(avg_rel)
@@ -1169,6 +1308,36 @@ class NDHeatmapExplorerOpt:
             return self._format_metric_value(float(raw) * scale)
         return self._format_metric_value(raw)
 
+    def _metric_array_display_value(self, metric: str, idx_tuple: Tuple[int, ...]) -> str:
+        if metric in {"apy_masked", "apy_masked_imbalance"}:
+            apy = self.metric_arrays.get("apy_net")
+            avg_rel = self.metric_arrays.get("avg_rel_price_diff")
+            max_rel = self.metric_arrays.get(MASK_MAX_PRICE_METRIC)
+            if max_rel is None or not np.isfinite(max_rel).any():
+                max_rel = self.metric_arrays.get(MASK_MAX_PRICE_FALLBACK_METRIC)
+            if apy is None or avg_rel is None or max_rel is None:
+                return "missing"
+            value = float(apy[idx_tuple])
+            avg = float(avg_rel[idx_tuple])
+            mx = float(max_rel[idx_tuple])
+            if (
+                not math.isfinite(value)
+                or not math.isfinite(avg)
+                or not math.isfinite(mx)
+                or avg > self.price_thr_bps / 100.0
+                or mx > self.max_price_thr_bps / 100.0
+            ):
+                return "nan"
+            return self._format_metric_value(value)
+
+        arr = self.metric_arrays.get(metric)
+        if arr is None:
+            return "missing"
+        value = float(arr[idx_tuple])
+        if not math.isfinite(value):
+            return "nan"
+        return self._format_metric_value(value)
+
     def _update_metrics_window(
         self, idx_tuple: Tuple[int, ...], coords: Dict[str, float]
     ):
@@ -1183,7 +1352,11 @@ class NDHeatmapExplorerOpt:
         for metric in self.metrics:
             _, suffix = _metric_scale_info(metric)
             label = f"{metric}{suffix}" if suffix else metric
-            val = self._metric_display_value(metric, metrics)
+            val = (
+                self._metric_display_value(metric, metrics)
+                if metrics is not None
+                else self._metric_array_display_value(metric, idx_tuple)
+            )
             lines.append(f"  {label}: {val}")
         self.metrics_text.set_text("\n".join(lines))
         self.fig_metrics.canvas.draw_idle()
@@ -1202,7 +1375,9 @@ class NDHeatmapExplorerOpt:
         return max_bps
 
     def _compute_max_price_thr_max_bps(self) -> float:
-        arr = self.metric_arrays.get("max_rel_price_diff")
+        arr = self.metric_arrays.get(MASK_MAX_PRICE_METRIC)
+        if arr is None or not np.isfinite(arr).any():
+            arr = self.metric_arrays.get(MASK_MAX_PRICE_FALLBACK_METRIC)
         if arr is None:
             return max(1.0, self.max_price_thr_bps)
         finite = arr[np.isfinite(arr)]
@@ -1412,7 +1587,7 @@ class NDHeatmapExplorerOpt:
             lbl = self.fig_controls.text(
                 0.05,
                 slider_y + SLIDER_LABEL_OFFSET,
-                "max pdiff thr (bps):",
+                "max 7d pdiff thr (bps):",
                 ha="left",
                 va="bottom",
                 fontsize=SLIDER_FONTSIZE,
@@ -1574,12 +1749,24 @@ class NDHeatmapExplorerOpt:
             return None
 
         pool = dict(self.base_pool)
+        costs = dict(self.base_costs) if self.base_costs else dict(DEFAULT_COSTS)
+        touches_fee = False
         for name, val in coords.items():
-            pool[name] = val
+            if name == "policy.fee_bps":
+                pool["policy"] = {"kind": "fixed_fee", "fee_bps": val}
+            elif name.startswith("costs."):
+                _set_dotted(costs, name.removeprefix("costs."), val)
+            elif "." in name:
+                _set_dotted(pool, name, val)
+            else:
+                pool[name] = val
+            touches_fee = touches_fee or name in {"mid_fee", "out_fee"}
+        if self.fee_equalize and touches_fee and "mid_fee" in pool:
+            pool["out_fee"] = pool["mid_fee"]
         return {
             "tag": "inspect",
             "pool": _stringify_pool(pool),
-            "costs": dict(DEFAULT_COSTS),
+            "costs": costs,
         }
 
     def _resolve_candles_path(self) -> Path | None:
@@ -1656,8 +1843,11 @@ class NDHeatmapExplorerOpt:
                 "--pool-config",
                 str(inspect_path),
             ]
-            if self.start_time:
-                cmd += ["--start-time", self.start_time]
+            start_time = self.start_time or self.config_start_time
+            if start_time:
+                cmd += ["--start-time", str(start_time)]
+            if self.config_disable_slippage_probes:
+                cmd.append("--disable-slippage-probes")
             # First click rebuilds, subsequent clicks skip build
             if self._inspect_built_once:
                 cmd.append("--skip-build")
@@ -1755,7 +1945,7 @@ def main() -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description="Optimized N-dim heatmap explorer")
-    ap.add_argument("--arb", type=str, default=None, help="Path to arb_run_*.json")
+    ap.add_argument("--arb", type=str, default=None, help="Path to arb_run JSON or NPZ directory")
     ap.add_argument(
         "--metrics",
         type=str,

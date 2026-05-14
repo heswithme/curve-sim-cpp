@@ -73,6 +73,7 @@ struct Metrics {
 struct TimeWeightedSummary {
     double avg_rel_price_diff{-1.0};
     double max_rel_price_diff{-1.0};
+    double max_7d_rel_price_diff{-1.0};
     double avg_imbalance{-1.0};
     double tw_avg_pool_fee{-1.0};
     double min_price_scale{-1.0};
@@ -84,16 +85,29 @@ struct TimeWeightedSummary {
 // Time-weighted metrics for tracking pool state over time
 template <typename T>
 struct TimeWeightedMetrics {
+    static constexpr uint64_t PRICE_DIFF_WINDOW_S = 7 * 24 * 60 * 60;
+    static constexpr uint64_t PRICE_DIFF_BUCKET_S = 60 * 60;
+    static constexpr size_t PRICE_DIFF_BUCKETS =
+        PRICE_DIFF_WINDOW_S / PRICE_DIFF_BUCKET_S + 2;
+
     // Price follow metrics (relative): time-weighted |ps/p_cex - 1|
     long double sum_abs_rel_dt{0.0L};   // sum |rel_err| * dt
     long double sum_dt{0.0L};            // sum dt
     long double max_rel_abs{0.0L};       // max |rel_err| across events
     T last_rel_abs{0};                   // |ps/p_cex - 1| at previous event
+    uint64_t first_ts_err{0};
     uint64_t last_ts_err{0};
     bool have_err{false};
     T min_price_scale{0};
     T max_price_scale{0};
     bool have_price_scale{false};
+    std::array<long double, PRICE_DIFF_BUCKETS> rel_bucket_sum_dt{};
+    std::array<long double, PRICE_DIFF_BUCKETS> rel_bucket_dt{};
+    std::array<uint64_t, PRICE_DIFF_BUCKETS> rel_bucket_id{};
+    std::array<bool, PRICE_DIFF_BUCKETS> rel_bucket_live{};
+    uint64_t last_7d_eval_bucket{0};
+    long double max_7d_rel_abs{0.0L};
+    bool have_7d_rel_abs{false};
 
     // Time-weighted imbalance: 4*x0'*x1'/(x0'+x1')^2, with x1' = balance1 * p_cex
     long double sum_imbalance_dt{0.0L};
@@ -118,6 +132,9 @@ struct TimeWeightedMetrics {
             ? static_cast<double>(sum_abs_rel_dt / sum_dt)
             : -1.0;
         summary.max_rel_price_diff = static_cast<double>(max_rel_abs);
+        summary.max_7d_rel_price_diff = have_7d_rel_abs
+            ? static_cast<double>(max_7d_rel_abs)
+            : -1.0;
         summary.avg_imbalance = imbalance_dt > 0.0L
             ? static_cast<double>(sum_imbalance_dt / imbalance_dt)
             : -1.0;
@@ -133,6 +150,10 @@ struct TimeWeightedMetrics {
 
     // Update methods
     void sample_price_error(uint64_t ts, T price_scale, T p_cex) {
+        if (!have_err) {
+            first_ts_err = ts;
+        }
+
         if (!have_price_scale) {
             min_price_scale = price_scale;
             max_price_scale = price_scale;
@@ -151,6 +172,7 @@ struct TimeWeightedMetrics {
             const long double dt = static_cast<long double>(ts - last_ts_err);
             sum_abs_rel_dt += static_cast<long double>(last_rel_abs) * dt;
             sum_dt += dt;
+            sample_7d_price_error(last_ts_err, ts, static_cast<long double>(last_rel_abs));
         }
         
         if (static_cast<long double>(cur_rel_abs) > max_rel_abs) {
@@ -160,6 +182,62 @@ struct TimeWeightedMetrics {
         last_rel_abs = cur_rel_abs;
         last_ts_err = ts;
         have_err = true;
+    }
+
+    void sample_7d_price_error(uint64_t start_ts, uint64_t end_ts, long double rel_abs) {
+        while (start_ts < end_ts) {
+            const uint64_t bucket_id = start_ts / PRICE_DIFF_BUCKET_S;
+            const uint64_t bucket_end = (bucket_id + 1) * PRICE_DIFF_BUCKET_S;
+            const uint64_t segment_end = end_ts < bucket_end ? end_ts : bucket_end;
+            const size_t idx = static_cast<size_t>(bucket_id % PRICE_DIFF_BUCKETS);
+
+            if (!rel_bucket_live[idx] || rel_bucket_id[idx] != bucket_id) {
+                rel_bucket_live[idx] = true;
+                rel_bucket_id[idx] = bucket_id;
+                rel_bucket_sum_dt[idx] = 0.0L;
+                rel_bucket_dt[idx] = 0.0L;
+            }
+
+            const long double dt = static_cast<long double>(segment_end - start_ts);
+            rel_bucket_sum_dt[idx] += rel_abs * dt;
+            rel_bucket_dt[idx] += dt;
+            start_ts = segment_end;
+        }
+
+        const uint64_t eval_bucket = end_ts / PRICE_DIFF_BUCKET_S;
+        if (have_7d_rel_abs && eval_bucket == last_7d_eval_bucket) {
+            return;
+        }
+        last_7d_eval_bucket = eval_bucket;
+        if (end_ts < first_ts_err + PRICE_DIFF_WINDOW_S) {
+            return;
+        }
+
+        const uint64_t cutoff = end_ts > PRICE_DIFF_WINDOW_S
+            ? end_ts - PRICE_DIFF_WINDOW_S
+            : 0;
+        long double window_sum_dt = 0.0L;
+        long double window_dt = 0.0L;
+        for (size_t i = 0; i < PRICE_DIFF_BUCKETS; ++i) {
+            if (!rel_bucket_live[i]) {
+                continue;
+            }
+            const uint64_t bucket_start = rel_bucket_id[i] * PRICE_DIFF_BUCKET_S;
+            const uint64_t bucket_end = bucket_start + PRICE_DIFF_BUCKET_S;
+            if (bucket_end <= cutoff || bucket_start >= end_ts) {
+                continue;
+            }
+            window_sum_dt += rel_bucket_sum_dt[i];
+            window_dt += rel_bucket_dt[i];
+        }
+
+        if (window_dt > 0.0L) {
+            const long double avg = window_sum_dt / window_dt;
+            if (!have_7d_rel_abs || avg > max_7d_rel_abs) {
+                max_7d_rel_abs = avg;
+                have_7d_rel_abs = true;
+            }
+        }
     }
 
     void sample_imbalance(uint64_t ts, T x0p, T x1p) {

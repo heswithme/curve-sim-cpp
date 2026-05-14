@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
+from arb_run_npz import NpzRun, load_json_or_npz, ordered_grid
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -38,15 +39,19 @@ RUN_DIR = HERE / "run_data"
 
 
 def _latest_arb_run() -> Path:
-    files = list(RUN_DIR.glob("arb_run_*.json"))
+    files = [
+        p
+        for p in RUN_DIR.glob("arb_run_*")
+        if p.is_dir() or p.suffix == ".json"
+    ]
     if not files:
-        raise SystemExit(f"No arb_run_*.json found under {RUN_DIR}")
+        raise SystemExit(f"No arb_run_* result found under {RUN_DIR}")
     files.sort(key=lambda p: os.path.getmtime(p))
     return files[-1]
 
 
 def _load(path: Path) -> Dict[str, Any]:
-    return orjson.loads(path.read_bytes())
+    return load_json_or_npz(path)
 
 
 def _ordered_grid(
@@ -189,6 +194,49 @@ def _build_metric_grid(
     return metric, pdiff_bps
 
 
+def _build_metric_grid_npz(
+    npz_run: NpzRun,
+    metadata: Dict[str, Any],
+    metric_key: str,
+    price_thr_bps: float,
+    price_metric_key: str,
+) -> Tuple[List[str], List[List[float]], List[str], np.ndarray, np.ndarray]:
+    names, grid_values, x_keys = ordered_grid(metadata)
+    if not names:
+        raise SystemExit("NPZ arb run requires metadata.grid")
+    shape = tuple(len(v) for v in grid_values)
+
+    def load(name: str) -> np.ndarray:
+        return npz_run.load_array(name).astype(float, copy=False).reshape(shape)
+
+    try:
+        pdiff_raw = load(price_metric_key)
+    except KeyError as exc:
+        raise KeyError(f"Metric '{price_metric_key}' not found in NPZ run") from exc
+    pdiff_bps = pdiff_raw * 10000.0
+
+    if metric_key == "apy_masked":
+        try:
+            metric = load("apy_net")
+        except KeyError as exc:
+            raise KeyError("Metric 'apy_masked' requires apy_net") from exc
+        metric = np.where(pdiff_raw <= price_thr_bps / 10000.0, metric, np.nan)
+    else:
+        try:
+            metric = load(metric_key)
+        except KeyError as exc:
+            raise KeyError(f"Metric '{metric_key}' not found in NPZ run") from exc
+
+    try:
+        success = npz_run.load_array("success").astype(bool).reshape(shape)
+        metric = np.where(success, metric, np.nan)
+        pdiff_bps = np.where(success, pdiff_bps, np.nan)
+    except KeyError:
+        pass
+
+    return names, grid_values, x_keys, metric, pdiff_bps
+
+
 def _local_maxima(metric: np.ndarray, connectivity: str) -> List[Tuple[int, ...]]:
     conn = 1 if connectivity == "axis" else metric.ndim
     foot = ndi.generate_binary_structure(metric.ndim, conn)
@@ -236,6 +284,8 @@ def _coord_dict(
 def _pdiff_label(price_metric_key: str) -> str:
     if price_metric_key == "max_rel_price_diff":
         return "max_pdiff_bps"
+    if price_metric_key == "max_7d_rel_price_diff":
+        return "max_7d_pdiff_bps"
     return "avg_pdiff_bps"
 
 
@@ -248,7 +298,7 @@ def _pdiff_text(pdiff_grid: np.ndarray, coord: Tuple[int, ...], label: str) -> s
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON")
+    parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON or NPZ directory")
     parser.add_argument("--metric", type=str, default="apy_mask_3", help="Metric key")
     parser.add_argument(
         "--pricethr",
@@ -258,7 +308,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--price-metric",
-        choices=["avg_rel_price_diff", "max_rel_price_diff"],
+        choices=[
+            "avg_rel_price_diff",
+            "max_rel_price_diff",
+            "max_7d_rel_price_diff",
+        ],
         default="avg_rel_price_diff",
         help="Price-diff metric used by apy_masked",
     )
@@ -268,6 +322,13 @@ def main() -> None:
         action="store_const",
         const="max_rel_price_diff",
         help="Alias for --price-metric max_rel_price_diff",
+    )
+    parser.add_argument(
+        "--max-7d-pdiff",
+        dest="price_metric",
+        action="store_const",
+        const="max_7d_rel_price_diff",
+        help="Alias for --price-metric max_7d_rel_price_diff",
     )
     parser.add_argument(
         "--local", action="store_true", help="Report local maxima on grid"
@@ -298,24 +359,34 @@ def main() -> None:
     print(f"Loading {arb_path}")
     data = _load(arb_path)
 
-    runs = data.get("runs", [])
-    if not runs:
-        raise SystemExit("No runs found in JSON")
+    npz_run = data.get("_npz_run")
+    if isinstance(npz_run, NpzRun):
+        names, grid_values, x_keys, metric, pdiff_bps = _build_metric_grid_npz(
+            npz_run,
+            data.get("metadata", {}),
+            args.metric,
+            args.pricethr,
+            args.price_metric,
+        )
+    else:
+        runs = data.get("runs", [])
+        if not runs:
+            raise SystemExit("No runs found in JSON")
 
-    names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
-    if not names:
-        names, grid_values, x_keys = infer_grid_from_runs(runs)
-    if not names:
-        raise SystemExit("No grid dimensions found in metadata or params.pool")
-    metric, pdiff_bps = _build_metric_grid(
-        runs,
-        names,
-        x_keys,
-        grid_values,
-        args.metric,
-        args.pricethr,
-        args.price_metric,
-    )
+        names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
+        if not names:
+            names, grid_values, x_keys = infer_grid_from_runs(runs)
+        if not names:
+            raise SystemExit("No grid dimensions found in metadata or params.pool")
+        metric, pdiff_bps = _build_metric_grid(
+            runs,
+            names,
+            x_keys,
+            grid_values,
+            args.metric,
+            args.pricethr,
+            args.price_metric,
+        )
     pdiff_label = _pdiff_label(args.price_metric)
     finite_metric = np.where(np.isfinite(metric), metric, np.nan)
     if not np.isfinite(finite_metric).any():

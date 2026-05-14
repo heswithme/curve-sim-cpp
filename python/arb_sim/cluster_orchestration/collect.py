@@ -9,13 +9,17 @@ Since all results are on shared NFS, we only need to:
 """
 
 import json
+import shutil
 import subprocess
 import sys
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 from config import (
     SSH_USER,
@@ -50,17 +54,24 @@ def rsync_from_cluster(
     timeout: int = 600,
     retries: int = 3,
     retry_delay: float = 1.0,
+    remote_is_dir: bool = False,
 ) -> bool:
     """Download file from shared NFS via rsync with compression and retry."""
     ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
+    source = f"{SSH_USER}@{blade}:{remote_path}"
+    dest = str(local_path)
+    if remote_is_dir:
+        local_path.mkdir(parents=True, exist_ok=True)
+        source = source.rstrip("/") + "/"
+        dest = str(local_path) + "/"
     cmd = [
         "rsync",
         "-avz",  # archive, verbose, compress
         "--progress",
         "-e",
         ssh_opts,
-        f"{SSH_USER}@{blade}:{remote_path}",
-        str(local_path),
+        source,
+        dest,
     ]
     for attempt in range(retries):
         try:
@@ -163,17 +174,20 @@ def collect(
         if not remote_path:
             # If force mode, try to construct the path
             if force:
-                remote_path = f"{REMOTE_RESULTS}/result_{blade_name}.json"
+                remote_path = f"{REMOTE_RESULTS}/result_{blade_name}"
             else:
                 continue
 
-        local_path = downloads_dir / f"result_{blade_name}.json"
-        to_download.append((blade_name, remote_path, local_path))
+        remote_is_dir = not str(remote_path).endswith(".json")
+        local_path = downloads_dir / (
+            f"result_{blade_name}" if remote_is_dir else f"result_{blade_name}.json"
+        )
+        to_download.append((blade_name, remote_path, local_path, remote_is_dir))
 
     # Download in parallel
-    def download_one(args: Tuple[str, str, Path]) -> Tuple[str, Path, bool]:
-        blade_name, remote_path, local_path = args
-        success = rsync_from_cluster(remote_path, local_path, blade)
+    def download_one(args: Tuple[str, str, Path, bool]) -> Tuple[str, Path, bool]:
+        blade_name, remote_path, local_path, remote_is_dir = args
+        success = rsync_from_cluster(remote_path, local_path, blade, remote_is_dir=remote_is_dir)
         return blade_name, local_path, success
 
     downloaded = {}
@@ -200,6 +214,204 @@ def collect(
 
     # Get grid metadata from manifest
     grid = manifest.get("grid", {})
+
+    if all(path.is_dir() for path in downloaded.values()):
+        cfg = manifest.get("config", {})
+        if output_file is None:
+            LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+            prefix = cfg.get("output_prefix", "cluster_sweep")
+            output_file = LOCAL_RESULTS_DIR / prefix
+        if output_file.suffix == ".json":
+            output_file = output_file.with_suffix("")
+
+        if output_file.exists():
+            if output_file.is_dir():
+                shutil.rmtree(output_file)
+            else:
+                output_file.unlink()
+        output_file.mkdir(parents=True, exist_ok=True)
+
+        shard_infos = []
+        blade_stats = {}
+        total_runs = 0
+        total_errors = 0
+        vp_values: list[float] = []
+        apy_values: list[float] = []
+        metrics_schema = None
+        merged_errors: dict[str, Any] = {}
+
+        for blade_name, path in downloaded.items():
+            manifest_path = path / "manifest.json"
+            data = load_json(manifest_path)
+            if not data:
+                continue
+            if metrics_schema is None:
+                metrics_schema = data.get("metrics_schema")
+            meta = data.get("metadata", {})
+            n_pools = int(data.get("n_pools", meta.get("n_pools", 0)))
+            pool_start = int(data.get("pool_start", meta.get("pool_start", 0)))
+            pool_end_raw = data.get("pool_end", meta.get("pool_end"))
+            pool_end = int(pool_end_raw) if pool_end_raw is not None else pool_start + n_pools
+            errors_path = path / "errors.json"
+            shard_errors = load_json(errors_path) if errors_path.exists() else {}
+            if isinstance(shard_errors, dict):
+                merged_errors.update(shard_errors)
+            else:
+                shard_errors = {}
+            errors = len(shard_errors)
+            blade_stats[blade_name] = {"pools": n_pools, "errors": errors}
+            total_runs += n_pools
+            total_errors += errors
+            shard_infos.append(
+                {
+                    "blade": blade_name,
+                    "path": path,
+                    "metrics_path": path / "metrics.npz",
+                    "pool_start": pool_start,
+                    "pool_end": pool_end,
+                    "n_pools": n_pools,
+                }
+            )
+            try:
+                with np.load(path / "metrics.npz") as arrays:
+                    if "vp" in arrays.files:
+                        vp = arrays["vp"]
+                        vp_values.extend(float(x) for x in vp[np.isfinite(vp)])
+                    if "apy" in arrays.files:
+                        apy = arrays["apy"]
+                        apy_values.extend(float(x) for x in apy[np.isfinite(apy) & (apy >= 0)])
+            except Exception:
+                pass
+
+        total_pools = int(manifest.get("total_pools", total_runs))
+        metric_names: list[str] = []
+        if isinstance(metrics_schema, list):
+            metric_names = [
+                item["name"]
+                for item in metrics_schema
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+            ]
+        if not metric_names and shard_infos:
+            with np.load(shard_infos[0]["metrics_path"]) as arrays:
+                metric_names = list(arrays.files)
+                metrics_schema = [
+                    {"name": name, "dtype": str(arrays[name].dtype)}
+                    for name in metric_names
+                ]
+
+        tmp_arrays = output_file / ".merge_tmp"
+        tmp_arrays.mkdir()
+        try:
+            with zipfile.ZipFile(output_file / "metrics.npz", "w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+                for metric in metric_names:
+                    dtype = None
+                    for info in shard_infos:
+                        with np.load(info["metrics_path"]) as arrays:
+                            if metric in arrays.files:
+                                dtype = arrays[metric].dtype
+                                break
+                    if dtype is None:
+                        continue
+
+                    tmp_npy = tmp_arrays / f"{metric}.npy"
+                    merged_array = np.lib.format.open_memmap(
+                        tmp_npy,
+                        mode="w+",
+                        dtype=dtype,
+                        shape=(total_pools,),
+                    )
+                    if np.issubdtype(dtype, np.floating):
+                        merged_array[:] = np.nan
+                    else:
+                        merged_array[:] = 0
+
+                    for info in shard_infos:
+                        with np.load(info["metrics_path"]) as arrays:
+                            if metric not in arrays.files:
+                                continue
+                            arr = arrays[metric]
+                            start_idx = int(info["pool_start"])
+                            merged_array[start_idx:start_idx + len(arr)] = arr
+                    merged_array.flush()
+                    del merged_array
+                    zf.write(tmp_npy, arcname=f"{metric}.npy")
+                    tmp_npy.unlink()
+        finally:
+            shutil.rmtree(tmp_arrays, ignore_errors=True)
+
+        metadata = {
+            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "job_id": job_id,
+            "total_pools": total_runs,
+            "n_pools": total_pools,
+            "errors": total_errors,
+            "blades_used": len(downloaded),
+            "blade_stats": blade_stats,
+            "harness_args": {
+                "dustswapfreq": cfg.get("dustswap_freq"),
+                "candle_filter": cfg.get("candle_filter"),
+                "start_time": cfg.get("start_time"),
+                "disable_slippage_probes": cfg.get("disable_slippage_probes"),
+                "quiet_harness": cfg.get("quiet_harness"),
+            },
+            "grid": grid,
+            "base_pool": manifest.get("base_pool", {}),
+            "base_costs": manifest.get("base_costs", {}),
+            "fee_equalize": manifest.get("fee_equalize", False),
+        }
+        if cfg.get("start_time") is not None:
+            metadata["start_time"] = cfg.get("start_time")
+        remote_candles = manifest.get("remote_candles")
+        if remote_candles:
+            candles_name = Path(remote_candles).name
+            local_candles = find_local_candles(candles_name)
+            metadata["candles_file"] = str(local_candles) if local_candles else candles_name
+
+        merged = {
+            "format": "arb_npz_v1",
+            "metrics_file": "metrics.npz",
+            "metadata": metadata,
+            "n_pools": total_pools,
+            "pool_start": 0,
+            "pool_end": total_pools,
+            "metrics_schema": metrics_schema or [],
+            "summary": {
+                "total_runs": total_runs,
+                "successful": total_runs - total_errors,
+            },
+        }
+        if vp_values:
+            merged["summary"]["vp"] = {
+                "min": min(vp_values),
+                "max": max(vp_values),
+                "avg": sum(vp_values) / len(vp_values),
+            }
+        if apy_values:
+            merged["summary"]["apy"] = {
+                "min": min(apy_values),
+                "max": max(apy_values),
+                "avg": sum(apy_values) / len(apy_values),
+            }
+
+        with open(output_file / "manifest.json", "w") as f:
+            json.dump(merged, f, indent=2)
+        if merged_errors:
+            with open(output_file / "errors.json", "w") as f:
+                json.dump(merged_errors, f, indent=2)
+
+        print(f"\n{'=' * 60}")
+        print("Results Summary")
+        print(f"{'=' * 60}")
+        print(f"  Total pools: {merged['summary']['total_runs']}")
+        print(f"  Successful: {merged['summary']['successful']}")
+        if "vp" in merged["summary"]:
+            vp = merged["summary"]["vp"]
+            print(f"  VP: {vp['min']:.4f} - {vp['max']:.4f} (avg {vp['avg']:.4f})")
+        if "apy" in merged["summary"]:
+            apy = merged["summary"]["apy"]
+            print(f"  APY: {apy['min']:.2%} - {apy['max']:.2%} (avg {apy['avg']:.2%})")
+        print(f"\nSaved to: {output_file}")
+        return merged
 
     # Merge results
     print(f"\nMerging {len(downloaded)} result files...")
@@ -244,9 +456,14 @@ def collect(
             },
             # Include grid metadata for visualization compatibility
             "grid": grid,
+            "base_pool": manifest.get("base_pool", {}),
+            "base_costs": manifest.get("base_costs", {}),
+            "fee_equalize": manifest.get("fee_equalize", False),
         },
         "runs": all_runs,
     }
+    if cfg.get("start_time") is not None:
+        merged["metadata"]["start_time"] = cfg.get("start_time")
 
     remote_candles = manifest.get("remote_candles")
     if remote_candles:

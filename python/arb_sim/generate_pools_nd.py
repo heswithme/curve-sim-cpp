@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import itertools
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ START_TIME: str | None = "01-01-2024"  # Unix timestamp or DD-MM-YYYY
 LAST_YEARS: float | None = None  # 2.0
 
 OUT_PATH = RUN_DATA_DIR / "pool_config.json"
+EXPAND_POOLS = False
 
 INIT_LIQ = 1_000_000  # coin0 notional
 ARB_FEE_BPS = 2
@@ -52,13 +54,13 @@ BASE_DONATION_COINS_RATIO = 0.5
 
 GRID: dict[str, Any] = {
     "A": [int(a * A_MULTIPLIER) for a in range(1, 13)],
-    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(10, 101, 5)],
-    "out_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(100, 201, 5)],
-    "fee_gamma": [int(round(a * WAD)) for a in [5e-4, 1e-3, 5e-3, 1e-2]],
-    "donation_apy": np.arange(0.0, 0.05001, 0.005),
-    "reserved_profit_fraction": [
-        int(round(a * FEE_SCALE)) for a in np.arange(0.15, 0.500000001, 0.05)
-    ],
+    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(10, 101, 10)],
+    "out_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in range(100, 201, 10)],
+    # "fee_gamma": [int(round(a * WAD)) for a in [1e-3, 5e-3, 1e-2]],
+    # "donation_apy": np.arange(0.0, 0.05001, 0.005),
+    # "reserved_profit_fraction": [
+    #     int(round(a * FEE_SCALE)) for a in np.arange(0.15, 0.500000001, 0.05)
+    # ],
     # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
 
@@ -188,15 +190,43 @@ def build_costs(arb_fee_bps: float) -> dict[str, Any]:
     }
 
 
-def set_grid_value(pool: dict[str, Any], name: str, value: Any) -> None:
+def set_dotted_value(obj: dict[str, Any], dotted_name: str, value: Any) -> None:
+    cur = obj
+    parts = dotted_name.split(".")
+    for part in parts[:-1]:
+        next_obj = cur.setdefault(part, {})
+        if not isinstance(next_obj, dict):
+            next_obj = {}
+            cur[part] = next_obj
+        cur = next_obj
+    cur[parts[-1]] = value
+
+
+def set_grid_value(
+    pool: dict[str, Any],
+    costs: dict[str, Any],
+    name: str,
+    value: Any,
+) -> None:
     if name == "policy.fee_bps":
         pool["policy"] = fixed_fee_policy(float(value))
+    elif name.startswith("costs."):
+        set_dotted_value(costs, name.removeprefix("costs."), value)
     else:
-        pool[name] = value
+        set_dotted_value(pool, name, value)
 
 
-def pool_field_for_axis(name: str) -> str:
-    return name
+def json_grid_value(value: Any) -> Any:
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return value
+
+
+def axis_values(values: Any) -> list[Any]:
+    raw_values = values.tolist() if isinstance(values, np.ndarray) else list(values)
+    return [json_grid_value(x) for x in raw_values]
 
 
 def build_grid(
@@ -205,24 +235,29 @@ def build_grid(
     base_costs: dict[str, Any],
     grid: dict[str, Any],
     fee_equalize: bool,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    expand_pools: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
     names = list(grid.keys())
-    axes = [list(v) if isinstance(v, np.ndarray) else list(v) for v in grid.values()]
-    pool_field_names = {pool_field_for_axis(name) for name in names}
+    axes = [axis_values(v) for v in grid.values()]
     grid_meta = {
-        f"x{i}": {"name": name, "values": [float(x) for x in vals]}
+        f"x{i}": {"name": name, "values": vals}
         for i, (name, vals) in enumerate(zip(names, axes), 1)
     }
+    pool_count = math.prod(len(vals) for vals in axes)
 
     pools = []
+    if not expand_pools:
+        return pools, grid_meta, pool_count
+
     for coords in itertools.product(*axes):
         pool = copy.deepcopy(base_pool)
+        costs = dict(base_costs)
         tag_parts = []
         for name, val in zip(names, coords):
-            set_grid_value(pool, name, val)
+            set_grid_value(pool, costs, name, val)
             tag_parts.append(f"{name}_{val}")
 
-        if "mid_fee" in pool_field_names or "out_fee" in pool_field_names:
+        if "mid_fee" in names or "out_fee" in names:
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
@@ -232,11 +267,11 @@ def build_grid(
             {
                 "tag": "__".join(tag_parts),
                 "pool": strify_pool(pool),
-                "costs": dict(base_costs),
+                "costs": costs,
             }
         )
 
-    return pools, grid_meta
+    return pools, grid_meta, pool_count
 
 
 def build_config() -> dict[str, Any]:
@@ -253,14 +288,15 @@ def build_config() -> dict[str, Any]:
         donation_coins_ratio=BASE_DONATION_COINS_RATIO,
     )
     base_costs = build_costs(ARB_FEE_BPS)
-    pools, grid_meta = build_grid(
+    pools, grid_meta, pool_count = build_grid(
         base_pool=base_pool,
         base_costs=base_costs,
         grid=GRID,
         fee_equalize=FEE_EQUALIZE,
+        expand_pools=EXPAND_POOLS,
     )
 
-    return {
+    config = {
         "meta": {
             "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "grid": grid_meta,
@@ -271,16 +307,26 @@ def build_config() -> dict[str, Any]:
             "start_time": str(base_pool["start_timestamp"]),
             "last_years": LAST_YEARS,
             "base_pool": strify_pool(base_pool),
+            "base_costs": dict(base_costs),
+            "pool_count": pool_count,
+            "compact_grid": not EXPAND_POOLS,
+            "fee_equalize": FEE_EQUALIZE,
         },
-        "pools": pools,
     }
+    if EXPAND_POOLS:
+        config["pools"] = pools
+    return config
 
 
 def main() -> None:
     out = build_config()
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(out, indent=2))
-    print(f"Wrote {len(out['pools'])} pool configs to {OUT_PATH}")
+    if not EXPAND_POOLS:
+        print(f"Wrote compact grid for {out['meta']['pool_count']} pools to {OUT_PATH}")
+        print("C++ will generate pool configs lazily from meta.base_pool + meta.grid.")
+    else:
+        print(f"Wrote {out['meta']['pool_count']} expanded pool configs to {OUT_PATH}")
 
 
 if __name__ == "__main__":

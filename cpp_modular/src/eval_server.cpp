@@ -67,6 +67,7 @@ void print_usage(const char* prog) {
         << "    adjustment_step_min, adjustment_step_max, reserved_profit_fraction, admin_fee, policy\n"
         << "  response fields:\n"
         << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff,\n"
+        << "    max_7d_rel_price_diff,\n"
         << "    min_price_scale, max_price_scale, min_pool_fee, max_pool_fee,\n"
         << "    arb guard counters, elapsed_ms\n";
 }
@@ -490,6 +491,7 @@ json::object evaluate_request(
     out["apy_net"] = get_double_opt(summary, "apy_net", -1.0);
     out["avg_rel_price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
     out["max_rel_price_diff"] = get_double_opt(summary, "max_rel_price_diff", -1.0);
+    out["max_7d_rel_price_diff"] = get_double_opt(summary, "max_7d_rel_price_diff", -1.0);
     out["min_price_scale"] = get_double_opt(summary, "min_price_scale", -1.0);
     out["max_price_scale"] = get_double_opt(summary, "max_price_scale", -1.0);
     out["tw_avg_pool_fee"] = get_double_opt(summary, "tw_avg_pool_fee", -1.0);

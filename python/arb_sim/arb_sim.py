@@ -4,7 +4,7 @@ Arbitrage runner for the C++ arb_harness (multi-pool, threaded in C++).
 
 - Reads pools from python/arb_sim/run_data/pool_config.json (or --pool-config).
 - Calls the C++ harness once with all pools; C++ handles internal threading.
-- Emits an aggregated arb_run JSON with per-pool final_state and result.
+- Emits an arb_npz_v1 run directory by default.
 - Supports N-dimensional grids via meta.grid.dims (falls back to X/Y).
 """
 
@@ -101,7 +101,7 @@ class ArbHarnessRunner:
         self,
         pools_json: Path,
         candles_path: Path,
-        out_json_path: Path,
+        out_path: Path,
         n_candles: int = 0,
         save_actions: bool = False,
         min_swap: float = 1e-10,
@@ -125,7 +125,7 @@ class ArbHarnessRunner:
             str(self.exe_path),
             str(pools_json),
             str(candles_path),
-            str(out_json_path),
+            str(out_path),
         ]
         if n_candles and n_candles > 0:
             cmd += ["--n-candles", str(n_candles)]
@@ -166,8 +166,9 @@ class ArbHarnessRunner:
         r = subprocess.run(cmd)
         if r.returncode != 0:
             raise RuntimeError("arb_harness failed")
-        print(f"✓ Results: {out_json_path}", flush=True)
-        with open(out_json_path, "r") as f:
+        print(f"✓ Results: {out_path}", flush=True)
+        manifest_path = out_path / "manifest.json" if out_path.is_dir() else out_path
+        with open(manifest_path, "r") as f:
             return json.load(f)
 
 
@@ -183,7 +184,10 @@ def main() -> int:
         help="Path to candles JSON; if omitted, use pool_config meta.datafile",
     )
     parser.add_argument(
-        "--out", type=str, default=None, help="Aggregated output JSON path"
+        "--out",
+        type=str,
+        default=None,
+        help="Output run directory (or legacy JSON path ending in .json)",
     )
     parser.add_argument(
         "--pool-config",
@@ -370,18 +374,18 @@ def main() -> int:
         )
 
     # Invoke the harness once over the entire config
-    out_json_path = (
+    out_path = (
         Path(args.out)
         if args.out
-        # repo_root / "python" / "arb_sim" / "run_data" / f"arb_run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
-        else (repo_root / "python" / "arb_sim" / "run_data" / "arb_run_1.json")
+        else (repo_root / "python" / "arb_sim" / "run_data" / "arb_run_1")
     )
-    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    legacy_json_output = out_path.suffix == ".json"
     run_started_at = datetime.now(timezone.utc)
     raw = runner.run(
         pool_config_path,
         candles_path,
-        out_json_path,
+        out_path,
         n_candles=args.n_candles,
         save_actions=args.save_actions,
         min_swap=args.min_swap,
@@ -436,9 +440,10 @@ def main() -> int:
         grid = meta.get("grid", {}) if isinstance(meta, dict) else {}
         dim_names = _grid_dim_names(grid)
         base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
-        return dim_names, base_pool
+        base_costs = meta.get("base_costs") if isinstance(meta, dict) else None
+        return dim_names, base_pool, base_costs
 
-    dim_names, base_pool_meta = get_meta(cfg)
+    dim_names, base_pool_meta, base_costs_meta = get_meta(cfg)
     grid_meta = cfg.get("meta", {}).get("grid", {}) if isinstance(cfg, dict) else {}
 
     def _grid_axis_values() -> List[List[Any]]:
@@ -499,13 +504,64 @@ def main() -> int:
     else:
         base_pool = base_pool_meta
 
+    base_costs = base_costs_meta if isinstance(base_costs_meta, dict) else {}
+
+    if not legacy_json_output:
+        raw_metadata = raw.get("metadata", {}) if isinstance(raw, dict) else {}
+        postprocess_ms = (
+            datetime.now(timezone.utc) - harness_done_at
+        ).total_seconds() * 1000.0
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        metadata.update(
+            {
+                "candles_file": str(candles_path),
+                "pool_config_file": str(pool_config_path),
+                "harness_exe": str(runner.exe_path),
+                "real": args.real,
+                "run_started_at": run_started_at.isoformat(),
+                "threads": max(1, args.threads),
+                "quiet_harness": args.quiet_harness,
+                "n_candles_requested": args.n_candles,
+                "start_time": start_ts,
+                "disable_slippage_probes": args.disable_slippage_probes,
+                "save_actions": args.save_actions,
+                "min_swap": args.min_swap,
+                "max_swap": args.max_swap,
+                "dustswapfreq": args.dustswapfreq,
+                "userswapfreq": args.userswapfreq,
+                "userswapsize": args.userswapsize,
+                "userswapthresh": args.userswapthresh,
+                "candle_filter": args.candle_filter,
+                "cowswap_enabled": args.cow,
+                "cowswap_file": cowswap_path,
+                "cowswap_fee_bps": cowswap_fee_bps,
+                "base_pool": base_pool,
+                "base_costs": base_costs,
+                "grid": grid_meta,
+                "fee_equalize": meta.get("fee_equalize") if isinstance(meta, dict) else False,
+                "postprocess_ms": postprocess_ms,
+                "harness_wall_ms": harness_wall_s * 1000.0,
+                "wall_ms": harness_wall_s * 1000.0 + postprocess_ms,
+            }
+        )
+        raw["metadata"] = metadata
+        raw["format"] = raw.get("format", "arb_npz_v1")
+        manifest_path = out_path / "manifest.json"
+        manifest_path.write_text(json.dumps(raw, indent=2))
+        print(f"\n✓ Wrote NPZ run: {out_path}")
+        return 0
+
     # Enrich runs with x1_key/x1_val, x2_key/x2_val, ..., xN_key/xN_val
     enriched_runs: List[Dict[str, Any]] = []
     total_trades = 0
     for run_idx, rr in enumerate(runs_raw):
         params_obj = rr.get("params", {}) or {}
         pool_obj = params_obj.get("pool", {}) if isinstance(params_obj, dict) else {}
-        grid_coords = _coords_from_grid_index(run_idx)
+        try:
+            coord_idx = int(rr.get("pool_index", run_idx))
+        except Exception:
+            coord_idx = run_idx
+        grid_coords = _coords_from_grid_index(coord_idx)
         # Accumulate total trades for metadata (no duplicate field in result)
         result_obj = rr.get("result", {}) or {}
         try:
@@ -583,9 +639,9 @@ def main() -> int:
         },
         "runs": enriched_runs,
     }
-    with open(out_json_path, "w") as f:
+    with open(out_path, "w") as f:
         json.dump(agg, f, indent=2)
-    print(f"\n✓ Wrote aggregated run: {out_json_path}")
+    print(f"\n✓ Wrote aggregated run: {out_path}")
     return 0
 
 

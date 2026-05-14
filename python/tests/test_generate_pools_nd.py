@@ -9,6 +9,7 @@ ARB_SIM_ROOT = ROOT / "python" / "arb_sim"
 sys.path.insert(0, str(ARB_SIM_ROOT))
 
 from generate_pools_nd import (  # noqa: E402
+    build_config,
     build_base_pool,
     build_grid,
 )
@@ -43,14 +44,16 @@ def test_grid_uses_explicit_raw_values_and_fixed_fee_policy_axis() -> None:
         "adjustment_step_min": [int(0.000001 * 10**18)],
     }
 
-    pools, grid_meta = build_grid(
+    pools, grid_meta, pool_count = build_grid(
         base_pool=_base_pool(),
         base_costs={"arb_fee_bps": 10.0},
         grid=grid,
         fee_equalize=True,
+        expand_pools=True,
     )
 
     assert len(pools) == 4
+    assert pool_count == 4
     assert grid_meta["x1"] == {"name": "A", "values": [10000.0, 20000.0]}
     assert grid_meta["x2"] == {"name": "policy.fee_bps", "values": [10.0, 20.0]}
     assert grid_meta["x3"] == {
@@ -68,16 +71,44 @@ def test_build_grid_does_not_share_nested_policy_state_between_pools() -> None:
     base_pool = _base_pool()
     grid = {"policy.fee_bps": np.linspace(10, 20, 2)}
 
-    pools, _ = build_grid(
+    pools, _, pool_count = build_grid(
         base_pool=base_pool,
         base_costs={"arb_fee_bps": 10.0},
         grid=grid,
         fee_equalize=True,
+        expand_pools=True,
     )
 
+    assert pool_count == 2
     assert base_pool["policy"] == {"kind": "none"}
     assert pools[0]["pool"]["policy"] == {"kind": "fixed_fee", "fee_bps": 10.0}
     assert pools[-1]["pool"]["policy"] == {"kind": "fixed_fee", "fee_bps": 20.0}
+
+
+def test_expanded_grid_supports_dotted_pool_and_cost_axes() -> None:
+    grid = {
+        "policy.fee_bps": [25],
+        "costs.arb_fee_bps": [1.0, 2.0],
+        "policy.custom_param": [7],
+    }
+
+    pools, grid_meta, pool_count = build_grid(
+        base_pool=_base_pool(),
+        base_costs={"arb_fee_bps": 10.0, "gas_coin0": 0.0},
+        grid=grid,
+        fee_equalize=False,
+        expand_pools=True,
+    )
+
+    assert pool_count == 2
+    assert grid_meta["x2"] == {"name": "costs.arb_fee_bps", "values": [1.0, 2.0]}
+    assert pools[0]["pool"]["policy"] == {
+        "kind": "fixed_fee",
+        "fee_bps": 25.0,
+        "custom_param": 7,
+    }
+    assert pools[0]["costs"]["arb_fee_bps"] == 1.0
+    assert pools[1]["costs"]["arb_fee_bps"] == 2.0
 
 
 def test_base_pool_uses_near_zero_adjustment_step_min(tmp_path: Path) -> None:
@@ -94,4 +125,38 @@ def test_base_pool_uses_near_zero_adjustment_step_min(tmp_path: Path) -> None:
         donation_coins_ratio=0.5,
     )
 
-    assert pool["adjustment_step_min"] == 10**12
+    assert pool["adjustment_step_min"] == 10**8
+
+
+def test_build_config_defaults_to_compact_grid(monkeypatch, tmp_path: Path) -> None:
+    candles = tmp_path / "candles.json"
+    candles.write_text("[[1700000000, 100.0, 100.0, 100.0, 100.0]]")
+
+    import generate_pools_nd
+
+    monkeypatch.setattr(generate_pools_nd, "DATAFILE", candles)
+    monkeypatch.setattr(generate_pools_nd, "COWSWAP_FILE", None)
+    monkeypatch.setattr(generate_pools_nd, "START_TIME", None)
+    monkeypatch.setattr(generate_pools_nd, "LAST_YEARS", None)
+    monkeypatch.setattr(generate_pools_nd, "EXPAND_POOLS", False)
+    monkeypatch.setattr(
+        generate_pools_nd,
+        "GRID",
+        {
+            "A": [10_000, 20_000],
+            "mid_fee": [10**7, 2 * 10**7],
+        },
+    )
+
+    config = build_config()
+
+    assert "pools" not in config
+    assert config["meta"]["compact_grid"] is True
+    assert config["meta"]["pool_count"] == 4
+    assert config["meta"]["base_pool"]["A"] == str(50 * 10_000)
+    assert config["meta"]["base_costs"]["arb_fee_bps"] == 2
+    assert config["meta"]["grid"]["x1"] == {"name": "A", "values": [10_000, 20_000]}
+    assert config["meta"]["grid"]["x2"] == {
+        "name": "mid_fee",
+        "values": [10**7, 2 * 10**7],
+    }

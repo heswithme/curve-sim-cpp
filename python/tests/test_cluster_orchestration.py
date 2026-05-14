@@ -3,12 +3,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[2]
 CLUSTER_ROOT = ROOT / "python" / "arb_sim" / "cluster_orchestration"
 sys.path.insert(0, str(CLUSTER_ROOT))
 
 import run as cluster_run  # noqa: E402
+import build as cluster_build  # noqa: E402
 import collect as cluster_collect  # noqa: E402
 import distribute as cluster_distribute  # noqa: E402
 
@@ -34,6 +37,10 @@ def test_extract_grid_values_supports_nested_policy_axes() -> None:
         "policy.fee_bps": 25.0,
         "donation_apy": 0.2,
     }
+
+
+def test_cluster_cmake_template_links_pool_config_source() -> None:
+    assert "src/pool_config_source.cpp" in cluster_build.CMAKE_TEMPLATE
 
 
 def test_run_blade_job_forwards_start_time(monkeypatch) -> None:
@@ -108,6 +115,83 @@ def test_collect_preserves_fast_run_flags_in_metadata(monkeypatch, tmp_path: Pat
     assert merged["metadata"]["harness_args"]["quiet_harness"] is True
 
 
+def test_collect_npz_shards_writes_merged_root_npz(monkeypatch, tmp_path: Path) -> None:
+    manifest = {
+        "job_id": "unit",
+        "local_job_dir": str(tmp_path),
+        "remote_candles": "/remote/candles.json",
+        "grid": {"x1": {"name": "A", "values": [10000, 20000]}},
+        "base_pool": {"A": "10000"},
+        "base_costs": {"arb_fee_bps": 2},
+        "config": {
+            "dustswap_freq": 600,
+            "start_time": "1704067200",
+            "disable_slippage_probes": True,
+            "quiet_harness": True,
+        },
+        "run_status": {
+            "blade-a": {
+                "success": True,
+                "remote_output": "/remote/result_blade_a",
+            },
+            "blade-b": {
+                "success": True,
+                "remote_output": "/remote/result_blade_b",
+            }
+        },
+        "total_pools": 4,
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+
+    def fake_download(
+        _remote_path: str, local_path: Path, _blade: str, **kwargs
+    ) -> bool:
+        assert kwargs.get("remote_is_dir") is True
+        local_path.mkdir(parents=True)
+        start = 0 if local_path.name == "result_blade-a" else 2
+        values = np.array([1.0, 1.1]) if start == 0 else np.array([1.2, 1.3])
+        apys = np.array([0.1, 0.2]) if start == 0 else np.array([0.3, 0.4])
+        (local_path / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "format": "arb_npz_v1",
+                    "n_pools": 2,
+                    "pool_start": start,
+                    "pool_end": start + 2,
+                    "metadata": {"n_pools": 2, "pool_start": start, "pool_end": start + 2},
+                    "metrics_schema": [
+                        {"name": "vp", "dtype": "float64"},
+                        {"name": "apy", "dtype": "float64"},
+                    ],
+                }
+            )
+        )
+        np.savez(local_path / "metrics.npz", vp=values, apy=apys)
+        return True
+
+    monkeypatch.setattr(cluster_collect, "rsync_from_cluster", fake_download)
+
+    output_path = tmp_path / "merged_npz"
+    merged = cluster_collect.collect(manifest_path, output_path)
+
+    assert merged is not None
+    assert (output_path / "manifest.json").exists()
+    assert (output_path / "metrics.npz").exists()
+    assert not (output_path / "shards").exists()
+    assert "_shards" not in [p.name for p in output_path.iterdir()]
+    assert merged["format"] == "arb_npz_v1"
+    assert merged["metadata"]["start_time"] == "1704067200"
+    assert merged["metadata"]["harness_args"]["start_time"] == "1704067200"
+    assert merged["metadata"]["grid"]["x1"]["name"] == "A"
+    assert merged["metadata"]["base_pool"] == {"A": "10000"}
+    assert "shards" not in merged
+    assert merged["summary"]["total_runs"] == 4
+    with np.load(output_path / "metrics.npz") as arrays:
+        assert arrays["vp"].tolist() == [1.0, 1.1, 1.2, 1.3]
+        assert arrays["apy"].tolist() == [0.1, 0.2, 0.3, 0.4]
+
+
 def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Path) -> None:
     candles = tmp_path / "candles.json"
     candles.write_text("[]")
@@ -147,3 +231,29 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
     assert cfg["disable_slippage_probes"] is True
     assert cfg["quiet_harness"] is True
     assert cfg["output_prefix"] == "fast"
+
+
+def test_load_pools_counts_compact_grid(tmp_path: Path) -> None:
+    candles = tmp_path / "candles.json"
+    candles.write_text("[]")
+    pools = tmp_path / "pools.json"
+    pools.write_text(
+        json.dumps(
+            {
+                "meta": {
+                    "datafile": str(candles),
+                    "base_pool": {},
+                    "pool_count": 256,
+                    "grid": {
+                        "x1": {"name": "A", "values": list(range(16))},
+                        "x2": {"name": "mid_fee", "values": list(range(16))},
+                    },
+                }
+            }
+        )
+    )
+
+    n_pools, meta = cluster_distribute.load_pools(pools)
+
+    assert n_pools == 256
+    assert meta["grid"]["x1"]["name"] == "A"

@@ -213,26 +213,49 @@ int main(int argc, char* argv[]) {
         auto t_exec1 = std::chrono::high_resolution_clock::now();
         double exec_ms = std::chrono::duration<double, std::milli>(t_exec1 - t_exec0).count();
         
-        // Write JSON output
+        // Write output. A .json path preserves the legacy row JSON; otherwise
+        // the path is treated as an arb_npz_v1 run directory.
         if (!args.out_path.empty()) {
-            bool ok = arb::harness::write_results_json(
-                args.out_path,
-                results,
-                n_candles,
-                events.size(),
-                args.candles_path,
-                args.pools_path,
-                TYPE_NAME,
-                args.n_threads,
-                run_cfg,
-                args.max_candles,
-                args.candle_filter_pct,
-                args.pool_start,
-                args.pool_end,
-                args.quiet,
-                candles_read_ms,
-                exec_ms
-            );
+            const bool legacy_json =
+                args.out_path.size() >= 5 &&
+                args.out_path.substr(args.out_path.size() - 5) == ".json";
+            bool ok = legacy_json
+                ? arb::harness::write_results_json(
+                    args.out_path,
+                    results,
+                    n_candles,
+                    events.size(),
+                    args.candles_path,
+                    args.pools_path,
+                    TYPE_NAME,
+                    args.n_threads,
+                    run_cfg,
+                    args.max_candles,
+                    args.candle_filter_pct,
+                    args.pool_start,
+                    args.pool_end,
+                    args.quiet,
+                    candles_read_ms,
+                    exec_ms
+                )
+                : arb::harness::write_results_npz_dir(
+                    args.out_path,
+                    results,
+                    n_candles,
+                    events.size(),
+                    args.candles_path,
+                    args.pools_path,
+                    TYPE_NAME,
+                    args.n_threads,
+                    run_cfg,
+                    args.max_candles,
+                    args.candle_filter_pct,
+                    args.pool_start,
+                    args.pool_end,
+                    args.quiet,
+                    candles_read_ms,
+                    exec_ms
+                );
             if (!ok) {
                 std::cerr << "Warning: Failed to write output to " << args.out_path << "\n";
             }

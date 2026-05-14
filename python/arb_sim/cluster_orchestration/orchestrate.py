@@ -188,7 +188,7 @@ def sweep(
     # Step 4: Collect
     print("\n[4/4] Collecting results...")
     LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}.json"
+    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}"
 
     merged = collect(manifest_path, output_file)
     if not merged:
@@ -197,7 +197,9 @@ def sweep(
 
     # Summary
     elapsed = time.time() - start
-    n_runs = len(merged.get("runs", []))
+    n_runs = len(merged.get("runs", [])) or int(
+        merged.get("summary", {}).get("total_runs", 0)
+    )
 
     print(f"\n{'=' * 70}")
     print(f"  SWEEP COMPLETE")
@@ -229,7 +231,7 @@ def resume(
         cfg = manifest.get("config", {})
         output_prefix = cfg.get("output_prefix", "cluster_sweep")
         LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}"
 
         merged = collect(manifest_path, output_file)
         return output_file if merged else None
@@ -242,7 +244,7 @@ def resume(
     cfg = manifest.get("config", {})
     output_prefix = cfg.get("output_prefix", "cluster_sweep")
     LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}"
     merged = collect(manifest_path, output_file)
     return output_file if merged else None
 

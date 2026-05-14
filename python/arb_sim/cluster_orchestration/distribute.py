@@ -77,8 +77,29 @@ def load_pools(pools_file: Path) -> Tuple[int, dict]:
     with open(pools_file) as f:
         data = json.load(f)
 
-    pools = data.get("pools", [])
     meta = data.get("meta", data.get("metadata", {}))
+    pools = data.get("pools")
+    if isinstance(pools, list):
+        return len(pools), meta
+    if "pool" in data:
+        return 1, meta
+    pool_count = meta.get("pool_count") if isinstance(meta, dict) else None
+    if pool_count is not None:
+        return int(pool_count), meta
+    grid = meta.get("grid", {}) if isinstance(meta, dict) else {}
+    count = 1
+    found_axis = False
+    for key, axis in grid.items():
+        if not isinstance(key, str) or not key.startswith("x") or not key[1:].isdigit():
+            continue
+        values = axis.get("values") if isinstance(axis, dict) else None
+        if not isinstance(values, list) or not values:
+            continue
+        found_axis = True
+        count *= len(values)
+    if found_axis:
+        return count, meta
+    pools = []
     return len(pools), meta
 
 
@@ -219,6 +240,9 @@ def distribute(
         "local_job_dir": str(local_job_dir),
         # Preserve grid metadata for visualization
         "grid": meta.get("grid", {}),
+        "base_pool": meta.get("base_pool", {}),
+        "base_costs": meta.get("base_costs", {}),
+        "fee_equalize": meta.get("fee_equalize", False),
     }
 
     # Save manifest

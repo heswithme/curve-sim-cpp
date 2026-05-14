@@ -93,8 +93,8 @@ def run_blade_job(
             run_ssh(blade, f"mkdir -p {REMOTE_RESULTS}", timeout=30)
 
             # Output file on shared NFS
-            output_file = f"{REMOTE_RESULTS}/result_{blade}.json"
-            result.remote_output = output_file
+            output_dir = f"{REMOTE_RESULTS}/result_{blade}"
+            result.remote_output = output_dir
 
             # Build harness command
             harness = f"{REMOTE_BUILD}/{HARNESS_BINARY}"
@@ -102,7 +102,7 @@ def run_blade_job(
                 harness,
                 remote_pools,
                 remote_candles,
-                output_file,
+                output_dir,
                 f"--threads",
                 str(threads),
                 f"--pool-start",
@@ -159,7 +159,9 @@ def run_blade_job(
             else:
                 # Verify output exists
                 check = run_ssh(
-                    blade, f"test -f {output_file} && wc -c < {output_file}", timeout=30
+                    blade,
+                    f"test -f {output_dir}/metrics.npz && wc -c < {output_dir}/metrics.npz",
+                    timeout=30,
                 )
                 if check.returncode == 0:
                     result.success = True

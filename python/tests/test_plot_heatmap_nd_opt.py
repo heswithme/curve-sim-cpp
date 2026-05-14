@@ -10,6 +10,7 @@ if not any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:]):
     sys.argv.append("--out=/tmp/test_plot_heatmap_nd_opt.png")
 
 from plot_heatmap_nd_opt import (  # noqa: E402
+    NDHeatmapExplorerOpt,
     _extract_nd_arrays,
     _format_axis_labels,
     _format_slider_value,
@@ -116,3 +117,40 @@ def test_extract_nd_arrays_reads_cluster_flat_dotted_policy_axis() -> None:
     }
     assert metric_arrays["score"].shape == (2, 2)
     assert metric_arrays["score"][1, 1] == 20020.0
+
+
+def test_explorer_reads_inspect_flags_from_cluster_harness_args() -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "A", "values": [10000.0, 20000.0]},
+                "x2": {"name": "mid_fee", "values": [10.0, 20.0]},
+            },
+            "harness_args": {
+                "start_time": "1704067200",
+                "disable_slippage_probes": True,
+            },
+        },
+        "runs": [
+            {
+                "pool": {"A": str(a), "mid_fee": fee},
+                "result": {"score": float(a) + fee},
+            }
+            for a in (10000, 20000)
+            for fee in (10.0, 20.0)
+        ],
+    }
+
+    explorer = NDHeatmapExplorerOpt(
+        data,
+        ["score"],
+        ncol=1,
+        cmap="viridis",
+        max_ticks=8,
+        clamp=False,
+        price_thr_bps=1.0,
+        max_price_thr_bps=1.0,
+    )
+
+    assert explorer.config_start_time == "1704067200"
+    assert explorer.config_disable_slippage_probes is True
