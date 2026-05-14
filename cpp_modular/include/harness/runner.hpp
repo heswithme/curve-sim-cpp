@@ -162,6 +162,7 @@ PoolResult<T> run_single_pool(
             pool_init.policy_kind,
             pool_init.policy_config
         );
+        pool.donation_duration = pool_init.donation_duration;
 
         // Set initial timestamp
         uint64_t init_ts = cfg.start_ts ? cfg.start_ts : pool_init.start_ts;

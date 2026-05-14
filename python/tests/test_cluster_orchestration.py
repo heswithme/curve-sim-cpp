@@ -62,7 +62,7 @@ def test_run_blade_job_forwards_start_time(monkeypatch) -> None:
         pool_start=0,
         pool_end=8,
         threads=4,
-        dustswap_freq=600,
+        dustswap_freq=3600,
         candle_filter=None,
         start_time="1709638320",
         disable_slippage_probes=True,
@@ -85,7 +85,7 @@ def test_collect_preserves_fast_run_flags_in_metadata(monkeypatch, tmp_path: Pat
         "remote_candles": "/remote/candles.json",
         "grid": {},
         "config": {
-            "dustswap_freq": 600,
+            "dustswap_freq": 3600,
             "candle_filter": 99.0,
             "start_time": "1709638320",
             "disable_slippage_probes": True,
@@ -124,7 +124,7 @@ def test_collect_npz_shards_writes_merged_root_npz(monkeypatch, tmp_path: Path) 
         "base_pool": {"A": "10000"},
         "base_costs": {"arb_fee_bps": 2},
         "config": {
-            "dustswap_freq": 600,
+            "dustswap_freq": 3600,
             "start_time": "1704067200",
             "disable_slippage_probes": True,
             "quiet_harness": True,
@@ -218,7 +218,7 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
         pools_file=pools,
         blades=["blade-test"],
         job_id="unit",
-        dustswap_freq=600,
+        dustswap_freq=3600,
         candle_filter=98.5,
         disable_slippage_probes=True,
         quiet_harness=True,
@@ -226,7 +226,7 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
     )
 
     cfg = manifest["config"]
-    assert cfg["dustswap_freq"] == 600
+    assert cfg["dustswap_freq"] == 3600
     assert cfg["candle_filter"] == 98.5
     assert cfg["disable_slippage_probes"] is True
     assert cfg["quiet_harness"] is True

@@ -111,7 +111,7 @@ def sweep(
     skip_build: bool = False,
     candles_file: Optional[Path] = None,
     threads: int = CORES_PER_BLADE,
-    dustswap_freq: int = 600,
+    dustswap_freq: int = 3600,
     candle_filter: Optional[float] = None,
     disable_slippage_probes: bool = False,
     quiet_harness: bool = False,
@@ -271,7 +271,7 @@ def main():
 
     # Harness parameters
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
-    parser.add_argument("--dustswap-freq", type=int, default=600)
+    parser.add_argument("--dustswap-freq", type=int, default=3600)
     parser.add_argument("--candle-filter", type=float)
     parser.add_argument("--disable-slippage-probes", action="store_true")
     parser.add_argument("--quiet-harness", action="store_true")

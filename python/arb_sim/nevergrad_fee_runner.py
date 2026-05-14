@@ -67,7 +67,7 @@ SERVER_CONFIG = {
     "pool_index": 0,
     "n_candles": 0,
     "candle_filter": 99.0,
-    "dustswapfreq": 600,
+    "dustswapfreq": 3600,
     "min_swap": 1e-6,
     "max_swap": 1.0,
     "disable_slippage_probes": True,

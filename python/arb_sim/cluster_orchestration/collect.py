@@ -239,6 +239,7 @@ def collect(
         apy_values: list[float] = []
         metrics_schema = None
         merged_errors: dict[str, Any] = {}
+        real_type: str | None = None
 
         for blade_name, path in downloaded.items():
             manifest_path = path / "manifest.json"
@@ -248,6 +249,12 @@ def collect(
             if metrics_schema is None:
                 metrics_schema = data.get("metrics_schema")
             meta = data.get("metadata", {})
+            shard_real = meta.get("real") if isinstance(meta, dict) else None
+            if isinstance(shard_real, str):
+                if real_type is None:
+                    real_type = shard_real
+                elif real_type != shard_real:
+                    real_type = "mixed"
             n_pools = int(data.get("n_pools", meta.get("n_pools", 0)))
             pool_start = int(data.get("pool_start", meta.get("pool_start", 0)))
             pool_end_raw = data.get("pool_end", meta.get("pool_end"))
@@ -348,6 +355,7 @@ def collect(
             "blades_used": len(downloaded),
             "blade_stats": blade_stats,
             "harness_args": {
+                "harness_binary": cfg.get("harness_binary"),
                 "dustswapfreq": cfg.get("dustswap_freq"),
                 "candle_filter": cfg.get("candle_filter"),
                 "start_time": cfg.get("start_time"),
@@ -359,6 +367,8 @@ def collect(
             "base_costs": manifest.get("base_costs", {}),
             "fee_equalize": manifest.get("fee_equalize", False),
         }
+        if real_type is not None:
+            metadata["real"] = real_type
         if cfg.get("start_time") is not None:
             metadata["start_time"] = cfg.get("start_time")
         remote_candles = manifest.get("remote_candles")

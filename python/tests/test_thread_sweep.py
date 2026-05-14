@@ -80,7 +80,7 @@ def test_run_one_prefers_explicit_loaded_candle_metadata(tmp_path: Path) -> None
             "n_candles": None,
             "min_swap": None,
             "max_swap": None,
-            "dustswapfreq": 600,
+            "dustswapfreq": 3600,
             "userswapfreq": None,
             "userswapsize": None,
             "userswapthresh": None,

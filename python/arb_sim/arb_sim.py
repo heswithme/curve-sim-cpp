@@ -107,7 +107,7 @@ class ArbHarnessRunner:
         min_swap: float = 1e-10,
         max_swap: float = 1.0,
         threads: int = 1,
-        dustswapfreq: int | None = None,
+        dustswapfreq: int | None = 3600,
         userswapfreq: int | None = None,
         userswapsize: float | None = None,
         userswapthresh: float | None = None,
@@ -252,8 +252,8 @@ def main() -> int:
     parser.add_argument(
         "--dustswapfreq",
         type=int,
-        default=None,
-        help="Seconds between dust swaps when no arb trade (cooldown)",
+        default=3600,
+        help="Seconds between dust swaps when no arb trade (default: 3600)",
     )
 
     parser.add_argument(

@@ -215,7 +215,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--start-time", type=str, default=None)
     p.add_argument("--min-swap", type=float, default=1e-6)
     p.add_argument("--max-swap", type=float, default=1.0)
-    p.add_argument("--dustswapfreq", type=int, default=None)
+    p.add_argument("--dustswapfreq", type=int, default=3600)
     p.add_argument("--userswapfreq", type=int, default=0)
     p.add_argument("--userswapsize", type=float, default=0)
     p.add_argument("--userswapthresh", type=float, default=0)

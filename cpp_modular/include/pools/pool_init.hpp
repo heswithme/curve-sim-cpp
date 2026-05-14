@@ -34,6 +34,7 @@ struct PoolInit {
 
     T donation_apy{T(0)};
     T donation_frequency{T(0)};
+    T donation_duration{T(7 * 86400)};
     T donation_coins_ratio{T(0.5)};
 
     std::string tag;

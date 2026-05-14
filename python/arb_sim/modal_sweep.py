@@ -161,7 +161,7 @@ def load_pools(max_pools: int = 0) -> tuple[list, dict, str]:
 @app.local_entrypoint()
 def main(
     max_pools: int = 0,
-    dustswapfreq: int = 600,
+    dustswapfreq: int = 3600,
     candle_filter: float = None,
     skip_upload: bool = False,
 ):

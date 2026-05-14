@@ -136,7 +136,7 @@ def _run_harness(
         "--threads",
         "4",
         "--dustswapfreq",
-        "600",
+        "3600",
         "--disable-slippage-probes",
         "--quiet",
     ]

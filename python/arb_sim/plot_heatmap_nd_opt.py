@@ -102,9 +102,19 @@ DEFAULT_COSTS = {
 INSPECT_POOL_FILENAME = "inspect_pool.json"
 INSPECT_OUTPUT_FILENAME = "inspect_output.json"
 INSPECT_REAL = "double"
-INSPECT_DUSTSWAPFREQ = 600
+INSPECT_DUSTSWAPFREQ = 3600
 INSPECT_THREADS = 10
 INSPECT_DETAILED_INTERVAL = 1000
+
+
+def _real_arg(value: Any) -> str:
+    raw = str(value or INSPECT_REAL).replace("_", " ").strip().lower()
+    compact = raw.replace(" ", "")
+    if compact in {"longdouble", "long"}:
+        return "longdouble"
+    if compact in {"float", "f"}:
+        return "float"
+    return "double"
 
 
 def _latest_arb_run() -> Path:
@@ -727,8 +737,18 @@ class NDHeatmapExplorerOpt:
         self.fee_equalize = bool(meta.get("fee_equalize")) if isinstance(meta, dict) else False
         self.candles_file = None
         self.config_start_time = None
+        self.config_real = INSPECT_REAL
+        self.config_dustswapfreq = INSPECT_DUSTSWAPFREQ
         self.config_disable_slippage_probes = False
         if isinstance(meta, dict):
+            harness_args = meta.get("harness_args")
+            self.config_real = _real_arg(meta.get("real"))
+            if isinstance(harness_args, dict):
+                self.config_real = _real_arg(
+                    meta.get("real") or harness_args.get("real") or self.config_real
+                )
+                if harness_args.get("dustswapfreq") is not None:
+                    self.config_dustswapfreq = int(harness_args["dustswapfreq"])
             self.candles_file = (
                 meta.get("candles_file")
                 or meta.get("datafile")
@@ -736,12 +756,10 @@ class NDHeatmapExplorerOpt:
             )
             self.config_start_time = meta.get("start_time")
             if not self.config_start_time:
-                harness_args = meta.get("harness_args")
                 if isinstance(harness_args, dict):
                     self.config_start_time = harness_args.get("start_time")
             disable_slippage_probes = meta.get("disable_slippage_probes")
             if disable_slippage_probes is None:
-                harness_args = meta.get("harness_args")
                 if isinstance(harness_args, dict):
                     disable_slippage_probes = harness_args.get("disable_slippage_probes")
             self.config_disable_slippage_probes = disable_slippage_probes is True
@@ -1832,7 +1850,7 @@ class NDHeatmapExplorerOpt:
                 "--real",
                 INSPECT_REAL,
                 "--dustswapfreq",
-                str(INSPECT_DUSTSWAPFREQ),
+                str(self.config_dustswapfreq),
                 "-n",
                 str(INSPECT_THREADS),
                 "--detailed-log",

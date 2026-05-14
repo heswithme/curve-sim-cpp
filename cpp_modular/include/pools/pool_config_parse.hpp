@@ -120,6 +120,7 @@ void parse_pool_entry(
 
     if (auto* v = pool.if_contains("donation_apy")) out_pool.donation_apy = parse_plain_real<T>(*v);
     if (auto* v = pool.if_contains("donation_frequency")) out_pool.donation_frequency = parse_plain_real<T>(*v);
+    if (auto* v = pool.if_contains("donation_duration")) out_pool.donation_duration = parse_plain_real<T>(*v);
     if (auto* v = pool.if_contains("donation_coins_ratio")) {
         T r = parse_plain_real<T>(*v);
         out_pool.donation_coins_ratio = std::clamp<T>(r, T(0), T(1));

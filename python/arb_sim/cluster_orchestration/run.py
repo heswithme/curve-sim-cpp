@@ -219,7 +219,7 @@ def run_parallel(
                 pool_start=info["pool_start"],
                 pool_end=info["pool_end"],
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
-                dustswap_freq=cfg.get("dustswap_freq", 600),
+                dustswap_freq=cfg.get("dustswap_freq", 3600),
                 candle_filter=cfg.get("candle_filter"),
                 start_time=cfg.get("start_time"),
                 disable_slippage_probes=cfg.get("disable_slippage_probes", False),

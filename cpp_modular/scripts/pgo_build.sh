@@ -18,7 +18,7 @@ OUT_DIR="/tmp/cpp_modular_pgo_use"
 GEN_DIR="/tmp/cpp_modular_pgo_gen"
 PROFILE_DIR="/tmp/arb_pgo_profile"
 THREADS="12"
-DUSTSWAPFREQ="600"
+DUSTSWAPFREQ="3600"
 START_TIME=""
 N_CANDLES=""
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 8)"
@@ -33,7 +33,7 @@ Options:
   --gen-dir DIR           Instrumented build dir (default: /tmp/cpp_modular_pgo_gen)
   --profile-dir DIR       Profile raw-data dir (default: /tmp/arb_pgo_profile)
   --threads N             Harness threads for training (default: 12)
-  --dustswapfreq S        Idle tick cadence for training (default: 600)
+  --dustswapfreq S        Idle tick cadence for training (default: 3600)
   --start-time TS         Optional harness --start-time
   --n-candles N           Optional harness --n-candles
   --jobs N                Build parallelism (default: host CPU count)

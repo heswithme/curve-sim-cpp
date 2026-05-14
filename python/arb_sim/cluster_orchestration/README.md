@@ -27,7 +27,7 @@ harness progress.
 ```bash
 uv run python arb_sim/cluster_orchestration/orchestrate.py \
   --pools arb_sim/run_data/pool_config.json \
-  --dustswap-freq 600 \
+  --dustswap-freq 3600 \
   --disable-slippage-probes \
   --quiet-harness \
   --stream-blade blade-b10
