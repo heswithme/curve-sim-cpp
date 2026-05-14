@@ -8,6 +8,8 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
+#include <utility>
+#include <vector>
 
 #include "harness/cli.hpp"
 #include "harness/runner.hpp"
@@ -164,15 +166,26 @@ int main(int argc, char* argv[]) {
         auto t_read1 = std::chrono::high_resolution_clock::now();
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
 
-        // Load pool configs from JSON (optionally subset by range)
-        auto pool_configs = arb::pools::load_pool_configs<RealT>(
-            args.pools_path, args.pool_start, args.pool_end);
+        // Load pool configs from JSON (optionally subset by contiguous or range-file assignment).
+        std::vector<std::pair<arb::pools::PoolInit<RealT>, arb::trading::Costs<RealT>>> pool_configs;
+        if (!args.pool_ranges_path.empty()) {
+            auto ranges = arb::pools::load_pool_ranges_file(args.pool_ranges_path);
+            pool_configs = arb::pools::load_pool_configs_for_ranges<RealT>(
+                args.pools_path,
+                ranges
+            );
+        } else {
+            pool_configs = arb::pools::load_pool_configs<RealT>(
+                args.pools_path, args.pool_start, args.pool_end);
+        }
         if (pool_configs.empty()) {
             throw std::runtime_error("No pool configurations found in " + args.pools_path);
         }
         if (!args.quiet) {
             std::cout << "loaded " << pool_configs.size() << " pools";
-            if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
+            if (!args.pool_ranges_path.empty()) {
+                std::cout << " from ranges " << args.pool_ranges_path;
+            } else if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
                 std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
             }
             std::cout << "\n" << std::flush;

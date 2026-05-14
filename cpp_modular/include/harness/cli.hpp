@@ -28,6 +28,7 @@ struct CliArgs {
     // Pool range (for distributed execution)
     size_t pool_start{0};            // 0-based inclusive
     size_t pool_end{SIZE_MAX};       // exclusive, SIZE_MAX = all
+    std::string pool_ranges_path;    // optional file of half-open ranges
     
     // User swap settings
     uint64_t user_swap_freq_s{0};    // 0 = disabled

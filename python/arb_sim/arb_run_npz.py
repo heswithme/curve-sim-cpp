@@ -151,12 +151,16 @@ class NpzRun:
                 if name not in data.files:
                     continue
                 arr = np.asarray(data[name])
+                pool_index = np.asarray(data["pool_index"]) if "pool_index" in data.files else None
             if out is None:
                 fill = np.nan if np.issubdtype(arr.dtype, np.floating) else 0
                 out = np.full(self.n_pools, fill, dtype=arr.dtype)
-            rel_start = shard.pool_start
-            rel_end = rel_start + len(arr)
-            out[rel_start:rel_end] = arr
+            if pool_index is not None:
+                out[pool_index.astype(np.intp, copy=False)] = arr
+            else:
+                rel_start = shard.pool_start
+                rel_end = rel_start + len(arr)
+                out[rel_start:rel_end] = arr
         if out is None:
             raise KeyError(name)
         return out

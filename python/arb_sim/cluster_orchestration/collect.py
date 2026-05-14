@@ -95,6 +95,63 @@ def load_json(path: Path) -> Optional[dict]:
         return None
 
 
+def _validate_index_coverage(
+    indices_by_shard: List[Tuple[str, np.ndarray]],
+    total_pools: int,
+) -> None:
+    """Validate complete one-to-one coverage of [0, total_pools)."""
+    seen = np.zeros(total_pools, dtype=bool)
+    for blade_name, raw_indices in indices_by_shard:
+        indices = np.asarray(raw_indices)
+        if indices.ndim != 1:
+            raise ValueError(f"{blade_name}: pool_index must be a 1-D array")
+        if np.issubdtype(indices.dtype, np.signedinteger) and np.any(indices < 0):
+            raise ValueError(f"{blade_name}: pool_index contains negative values")
+        if np.any(indices >= total_pools):
+            raise ValueError(f"{blade_name}: pool_index contains out-of-range values")
+
+        idx = indices.astype(np.intp, copy=False)
+        if len(np.unique(idx)) != len(idx) or np.any(seen[idx]):
+            raise ValueError(f"{blade_name}: duplicate pool_index values detected")
+        seen[idx] = True
+
+    missing = total_pools - int(seen.sum())
+    if missing:
+        raise ValueError(f"missing {missing} pool indices in merged shards")
+
+
+def _validate_pool_index_shards(shard_infos: List[Dict[str, Any]], total_pools: int) -> None:
+    """Validate NPZ shards that carry explicit pool_index arrays."""
+    indices_by_shard: List[Tuple[str, np.ndarray]] = []
+    for info in shard_infos:
+        with np.load(info["metrics_path"]) as arrays:
+            if "pool_index" not in arrays.files:
+                raise ValueError(f"{info['blade']}: missing pool_index.npy")
+            indices = np.asarray(arrays["pool_index"])
+            if len(indices) != int(info["n_pools"]):
+                raise ValueError(
+                    f"{info['blade']}: pool_index length {len(indices)} "
+                    f"does not match n_pools {info['n_pools']}"
+                )
+            indices_by_shard.append((str(info["blade"]), indices.copy()))
+
+    _validate_index_coverage(indices_by_shard, total_pools)
+
+
+def _validate_contiguous_shards(shard_infos: List[Dict[str, Any]], total_pools: int) -> None:
+    """Validate old contiguous shards before slice-based merge fallback."""
+    indices_by_shard: List[Tuple[str, np.ndarray]] = []
+    for info in shard_infos:
+        start = int(info["pool_start"])
+        n_pools = int(info["n_pools"])
+        end = start + n_pools
+        if start < 0 or end > total_pools:
+            raise ValueError(f"{info['blade']}: contiguous shard range is out of bounds")
+        indices_by_shard.append((str(info["blade"]), np.arange(start, end, dtype=np.intp)))
+
+    _validate_index_coverage(indices_by_shard, total_pools)
+
+
 def extract_grid_values(run: Dict[str, Any], grid: Dict[str, Any]) -> Dict[str, float]:
     """
     Extract grid dimension values from a run's params.
@@ -277,10 +334,12 @@ def collect(
                     "pool_start": pool_start,
                     "pool_end": pool_end,
                     "n_pools": n_pools,
+                    "has_pool_index": False,
                 }
             )
             try:
                 with np.load(path / "metrics.npz") as arrays:
+                    shard_infos[-1]["has_pool_index"] = "pool_index" in arrays.files
                     if "vp" in arrays.files:
                         vp = arrays["vp"]
                         vp_values.extend(float(x) for x in vp[np.isfinite(vp)])
@@ -305,6 +364,15 @@ def collect(
                     {"name": name, "dtype": str(arrays[name].dtype)}
                     for name in metric_names
                 ]
+
+        has_pool_index = [bool(info.get("has_pool_index")) for info in shard_infos]
+        merge_by_pool_index = bool(has_pool_index) and all(has_pool_index)
+        if any(has_pool_index) and not merge_by_pool_index:
+            raise ValueError("mixed NPZ shards with and without pool_index.npy")
+        if merge_by_pool_index:
+            _validate_pool_index_shards(shard_infos, total_pools)
+        else:
+            _validate_contiguous_shards(shard_infos, total_pools)
 
         tmp_arrays = output_file / ".merge_tmp"
         tmp_arrays.mkdir()
@@ -337,8 +405,17 @@ def collect(
                             if metric not in arrays.files:
                                 continue
                             arr = arrays[metric]
-                            start_idx = int(info["pool_start"])
-                            merged_array[start_idx:start_idx + len(arr)] = arr
+                            if merge_by_pool_index:
+                                pool_index = arrays["pool_index"].astype(np.intp, copy=False)
+                                if len(pool_index) != len(arr):
+                                    raise ValueError(
+                                        f"{info['blade']}: {metric} length {len(arr)} "
+                                        f"does not match pool_index length {len(pool_index)}"
+                                    )
+                                merged_array[pool_index] = arr
+                            else:
+                                start_idx = int(info["pool_start"])
+                                merged_array[start_idx:start_idx + len(arr)] = arr
                     merged_array.flush()
                     del merged_array
                     zf.write(tmp_npy, arcname=f"{metric}.npy")
@@ -446,6 +523,9 @@ def collect(
             if grid:
                 run["pool"] = extract_grid_values(run, grid)
             all_runs.append(run)
+
+    if all("pool_index" in run for run in all_runs):
+        all_runs.sort(key=lambda run: int(run["pool_index"]))
 
     # Build merged output
     cfg = manifest.get("config", {})

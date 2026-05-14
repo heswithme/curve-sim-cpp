@@ -32,6 +32,7 @@ namespace harness {
 template <typename T>
 struct PoolResult {
     std::string tag;
+    size_t pool_index{0};
 
     // Core trading metrics
     Metrics<T> metrics{};
@@ -130,6 +131,7 @@ PoolResult<T> run_single_pool(
 
     PoolResult<T> result;
     result.tag = pool_init.tag;
+    result.pool_index = pool_init.global_index;
     result.echo_pool = pool_init.echo_pool;
     result.echo_costs = pool_init.echo_costs;
 

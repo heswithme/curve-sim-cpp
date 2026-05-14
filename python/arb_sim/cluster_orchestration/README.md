@@ -36,6 +36,8 @@ uv run python arb_sim/cluster_orchestration/orchestrate.py \
 Options:
 - `--skip-build` - Skip C++ compilation (use if binary already built)
 - `--stream-blade <blade>` - Stream stdout from one blade for progress monitoring
+- `--assignment {block-cyclic,contiguous}` - Pool assignment mode; default is deterministic block-cyclic chunks
+- `--chunk-size 2048` - Pools per block-cyclic chunk
 - `--disable-slippage-probes` - Match fast local grid sweeps by skipping probe sampling
 - `--quiet-harness` - Suppress remote harness progress logs while keeping blade status logs
 
@@ -73,8 +75,8 @@ uv run python arb_sim/cluster_orchestration/utils.py clean
 ### Workflow
 
 1. `build.py` - Compile C++ harness once on any blade (shared via NFS)
-2. `distribute.py` - Upload single pools.json, compute index ranges per blade
-3. `run.py` - Execute harness on all blades in parallel with `--pool-start/--pool-end`
-4. `collect.py` - Download and merge results from shared NFS
+2. `distribute.py` - Upload single pools.json, compute deterministic block-cyclic ranges per blade
+3. `run.py` - Execute harness on all blades in parallel with `--pool-ranges`
+4. `collect.py` - Download and merge results from shared NFS by `pool_index.npy`
 
 All transfers use `rsync -z` for compression.

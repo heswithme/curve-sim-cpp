@@ -117,6 +117,8 @@ def sweep(
     quiet_harness: bool = False,
     output_prefix: str = "cluster_sweep",
     stream_blade: Optional[str] = None,
+    assignment: str = "block-cyclic",
+    chunk_size: int = 2048,
 ) -> Optional[Path]:
     """
     Run complete sweep pipeline.
@@ -134,6 +136,7 @@ def sweep(
         f"  Blades:  {len(blades)} ({', '.join(blades[:3])}{'...' if len(blades) > 3 else ''})"
     )
     print(f"  Threads: {threads} per blade")
+    print(f"  Assignment: {assignment} (chunk_size={chunk_size})")
     print(f"{'=' * 70}\n")
 
     # Step 0: Check connectivity
@@ -168,6 +171,8 @@ def sweep(
         disable_slippage_probes=disable_slippage_probes,
         quiet_harness=quiet_harness,
         output_prefix=output_prefix,
+        assignment=assignment,
+        chunk_size=chunk_size,
     )
 
     if not manifest.get("blades"):
@@ -276,6 +281,12 @@ def main():
     parser.add_argument("--disable-slippage-probes", action="store_true")
     parser.add_argument("--quiet-harness", action="store_true")
     parser.add_argument("--output-prefix", default="cluster_sweep")
+    parser.add_argument(
+        "--assignment",
+        choices=["block-cyclic", "contiguous"],
+        default="block-cyclic",
+    )
+    parser.add_argument("--chunk-size", type=int, default=2048)
 
     # Workflow control
     parser.add_argument("--skip-build", action="store_true")
@@ -325,6 +336,8 @@ def main():
         quiet_harness=args.quiet_harness,
         output_prefix=args.output_prefix,
         stream_blade=args.stream_blade,
+        assignment=args.assignment,
+        chunk_size=args.chunk_size,
     )
 
     sys.exit(0 if result else 1)

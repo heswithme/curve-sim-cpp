@@ -122,6 +122,38 @@ def compute_ranges(n_pools: int, n_blades: int) -> List[Tuple[int, int]]:
     return ranges
 
 
+def compute_block_cyclic_ranges(
+    n_pools: int, n_blades: int, chunk_size: int
+) -> List[List[Tuple[int, int]]]:
+    """Compute deterministic block-cyclic half-open ranges per blade."""
+    if n_blades <= 0:
+        return []
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+
+    assignments: List[List[Tuple[int, int]]] = [[] for _ in range(n_blades)]
+    if n_pools <= 0:
+        return assignments
+
+    for chunk_idx, start in enumerate(range(0, n_pools, chunk_size)):
+        end = min(start + chunk_size, n_pools)
+        assignments[chunk_idx % n_blades].append((start, end))
+
+    return assignments
+
+
+def ranges_pool_count(ranges: List[Tuple[int, int]]) -> int:
+    """Return total pools covered by a list of half-open ranges."""
+    return sum(end - start for start, end in ranges)
+
+
+def write_range_file(path: Path, ranges: List[Tuple[int, int]]) -> None:
+    """Write half-open ranges as 'start end' lines."""
+    with open(path, "w") as f:
+        for start, end in ranges:
+            f.write(f"{start} {end}\n")
+
+
 def distribute(
     pools_file: Path,
     blades: List[str],
@@ -133,20 +165,29 @@ def distribute(
     disable_slippage_probes: bool = False,
     quiet_harness: bool = False,
     output_prefix: str = "cluster_sweep",
+    assignment: str = "block-cyclic",
+    chunk_size: int = 2048,
 ) -> dict:
     """
     Upload job data to shared NFS.
 
     Reads candles path from pool config meta.datafile if not provided.
     Skips candles upload if file already exists with same size.
-    Uploads single pools file - blades use --pool-start/--pool-end for ranges.
+    Uploads single pools file. Blades use either --pool-ranges or
+    --pool-start/--pool-end depending on assignment.
 
     Returns manifest with all paths and configuration.
     """
     if job_id is None:
         job_id = "latest"
+    if assignment not in {"block-cyclic", "contiguous"}:
+        raise ValueError("assignment must be 'block-cyclic' or 'contiguous'")
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
 
     blade = blades[0]  # Use any blade to access shared NFS
+    local_job_dir = Path(__file__).parent / "jobs" / job_id
+    local_job_dir.mkdir(parents=True, exist_ok=True)
 
     # Load pools and get metadata
     print(f"Loading pools from {pools_file}...")
@@ -201,25 +242,46 @@ def distribute(
         print(f"  Done.")
 
     # Compute pool ranges per blade
-    ranges = compute_ranges(n_pools, len(blades))
+    if assignment == "contiguous":
+        ranges_by_blade = [
+            [range_] if range_[1] > range_[0] else []
+            for range_ in compute_ranges(n_pools, len(blades))
+        ]
+    else:
+        ranges_by_blade = compute_block_cyclic_ranges(n_pools, len(blades), chunk_size)
     blade_assignments = {}
 
-    for i, (blade_name, (start, end)) in enumerate(zip(blades, ranges)):
-        n_blade_pools = end - start
+    for blade_name, blade_ranges in zip(blades, ranges_by_blade):
+        n_blade_pools = ranges_pool_count(blade_ranges)
         if n_blade_pools == 0:
             print(f"  {blade_name}: 0 pools (skipped)")
             continue
 
+        pool_start = min(start for start, _end in blade_ranges)
+        pool_end = max(end for _start, end in blade_ranges)
         blade_assignments[blade_name] = {
-            "pool_start": start,
-            "pool_end": end,
+            "pool_start": pool_start,
+            "pool_end": pool_end,
             "n_pools": n_blade_pools,
+            "ranges": [[start, end] for start, end in blade_ranges],
         }
-        print(f"  {blade_name}: pools {start}-{end} ({n_blade_pools} pools)")
 
-    # Create local job directory for manifest
-    local_job_dir = Path(__file__).parent / "jobs" / job_id
-    local_job_dir.mkdir(parents=True, exist_ok=True)
+        if assignment == "block-cyclic":
+            range_file = local_job_dir / f"{blade_name}_ranges.txt"
+            write_range_file(range_file, blade_ranges)
+            remote_range_file = f"{REMOTE_JOBS}/{job_id}_{blade_name}_ranges.txt"
+            rsync_to_cluster(range_file, remote_range_file, blade, timeout=60)
+            blade_assignments[blade_name]["pool_ranges_file"] = str(range_file)
+            blade_assignments[blade_name]["pool_ranges_remote"] = remote_range_file
+            print(
+                f"  {blade_name}: {len(blade_ranges)} chunks, "
+                f"{n_blade_pools} pools (span {pool_start}-{pool_end})"
+            )
+        else:
+            print(
+                f"  {blade_name}: pools {pool_start}-{pool_end} "
+                f"({n_blade_pools} pools)"
+            )
 
     # Build manifest
     manifest = {
@@ -228,6 +290,8 @@ def distribute(
         "remote_candles": remote_candles,
         "remote_pools": remote_pools,
         "total_pools": n_pools,
+        "assignment_mode": assignment,
+        "chunk_size": chunk_size,
         "blades": blade_assignments,
         "config": {
             "threads_per_blade": threads_per_blade,
@@ -277,6 +341,12 @@ def main():
     parser.add_argument("--disable-slippage-probes", action="store_true")
     parser.add_argument("--quiet-harness", action="store_true")
     parser.add_argument("--output-prefix", default="cluster_sweep")
+    parser.add_argument(
+        "--assignment",
+        choices=["block-cyclic", "contiguous"],
+        default="block-cyclic",
+    )
+    parser.add_argument("--chunk-size", type=int, default=2048)
     parser.add_argument("--job-id", type=str)
     args = parser.parse_args()
 
@@ -291,6 +361,8 @@ def main():
         disable_slippage_probes=args.disable_slippage_probes,
         quiet_harness=args.quiet_harness,
         output_prefix=args.output_prefix,
+        assignment=args.assignment,
+        chunk_size=args.chunk_size,
     )
     print(f"\nNext: python run.py --manifest {manifest['local_job_dir']}/manifest.json")
 

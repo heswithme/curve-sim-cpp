@@ -295,7 +295,7 @@ json::object build_output_json(
         const auto& r = results[i];
         
         json::object run;
-        run["pool_index"] = static_cast<uint64_t>(pool_start + i);
+        run["pool_index"] = static_cast<uint64_t>(r.pool_index);
         
         // Result summary (includes all metrics now)
         run["result"] = metrics_to_summary(r, n_events);
@@ -497,7 +497,7 @@ bool write_results_npz_dir(
 
         total_trades += static_cast<uint64_t>(m.trades);
         if (!r.success) {
-            errors[std::to_string(pool_start + i)] = r.error_msg;
+            errors[std::to_string(r.pool_index)] = r.error_msg;
         }
 
         d(0, static_cast<double>(m.notional));
@@ -559,7 +559,7 @@ bool write_results_npz_dir(
         d(51, to_wei_double(r.donation_shares));
         d(52, to_wei_double(r.donation_unlocked));
 
-        u(0, static_cast<uint64_t>(pool_start + i));
+        u(0, static_cast<uint64_t>(r.pool_index));
         u(1, static_cast<uint64_t>(n_events));
         u(2, static_cast<uint64_t>(m.trades));
         u(3, static_cast<uint64_t>(m.arb_edge_candidates));

@@ -16,7 +16,7 @@ void print_usage(const char* prog_name) {
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
               << "       [--dustswapfreq S] [--quiet]\n"
-              << "       [--pool-start N] [--pool-end N]\n"
+              << "       [--pool-start N] [--pool-end N] [--pool-ranges PATH]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
               << "       [--detailed-log] [--detailed-interval N] [--disable-slippage-probes]\n"
               << "       [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
@@ -67,6 +67,8 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.pool_start = static_cast<size_t>(std::stoll(argv[++i]));
             } else if (arg == "--pool-end" && i + 1 < argc) {
                 args.pool_end = static_cast<size_t>(std::stoll(argv[++i]));
+            } else if (arg == "--pool-ranges" && i + 1 < argc) {
+                args.pool_ranges_path = argv[++i];
             } else if (arg == "--userswapfreq" && i + 1 < argc) {
                 args.user_swap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
             } else if (arg == "--userswapsize" && i + 1 < argc) {

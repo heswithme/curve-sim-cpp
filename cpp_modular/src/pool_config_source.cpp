@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -261,6 +262,50 @@ PoolConfigDocument::PoolConfigDocument(const std::string& path)
 
 size_t PoolConfigDocument::size() const {
     return total_;
+}
+
+std::vector<PoolRange> load_pool_ranges_file(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        throw std::runtime_error("cannot open pool ranges file: " + path);
+    }
+
+    std::vector<PoolRange> ranges;
+    std::string line;
+    size_t line_no = 0;
+    while (std::getline(in, line)) {
+        ++line_no;
+        const auto comment_pos = line.find('#');
+        if (comment_pos != std::string::npos) {
+            line.resize(comment_pos);
+        }
+
+        std::istringstream iss(line);
+        size_t start = 0;
+        size_t end = 0;
+        if (!(iss >> start >> end)) {
+            std::string rest;
+            if (iss >> rest || line.find_first_not_of(" \t\r\n") != std::string::npos) {
+                throw std::runtime_error("invalid pool range at line " + std::to_string(line_no));
+            }
+            continue;
+        }
+        std::string extra;
+        if (iss >> extra) {
+            throw std::runtime_error("invalid extra token in pool range at line " + std::to_string(line_no));
+        }
+        if (end < start) {
+            throw std::runtime_error("pool range end is before start at line " + std::to_string(line_no));
+        }
+        if (end > start) {
+            ranges.push_back(PoolRange{start, end});
+        }
+    }
+
+    if (ranges.empty()) {
+        throw std::runtime_error("pool ranges file contains no non-empty ranges: " + path);
+    }
+    return ranges;
 }
 
 boost::json::object PoolConfigDocument::entry_at(size_t index) const {

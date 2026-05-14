@@ -59,3 +59,35 @@ def test_load_sharded_npz_run(tmp_path: Path) -> None:
     npz_run = load_npz_run(root)
 
     assert npz_run.load_array("vp").tolist() == [1.0, 1.1, 1.2, 1.3]
+
+
+def test_load_sharded_npz_run_uses_pool_index_when_present(tmp_path: Path) -> None:
+    root = tmp_path / "cluster_run"
+    shard0 = root / "shards" / "result_a"
+    shard1 = root / "shards" / "result_b"
+    shard0.mkdir(parents=True)
+    shard1.mkdir(parents=True)
+    np.savez(
+        shard0 / "metrics.npz",
+        vp=np.array([1.0, 1.2]),
+        pool_index=np.array([0, 2], dtype=np.uint64),
+    )
+    np.savez(
+        shard1 / "metrics.npz",
+        vp=np.array([1.1, 1.3]),
+        pool_index=np.array([1, 3], dtype=np.uint64),
+    )
+    manifest = {
+        "format": "arb_npz_v1_sharded",
+        "n_pools": 4,
+        "metadata": {"n_pools": 4},
+        "shards": [
+            {"path": "shards/result_a", "pool_start": 0, "pool_end": 3},
+            {"path": "shards/result_b", "pool_start": 1, "pool_end": 4},
+        ],
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest))
+
+    npz_run = load_npz_run(root)
+
+    assert npz_run.load_array("vp").tolist() == [1.0, 1.1, 1.2, 1.3]

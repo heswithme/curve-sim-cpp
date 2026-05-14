@@ -1,4 +1,5 @@
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 
@@ -154,3 +155,126 @@ def test_explorer_reads_inspect_flags_from_cluster_harness_args() -> None:
 
     assert explorer.config_start_time == "1704067200"
     assert explorer.config_disable_slippage_probes is True
+
+
+def test_heatmap_plain_left_click_does_not_run_inspect(monkeypatch) -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "A", "values": [10000.0, 20000.0]},
+                "x2": {"name": "mid_fee", "values": [10.0, 20.0]},
+            },
+        },
+        "runs": [
+            {
+                "pool": {"A": str(a), "mid_fee": fee},
+                "result": {"score": float(a) + fee},
+            }
+            for a in (10000, 20000)
+            for fee in (10.0, 20.0)
+        ],
+    }
+    explorer = NDHeatmapExplorerOpt(
+        data,
+        ["score"],
+        ncol=1,
+        cmap="viridis",
+        max_ticks=8,
+        clamp=False,
+        price_thr_bps=1.0,
+        max_price_thr_bps=1.0,
+    )
+
+    called = {"metrics": 0, "inspect": 0}
+    monkeypatch.setattr(
+        explorer,
+        "_update_metrics_window",
+        lambda *_args, **_kwargs: called.__setitem__("metrics", called["metrics"] + 1),
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_build_inspect_pool_config",
+        lambda *_args, **_kwargs: {"pool": {}, "costs": {}},
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_run_inspect_simulation",
+        lambda *_args, **_kwargs: called.__setitem__("inspect", called["inspect"] + 1),
+    )
+
+    event = SimpleNamespace(
+        button=1,
+        key=None,
+        inaxes=explorer.axes[0],
+        xdata=10000.0,
+        ydata=10.0,
+    )
+    explorer._on_click(event)
+
+    assert called == {"metrics": 1, "inspect": 0}
+
+
+def test_heatmap_shift_left_or_right_click_runs_inspect(monkeypatch) -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "A", "values": [10000.0, 20000.0]},
+                "x2": {"name": "mid_fee", "values": [10.0, 20.0]},
+            },
+        },
+        "runs": [
+            {
+                "pool": {"A": str(a), "mid_fee": fee},
+                "result": {"score": float(a) + fee},
+            }
+            for a in (10000, 20000)
+            for fee in (10.0, 20.0)
+        ],
+    }
+    explorer = NDHeatmapExplorerOpt(
+        data,
+        ["score"],
+        ncol=1,
+        cmap="viridis",
+        max_ticks=8,
+        clamp=False,
+        price_thr_bps=1.0,
+        max_price_thr_bps=1.0,
+    )
+
+    called = {"metrics": 0, "inspect": 0}
+    monkeypatch.setattr(
+        explorer,
+        "_update_metrics_window",
+        lambda *_args, **_kwargs: called.__setitem__("metrics", called["metrics"] + 1),
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_build_inspect_pool_config",
+        lambda *_args, **_kwargs: {"pool": {}, "costs": {}},
+    )
+    monkeypatch.setattr(
+        explorer,
+        "_run_inspect_simulation",
+        lambda *_args, **_kwargs: called.__setitem__("inspect", called["inspect"] + 1),
+    )
+
+    for event in (
+        SimpleNamespace(
+            button=1,
+            key="shift",
+            inaxes=explorer.axes[0],
+            xdata=10000.0,
+            ydata=10.0,
+        ),
+        SimpleNamespace(
+            button=3,
+            key=None,
+            inaxes=explorer.axes[0],
+            xdata=10000.0,
+            ydata=10.0,
+        ),
+    ):
+        explorer._on_click(event)
+
+    assert called == {"metrics": 0, "inspect": 2}

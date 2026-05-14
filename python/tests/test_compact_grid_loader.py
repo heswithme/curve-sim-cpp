@@ -124,6 +124,7 @@ def _run_harness(
     *,
     pool_start: int | None = None,
     pool_end: int | None = None,
+    pool_ranges: list[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
     cfg_path = tmp_path / f"{name}.json"
     out_path = tmp_path / f"{name}_out.json"
@@ -144,6 +145,10 @@ def _run_harness(
         cmd.extend(["--pool-start", str(pool_start)])
     if pool_end is not None:
         cmd.extend(["--pool-end", str(pool_end)])
+    if pool_ranges is not None:
+        ranges_path = tmp_path / f"{name}_ranges.txt"
+        ranges_path.write_text("".join(f"{start} {end}\n" for start, end in pool_ranges))
+        cmd.extend(["--pool-ranges", str(ranges_path)])
     subprocess.run(cmd, cwd=ROOT, check=True)
     return json.loads(out_path.read_text())
 
@@ -164,6 +169,24 @@ def _assert_runs_equal(legacy: dict[str, Any], compact: dict[str, Any]) -> None:
         }
         assert legacy_result == compact_result
         assert legacy_run["final_state"] == compact_run["final_state"]
+
+
+def _assert_runs_equal_by_pool_index(expected: dict[str, Any], actual: dict[str, Any]) -> None:
+    expected_by_index = {run["pool_index"]: run for run in expected["runs"]}
+    actual_by_index = {run["pool_index"]: run for run in actual["runs"]}
+    assert expected_by_index.keys() == actual_by_index.keys()
+
+    skip_result_keys = {"pool_exec_ms"}
+    for pool_index, expected_run in expected_by_index.items():
+        actual_run = actual_by_index[pool_index]
+        assert expected_run["success"] is True
+        assert actual_run["success"] is True
+        assert {
+            k: v for k, v in expected_run["result"].items() if k not in skip_result_keys
+        } == {
+            k: v for k, v in actual_run["result"].items() if k not in skip_result_keys
+        }
+        assert expected_run["final_state"] == actual_run["final_state"]
 
 
 def test_compact_grid_loader_matches_expanded_16x16_fee_grid(tmp_path: Path) -> None:
@@ -192,6 +215,34 @@ def test_compact_grid_loader_matches_expanded_16x16_policy_donation_grid(tmp_pat
     compact = _run_harness(_compact_config(axes), candles, tmp_path, "compact_policy")
 
     _assert_runs_equal(legacy, compact)
+
+
+def test_compact_grid_loader_pool_ranges_preserve_global_indices(tmp_path: Path) -> None:
+    candles = tmp_path / "candles.json"
+    _candles(candles)
+    axes = {
+        "A": [int(a * 10_000) for a in range(1, 5)],
+        "mid_fee": [int(round(a / 10_000 * 10**10)) for a in range(10, 50, 10)],
+    }
+    ranges = [(0, 3), (6, 8), (13, 16)]
+
+    full = _run_harness(_expanded_config(axes), candles, tmp_path, "expanded_ranges_full")
+    expected_indices = {idx for start, end in ranges for idx in range(start, end)}
+    expected = {
+        "runs": [
+            run for run in full["runs"] if int(run["pool_index"]) in expected_indices
+        ]
+    }
+    ranged = _run_harness(
+        _compact_config(axes),
+        candles,
+        tmp_path,
+        "compact_ranges",
+        pool_ranges=ranges,
+    )
+
+    assert [run["pool_index"] for run in ranged["runs"]] == [0, 1, 2, 6, 7, 13, 14, 15]
+    _assert_runs_equal_by_pool_index(expected, ranged)
 
 
 def test_compact_grid_loader_matches_expanded_sliced_16x16_grid(tmp_path: Path) -> None:

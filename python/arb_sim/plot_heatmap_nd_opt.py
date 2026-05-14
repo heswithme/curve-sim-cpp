@@ -1890,10 +1890,12 @@ class NDHeatmapExplorerOpt:
             self._inspect_running = False
 
     def _on_click(self, event):
-        is_shift_click = event.button == 1 and event.key == "shift"
+        key = str(getattr(event, "key", "") or "").lower()
+        is_shift_left_click = event.button == 1 and "shift" in key
         is_right_click = event.button == 3
-        is_left_click = event.button == 1 and not is_shift_click
-        if not (is_left_click or is_shift_click or is_right_click):
+        is_plain_left_click = event.button == 1 and not is_shift_left_click
+        is_inspect_click = is_shift_left_click or is_right_click
+        if not (is_plain_left_click or is_inspect_click):
             return
         if event.inaxes not in self.axes:
             return
@@ -1921,7 +1923,7 @@ class NDHeatmapExplorerOpt:
             coords[name] = val
 
         idx_tuple = tuple(indices)
-        if is_left_click:
+        if is_plain_left_click:
             self._update_metrics_window(idx_tuple, coords)
             return
 

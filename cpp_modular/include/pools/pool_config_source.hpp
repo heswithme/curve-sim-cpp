@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -21,6 +22,13 @@ struct GridAxis {
     std::string name;
     boost::json::array values{};
 };
+
+struct PoolRange {
+    size_t start{0};
+    size_t end{0};
+};
+
+std::vector<PoolRange> load_pool_ranges_file(const std::string& path);
 
 class PoolConfigDocument {
 public:
@@ -71,7 +79,45 @@ load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx 
         PoolInit<T> pool_init{};
         arb::trading::Costs<T> costs{};
         parse_pool_entry(entry, pool_init, costs);
+        pool_init.global_index = i;
         result.emplace_back(std::move(pool_init), std::move(costs));
+    }
+
+    return result;
+}
+
+template <typename T>
+std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>>
+load_pool_configs_for_ranges(const std::string& path, const std::vector<PoolRange>& ranges) {
+    PoolConfigDocument doc(path);
+
+    size_t total = 0;
+    for (const auto& range : ranges) {
+        if (range.end < range.start) {
+            throw std::runtime_error("pool range end is before start");
+        }
+        if (range.end > doc.size()) {
+            throw std::out_of_range("pool range end exceeds pool config size");
+        }
+        const size_t n = range.end - range.start;
+        if (total > SIZE_MAX - n) {
+            throw std::runtime_error("pool range count overflows size_t");
+        }
+        total += n;
+    }
+
+    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
+    result.reserve(total);
+
+    for (const auto& range : ranges) {
+        for (size_t i = range.start; i < range.end; ++i) {
+            auto entry = doc.entry_at(i);
+            PoolInit<T> pool_init{};
+            arb::trading::Costs<T> costs{};
+            parse_pool_entry(entry, pool_init, costs);
+            pool_init.global_index = i;
+            result.emplace_back(std::move(pool_init), std::move(costs));
+        }
     }
 
     return result;

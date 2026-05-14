@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -38,6 +39,7 @@ struct PoolInit {
     T donation_coins_ratio{T(0.5)};
 
     std::string tag;
+    size_t global_index{0};
     boost::json::object echo_pool{};
     boost::json::object echo_costs{};
 };
