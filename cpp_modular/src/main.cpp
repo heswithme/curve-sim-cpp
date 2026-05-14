@@ -275,31 +275,34 @@ int main(int argc, char* argv[]) {
         }
         
         // Write detailed log if requested (uses first pool's detailed entries)
-        // Place detailed_log.json next to the output file
+        // Place detailed-output next to the output file
         if (args.detailed_log && !results.empty()) {
-            // Compute detailed_log.json path: same directory as output, fixed name
+            // Compute detailed output path: same directory as output, fixed name
             std::string detailed_log_path;
+            const std::string detailed_log_name =
+                args.detailed_npz ? "detailed-output.npz" : "detailed-output.json";
             {
                 auto pos = args.out_path.find_last_of("/\\");
                 if (pos != std::string::npos) {
-                    detailed_log_path = args.out_path.substr(0, pos + 1) + "detailed-output.json";
+                    detailed_log_path = args.out_path.substr(0, pos + 1) + detailed_log_name;
                 } else {
-                    detailed_log_path = "detailed-output.json";
+                    detailed_log_path = detailed_log_name;
                 }
             }
             
             // Find first successful result with detailed entries
             for (const auto& res : results) {
                 if (res.success && !res.detailed_entries.empty()) {
-                    bool ok = arb::harness::write_detailed_log(
-                        detailed_log_path,
-                        res.detailed_entries
-                    );
+                    bool ok = args.detailed_npz
+                        ? arb::harness::write_detailed_npz(detailed_log_path, res.detailed_entries)
+                        : arb::harness::write_detailed_log(detailed_log_path, res.detailed_entries);
                     if (!ok) {
                         std::cerr << "Warning: Failed to write detailed log to "
                                   << detailed_log_path << "\n";
                     } else {
-                        std::cout << "Wrote detailed log (" << res.detailed_entries.size()
+                        std::cout << "Wrote detailed "
+                                  << (args.detailed_npz ? "NPZ log" : "log")
+                                  << " (" << res.detailed_entries.size()
                                   << " entries) to " << detailed_log_path << "\n";
                     }
                     break;  // Only write first pool's detailed log

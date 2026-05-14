@@ -112,6 +112,7 @@ class ArbHarnessRunner:
         userswapsize: float | None = None,
         userswapthresh: float | None = None,
         detailed_log: bool = False,
+        detailed_npz: bool = False,
         detailed_interval: int | None = None,
         cowswap_trades: str | None = None,
         cowswap_fee_bps: float | None = None,
@@ -148,6 +149,8 @@ class ArbHarnessRunner:
             cmd += ["--userswapthresh", str(userswapthresh)]
         if detailed_log:
             cmd += ["--detailed-log"]
+        if detailed_npz:
+            cmd += ["--detailed-npz"]
         if detailed_interval is not None:
             cmd += ["--detailed-interval", str(int(detailed_interval))]
         if cowswap_trades:
@@ -283,7 +286,12 @@ def main() -> int:
     parser.add_argument(
         "--detailed-log",
         action="store_true",
-        help="Write per-candle detailed_log.json next to output file",
+        help="Write detailed-output.json next to output file",
+    )
+    parser.add_argument(
+        "--detailed-npz",
+        action="store_true",
+        help="Write detailed output as detailed-output.npz instead of JSON",
     )
     parser.add_argument(
         "--detailed-interval",
@@ -396,6 +404,7 @@ def main() -> int:
         userswapsize=args.userswapsize,
         userswapthresh=args.userswapthresh,
         detailed_log=args.detailed_log,
+        detailed_npz=args.detailed_npz,
         detailed_interval=args.detailed_interval,
         cowswap_trades=cowswap_path,
         cowswap_fee_bps=cowswap_fee_bps,

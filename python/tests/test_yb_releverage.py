@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -12,6 +13,7 @@ sys.path.insert(0, str(ARB_SIM_ROOT))
 from yb_releverage import (  # noqa: E402
     SimulationConfig,
     load_trace,
+    main,
     make_fee_grid,
     run_releverage,
 )
@@ -73,8 +75,65 @@ def test_trace_donation_apy_is_loaded(tmp_path: Path) -> None:
     assert trace.donation_apy == 0.0475
 
 
+def test_npz_trace_is_loaded(tmp_path: Path) -> None:
+    rows = _flat_trace_rows()
+    trace_path = tmp_path / "detailed-output.npz"
+    np.savez(
+        trace_path,
+        **{
+            key: np.array([row[key] for row in rows])
+            for key in (
+                "t",
+                "token0",
+                "token1",
+                "high",
+                "low",
+                "price_scale",
+                "profit",
+                "donation_apy",
+            )
+        },
+    )
+
+    trace = load_trace(trace_path, "price_scale", "profit")
+
+    assert trace.donation_apy == 0.0
+    assert trace.t.tolist() == [row["t"] for row in rows]
+    assert trace.profit.tolist() == [0.0, 0.0, 0.0]
+
+
 def test_fee_grid_single_and_scan_modes() -> None:
     assert make_fee_grid(0.012, 0.002, 0.05, 20, "log", scan=False) == [0.012]
 
     grid = make_fee_grid(None, 0.01, 0.03, 3, "linear", scan=False)
     assert grid == pytest.approx([0.01, 0.02, 0.03])
+
+
+def test_quiet_mode_prints_only_best_fee_and_apy(tmp_path: Path, capsys) -> None:
+    trace_path = tmp_path / "detailed-output.json"
+    trace_path.write_text(json.dumps(_flat_trace_rows()))
+    out_path = tmp_path / "yb.json"
+
+    rc = main(
+        [
+            "--detailed",
+            str(trace_path),
+            "--scan",
+            "--fee-min",
+            "0.01",
+            "--fee-max",
+            "0.02",
+            "--fee-count",
+            "2",
+            "--fee-grid",
+            "linear",
+            "--path-every",
+            "0",
+            "--out",
+            str(out_path),
+            "--quiet",
+        ]
+    )
+
+    assert rc == 0
+    assert capsys.readouterr().out.strip() == "best_fee=0.01 apy=0%"

@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from types import SimpleNamespace
 from pathlib import Path
@@ -11,12 +12,24 @@ if not any(arg == "--out" or arg.startswith("--out=") for arg in sys.argv[1:]):
     sys.argv.append("--out=/tmp/test_plot_heatmap_nd_opt.png")
 
 from plot_heatmap_nd_opt import (  # noqa: E402
+    INSPECT_FULL_DETAILED_INTERVAL,
+    INSPECT_SPARSE_DETAILED_INTERVAL,
+    INSPECT_YB_FEE,
     NDHeatmapExplorerOpt,
     _extract_nd_arrays,
     _format_axis_labels,
     _format_slider_value,
     _stringify_pool,
 )
+
+
+def test_inspect_interval_is_sparse_unless_yb_is_requested() -> None:
+    explorer = SimpleNamespace()
+
+    assert INSPECT_FULL_DETAILED_INTERVAL == 1
+    assert INSPECT_SPARSE_DETAILED_INTERVAL == 1000
+    assert NDHeatmapExplorerOpt._inspect_detailed_interval(explorer, True) == 1
+    assert NDHeatmapExplorerOpt._inspect_detailed_interval(explorer, False) == 1000
 
 
 def test_stringify_pool_preserves_nested_policy_object() -> None:
@@ -214,7 +227,7 @@ def test_heatmap_plain_left_click_does_not_run_inspect(monkeypatch) -> None:
     assert called == {"metrics": 1, "inspect": 0}
 
 
-def test_heatmap_shift_left_or_right_click_runs_inspect(monkeypatch) -> None:
+def test_heatmap_shift_left_runs_inspect_with_yb_right_click_without_yb(monkeypatch) -> None:
     data = {
         "metadata": {
             "grid": {
@@ -242,7 +255,7 @@ def test_heatmap_shift_left_or_right_click_runs_inspect(monkeypatch) -> None:
         max_price_thr_bps=1.0,
     )
 
-    called = {"metrics": 0, "inspect": 0}
+    called = {"metrics": 0, "inspect": 0, "yb_flags": []}
     monkeypatch.setattr(
         explorer,
         "_update_metrics_window",
@@ -256,7 +269,10 @@ def test_heatmap_shift_left_or_right_click_runs_inspect(monkeypatch) -> None:
     monkeypatch.setattr(
         explorer,
         "_run_inspect_simulation",
-        lambda *_args, **_kwargs: called.__setitem__("inspect", called["inspect"] + 1),
+        lambda *_args, **kwargs: (
+            called.__setitem__("inspect", called["inspect"] + 1),
+            called["yb_flags"].append(kwargs.get("run_yb_releverage")),
+        ),
     )
 
     for event in (
@@ -277,4 +293,107 @@ def test_heatmap_shift_left_or_right_click_runs_inspect(monkeypatch) -> None:
     ):
         explorer._on_click(event)
 
-    assert called == {"metrics": 0, "inspect": 2}
+    assert called == {"metrics": 0, "inspect": 2, "yb_flags": [True, False]}
+
+
+def test_inspect_yb_releverage_uses_flat_one_percent_fee(monkeypatch, capsys) -> None:
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="best_fee=0.01 apy=4.1%\n")
+
+    monkeypatch.setattr("plot_heatmap_nd_opt.subprocess.run", fake_run)
+
+    NDHeatmapExplorerOpt._run_yb_releverage_simulation(
+        SimpleNamespace(python_dir=Path("/tmp")),
+        Path("/tmp/detailed-output.json"),
+    )
+
+    assert len(commands) == 1
+    cmd, kwargs = commands[0]
+    assert cmd[:3] == ["uv", "run", "arb_sim/yb_releverage.py"]
+    assert "--scan" not in cmd
+    assert cmd[cmd.index("--fee") + 1] == str(INSPECT_YB_FEE)
+    assert cmd[cmd.index("--path-every") + 1] == "0"
+    assert "--quiet" in cmd
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+    assert capsys.readouterr().out.strip() == "YB releverage: best_fee=0.01 apy=4.1%"
+
+
+def test_shift_inspect_uses_full_npz_and_right_inspect_uses_sparse_json(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    candles_path = tmp_path / "candles.json"
+    candles_path.write_text("[]")
+    inspect_path = tmp_path / "inspect_pool.json"
+    out_path = tmp_path / "inspect_output.json"
+
+    commands = []
+    popens = []
+    yb_paths = []
+
+    def fake_run(cmd, **_kwargs):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    def fake_popen(cmd, **_kwargs):
+        popens.append(cmd)
+        return SimpleNamespace()
+
+    def make_explorer():
+        explorer = SimpleNamespace(
+            _inspect_running=False,
+            candles_file=None,
+            inspect_output_path=out_path,
+            config_dustswapfreq=3600,
+            start_time=None,
+            config_start_time=None,
+            config_disable_slippage_probes=False,
+            _inspect_built_once=False,
+            python_dir=tmp_path,
+        )
+        explorer._resolve_candles_path = lambda: candles_path
+        explorer._write_inspect_pool_config = lambda _pool: inspect_path
+        explorer._inspect_detailed_interval = (
+            lambda run_yb: NDHeatmapExplorerOpt._inspect_detailed_interval(
+                explorer, run_yb
+            )
+        )
+        explorer._run_yb_releverage_simulation = lambda path: yb_paths.append(path)
+        return explorer
+
+    monkeypatch.setattr("plot_heatmap_nd_opt.subprocess.run", fake_run)
+    monkeypatch.setattr("plot_heatmap_nd_opt.subprocess.Popen", fake_popen)
+
+    NDHeatmapExplorerOpt._run_inspect_simulation(
+        make_explorer(),
+        {},
+        run_yb_releverage=True,
+    )
+    shift_cmd = commands.pop()
+    assert "--detailed-npz" in shift_cmd
+    assert shift_cmd[shift_cmd.index("--detailed-interval") + 1] == "1"
+    assert yb_paths == [tmp_path / "detailed-output.npz"]
+    assert popens == []
+
+    NDHeatmapExplorerOpt._run_inspect_simulation(
+        make_explorer(),
+        {},
+        run_yb_releverage=False,
+    )
+    right_cmd = commands.pop()
+    assert "--detailed-npz" not in right_cmd
+    assert right_cmd[right_cmd.index("--detailed-interval") + 1] == "1000"
+    assert yb_paths == [tmp_path / "detailed-output.npz"]
+    assert popens == [
+        [
+            "uv",
+            "run",
+            "arb_sim/plot_price_scale.py",
+            "--no-save",
+            str(tmp_path / "detailed-output.json"),
+        ]
+    ]

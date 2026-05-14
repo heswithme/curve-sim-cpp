@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """YieldBasis releverage post-pass for twocrypto detailed traces.
 
-The input is the C++ harness detailed-output.json stream. The script can run
+The input is the C++ harness detailed-output JSON or NPZ stream. The script can run
 one AMM fee or scan a fee grid, then optionally plot fee APY and deposit growth.
 """
 
@@ -158,7 +158,64 @@ def _profit_value(entry: dict[str, Any], field: ProfitField) -> float:
     return value - 1.0
 
 
+def _npz_array(
+    arrays: np.lib.npyio.NpzFile,
+    name: str,
+    path: Path,
+    expected_len: int | None = None,
+) -> np.ndarray:
+    if name not in arrays.files:
+        raise ValueError(f"{path} is missing {name}.npy")
+    values = np.asarray(arrays[name], dtype=np.float64)
+    if values.ndim != 1:
+        raise ValueError(f"{path}:{name} must be a 1-D array")
+    if expected_len is not None and len(values) != expected_len:
+        raise ValueError(
+            f"{path}:{name} has length {len(values)}, expected {expected_len}"
+        )
+    return values
+
+
+def _load_npz_trace(path: Path, peg_to: str, profit_field: ProfitField) -> Trace:
+    with np.load(path) as arrays:
+        t = _npz_array(arrays, "t", path)
+        if len(t) == 0:
+            raise ValueError(f"{path} must contain a non-empty NPZ trace")
+        n = len(t)
+        token0 = _npz_array(arrays, "token0", path, n)
+        token1 = _npz_array(arrays, "token1", path, n)
+        high = _npz_array(arrays, "high", path, n)
+        low = _npz_array(arrays, "low", path, n)
+        peg = _npz_array(arrays, peg_to, path, n)
+        profit = _npz_array(arrays, profit_field, path, n)
+        if profit_field != "profit":
+            profit = profit - 1.0
+
+        donation_apy = None
+        if "donation_apy" in arrays.files:
+            donation_values = _npz_array(arrays, "donation_apy", path, n)
+            donation_apy = float(donation_values[0])
+            if not np.allclose(donation_values, donation_apy, rtol=0.0, atol=1e-15):
+                raise ValueError("detailed trace has changing donation_apy")
+
+    return Trace(
+        t=t,
+        token0=token0,
+        token1=token1,
+        high=high,
+        low=low,
+        peg=peg,
+        profit=profit,
+        donation_apy=donation_apy,
+        peg_to=peg_to,
+        profit_field=profit_field,
+    )
+
+
 def load_trace(path: Path, peg_to: str, profit_field: ProfitField) -> Trace:
+    if path.suffix == ".npz":
+        return _load_npz_trace(path, peg_to, profit_field)
+
     data = _json_load(path)
     if not isinstance(data, list) or not data:
         raise ValueError(f"{path} must contain a non-empty JSON array")
@@ -468,13 +525,13 @@ def _plot_growth_axis(ax: Any, path: list[dict[str, float]]) -> None:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run YieldBasis releverage simulation on detailed-output.json"
+        description="Run YieldBasis releverage simulation on detailed-output JSON or NPZ"
     )
     parser.add_argument(
         "--detailed",
         type=Path,
         default=HERE / "run_data" / "detailed-output.json",
-        help="Path to detailed-output.json or detailed-output.json.xz",
+        help="Path to detailed-output.json, detailed-output.json.xz, or detailed-output.npz",
     )
     parser.add_argument(
         "--donation-apy",
@@ -513,6 +570,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--plot", action="store_true", help="Show an interactive plot")
     parser.add_argument("--plot-out", type=Path, default=None, help="Write plot PNG")
     parser.add_argument("--max-plot-points", type=int, default=10_000)
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print the best fee and APY summary",
+    )
     return parser.parse_args(argv)
 
 
@@ -560,17 +622,20 @@ def main(argv: list[str] | None = None) -> int:
     write_payload(out_path, payload)
 
     best = payload["best"]
-    print(
-        f"Loaded {len(trace.t)} rows over {trace.duration / 86400.0:.2f} days "
-        f"from {trace_path}"
-    )
-    source = "CLI override" if args.donation_apy is not None else "detailed output"
-    print(f"Donation APY: {donation_apy:.6g} ({source})")
-    print(
-        f"Best fee={best['fee']:.8g}, apy={best['apy'] * 100.0:.6g}%, "
-        f"final_growth={best['final_growth']:.8g}, trades={best['n_releverage_trades']}"
-    )
-    print(f"Saved JSON to {out_path}")
+    if args.quiet:
+        print(f"best_fee={best['fee']:.8g} apy={best['apy'] * 100.0:.6g}%")
+    else:
+        print(
+            f"Loaded {len(trace.t)} rows over {trace.duration / 86400.0:.2f} days "
+            f"from {trace_path}"
+        )
+        source = "CLI override" if args.donation_apy is not None else "detailed output"
+        print(f"Donation APY: {donation_apy:.6g} ({source})")
+        print(
+            f"Best fee={best['fee']:.8g}, apy={best['apy'] * 100.0:.6g}%, "
+            f"final_growth={best['final_growth']:.8g}, trades={best['n_releverage_trades']}"
+        )
+        print(f"Saved JSON to {out_path}")
 
     if args.plot or args.plot_out is not None:
         plot_payload(payload, args.plot_out, args.max_plot_points)

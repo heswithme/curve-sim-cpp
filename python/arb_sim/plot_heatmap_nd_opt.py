@@ -104,7 +104,9 @@ INSPECT_OUTPUT_FILENAME = "inspect_output.json"
 INSPECT_REAL = "double"
 INSPECT_DUSTSWAPFREQ = 3600
 INSPECT_THREADS = 10
-INSPECT_DETAILED_INTERVAL = 1000
+INSPECT_SPARSE_DETAILED_INTERVAL = 1000
+INSPECT_FULL_DETAILED_INTERVAL = 1
+INSPECT_YB_FEE = 0.01
 
 
 def _real_arg(value: Any) -> str:
@@ -1827,7 +1829,48 @@ class NDHeatmapExplorerOpt:
         self.inspect_pool_path.write_text(json.dumps(payload, indent=2))
         return self.inspect_pool_path
 
-    def _run_inspect_simulation(self, pool_config: Dict[str, Any]):
+    def _run_yb_releverage_simulation(self, detailed_path: Path) -> None:
+        cmd = [
+            "uv",
+            "run",
+            "arb_sim/yb_releverage.py",
+            "--detailed",
+            str(detailed_path),
+            "--fee",
+            str(INSPECT_YB_FEE),
+            "--path-every",
+            "0",
+            "--quiet",
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=self.python_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            print(f"YB releverage failed: {stderr or exc}")
+            return
+
+        output = (result.stdout or "").strip()
+        if output:
+            print(f"YB releverage: {output}")
+
+    def _inspect_detailed_interval(self, run_yb_releverage: bool) -> int:
+        return (
+            INSPECT_FULL_DETAILED_INTERVAL
+            if run_yb_releverage
+            else INSPECT_SPARSE_DETAILED_INTERVAL
+        )
+
+    def _run_inspect_simulation(
+        self,
+        pool_config: Dict[str, Any],
+        run_yb_releverage: bool = False,
+    ):
         if self._inspect_running:
             print("Inspect run already in progress; ignoring click.")
             return
@@ -1855,12 +1898,14 @@ class NDHeatmapExplorerOpt:
                 str(INSPECT_THREADS),
                 "--detailed-log",
                 "--detailed-interval",
-                str(INSPECT_DETAILED_INTERVAL),
+                str(self._inspect_detailed_interval(run_yb_releverage)),
                 "--out",
                 str(out_path),
                 "--pool-config",
                 str(inspect_path),
             ]
+            if run_yb_releverage:
+                cmd.append("--detailed-npz")
             start_time = self.start_time or self.config_start_time
             if start_time:
                 cmd += ["--start-time", str(start_time)]
@@ -1875,15 +1920,23 @@ class NDHeatmapExplorerOpt:
             subprocess.run(cmd, cwd=self.python_dir, check=True)
             self._inspect_built_once = True
 
-            detailed_path = out_path.parent / "detailed-output.json"
-            plot_cmd = [
-                "uv",
-                "run",
-                "arb_sim/plot_price_scale.py",
-                "--no-save",
-                str(detailed_path),
-            ]
-            subprocess.Popen(plot_cmd, cwd=self.python_dir, start_new_session=True)
+            detailed_name = (
+                "detailed-output.npz"
+                if run_yb_releverage
+                else "detailed-output.json"
+            )
+            detailed_path = out_path.parent / detailed_name
+            if run_yb_releverage:
+                self._run_yb_releverage_simulation(detailed_path)
+            else:
+                plot_cmd = [
+                    "uv",
+                    "run",
+                    "arb_sim/plot_price_scale.py",
+                    "--no-save",
+                    str(detailed_path),
+                ]
+                subprocess.Popen(plot_cmd, cwd=self.python_dir, start_new_session=True)
         except subprocess.CalledProcessError as exc:
             print(f"Inspect run failed: {exc}")
         finally:
@@ -1936,7 +1989,10 @@ class NDHeatmapExplorerOpt:
         if pool_config:
             print("Pool config:")
             print(json.dumps(pool_config, indent=2))
-            self._run_inspect_simulation(pool_config)
+            self._run_inspect_simulation(
+                pool_config,
+                run_yb_releverage=is_shift_left_click,
+            )
         else:
             print("No pool config found for this point.")
 
@@ -1951,7 +2007,8 @@ class NDHeatmapExplorerOpt:
         if slider_dims:
             print(f"Sliders: {[name for _, name in slider_dims]}")
         print("\nLeft click updates metrics window.")
-        print("Shift+click or right-click to run inspect sim.")
+        print("Shift+click runs full inspect sim plus quiet YB 1% releverage.")
+        print("Right-click runs sparse inspect sim only.")
         print("Close all windows to exit.")
         plt.show()
 
