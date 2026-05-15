@@ -105,11 +105,15 @@ struct RollingGeoApy60d {
     long double sum_log_apy{0.0L};
     size_t n_windows{0};
 
+    bool should_sample(uint64_t ts) const {
+        return !have_sample || ts >= last_sample_ts + SAMPLE_S;
+    }
+
     void sample(uint64_t ts, long double net_vp) {
         if (!std::isfinite(net_vp) || !(net_vp > 0.0L)) {
             return;
         }
-        if (have_sample && ts < last_sample_ts + SAMPLE_S) {
+        if (!should_sample(ts)) {
             return;
         }
 

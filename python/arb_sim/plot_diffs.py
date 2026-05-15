@@ -2,7 +2,7 @@
 """
 Plot diffs between a current arb_run_*.json and a reference results.json.
 
-- Uses parsing logic consistent with plot_heatmap.py to build the (x1,x2)->Z grid.
+- Uses parsing logic consistent with the N-D heatmap tools to build the (x1,x2)->Z grid.
 - Reference loader accepts ref_plot_all-style results.json with:
   { "configuration": [ {"A":..., "mid_fee":..., "Result": { ...metrics... } }, ... ] }
 

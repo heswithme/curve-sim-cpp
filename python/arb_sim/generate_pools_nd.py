@@ -55,7 +55,7 @@ BASE_DONATION_COINS_RATIO = 0.5
 
 N_GRID = 12
 GRID: dict[str, Any] = {
-    "A": [int(a * A_MULTIPLIER) for a in np.linspace(1, 30, N_GRID)],
+    "A": [int(a * A_MULTIPLIER) for a in np.linspace(1, 20, N_GRID)],
     "mid_fee": [
         int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(10, 100, N_GRID)
     ],

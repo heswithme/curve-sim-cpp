@@ -56,6 +56,12 @@ MA_TIME_TO_HOURS = LN2 / SECONDS_PER_HOUR
 MASK_MAX_PRICE_METRIC = "max_7d_rel_price_diff"
 MASK_MAX_PRICE_FALLBACK_METRIC = "max_rel_price_diff"
 MASK_SKEW_METRIC = "max_7d_skew"
+MASKED_METRIC_SOURCES = {
+    "apy_masked": "apy_net",
+    "apy_masked_imbalance": "apy_net",
+    "apy_gm_masked": "apy_net_gm",
+}
+MASKED_METRICS = set(MASKED_METRIC_SOURCES)
 
 # ==================== LAYOUT CONSTANTS ====================
 CTRL_FIG_WIDTH = 3.2
@@ -379,12 +385,13 @@ def _extract_coord(run: Dict[str, Any], dim_names: List[str]) -> List[float] | N
 
 def _metrics_to_build(metrics: List[str]) -> List[str]:
     metrics_to_build = list(metrics)
-    if "apy_masked" in metrics_to_build or "apy_masked_imbalance" in metrics_to_build:
+    masked_requested = [m for m in metrics_to_build if m in MASKED_METRICS]
+    if masked_requested:
         for req in (
-            "apy_net",
             MASK_MAX_PRICE_METRIC,
             MASK_MAX_PRICE_FALLBACK_METRIC,
             MASK_SKEW_METRIC,
+            *(MASKED_METRIC_SOURCES[m] for m in masked_requested),
         ):
             if req not in metrics_to_build:
                 metrics_to_build.append(req)
@@ -429,7 +436,7 @@ def _extract_nd_arrays_npz(
         pass
 
     for metric in metrics_to_build:
-        if metric in {"apy_masked", "apy_masked_imbalance"}:
+        if metric in MASKED_METRICS:
             continue
         try:
             raw = npz_run.load_array(metric).astype(float, copy=False).reshape(shape)
@@ -442,9 +449,9 @@ def _extract_nd_arrays_npz(
         metric_arrays[metric] = arr
 
     for metric in metrics_to_build:
-        if metric not in {"apy_masked", "apy_masked_imbalance"}:
+        if metric not in MASKED_METRICS:
             continue
-        apy = metric_arrays.get("apy_net")
+        apy = metric_arrays.get(MASKED_METRIC_SOURCES[metric])
         max_rel = metric_arrays.get(MASK_MAX_PRICE_METRIC)
         if max_rel is None or not np.isfinite(max_rel).any():
             max_rel = metric_arrays.get(MASK_MAX_PRICE_FALLBACK_METRIC)
@@ -544,8 +551,9 @@ def _extract_nd_arrays(
     metrics_lookup: Dict[Tuple[int, ...], Dict[str, Any]] = {}
 
     def compute_metric_value(metric: str, metrics_dict: Dict[str, Any]) -> float | None:
-        if metric in {"apy_masked", "apy_masked_imbalance"}:
-            apy_net = _to_float(metrics_dict.get("apy_net"))
+        if metric in MASKED_METRICS:
+            source_key = MASKED_METRIC_SOURCES[metric]
+            apy_net = _to_float(metrics_dict.get(source_key))
             if not math.isfinite(apy_net):
                 return None
             max_rel = _max_mask_price_diff(metrics_dict)
@@ -678,12 +686,8 @@ class NDHeatmapExplorerOpt:
         self.max_price_thr_bps = max(1.0, float(max_price_thr_bps))
         self.log_axes = log_axes or set()
         self.start_time = start_time
-        self.has_skew_thr_slider = (
-            "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
-        )
-        self.has_max_price_thr_slider = (
-            "apy_masked" in self.metrics or "apy_masked_imbalance" in self.metrics
-        )
+        self.has_skew_thr_slider = any(m in MASKED_METRICS for m in self.metrics)
+        self.has_max_price_thr_slider = any(m in MASKED_METRICS for m in self.metrics)
 
         (
             self.dim_names,
@@ -706,6 +710,13 @@ class NDHeatmapExplorerOpt:
             if self.has_skew_thr_slider
             else max(100.0, self.skew_thr_pct)
         )
+        self.skew_thr_min_pct = (
+            self._compute_skew_thr_min_pct()
+            if self.has_skew_thr_slider
+            else 50.0
+        )
+        if 0.0 < self.skew_thr_pct < self.skew_thr_min_pct:
+            self.skew_thr_pct = self.skew_thr_min_pct
 
         self.max_price_thr_max_bps = (
             self._compute_max_price_thr_max_bps()
@@ -736,10 +747,9 @@ class NDHeatmapExplorerOpt:
         self._init_slider_indices()
 
         self.global_clim = _compute_global_clims(self.metric_arrays, clamp=self.clamp)
-        if "apy_net" in self.global_clim:
-            for metric in ("apy_masked", "apy_masked_imbalance"):
-                if metric in self.global_clim:
-                    self.global_clim[metric] = self.global_clim["apy_net"]
+        for metric, source_key in MASKED_METRIC_SOURCES.items():
+            if metric in self.global_clim and source_key in self.global_clim:
+                self.global_clim[metric] = self.global_clim[source_key]
 
         meta = data.get("metadata", {}) if isinstance(data, dict) else {}
         self.base_pool = meta.get("base_pool") if isinstance(meta, dict) else None
@@ -857,8 +867,8 @@ class NDHeatmapExplorerOpt:
         return slice_arr
 
     def _slice_metric(self, metric: str) -> np.ndarray:
-        if metric in {"apy_masked", "apy_masked_imbalance"}:
-            apy_slice = self._slice_raw("apy_net")
+        if metric in MASKED_METRICS:
+            apy_slice = self._slice_raw(MASKED_METRIC_SOURCES[metric])
             max_rel_slice = self._slice_raw(MASK_MAX_PRICE_METRIC)
             if max_rel_slice is None or not np.isfinite(max_rel_slice).any():
                 max_rel_slice = self._slice_raw(MASK_MAX_PRICE_FALLBACK_METRIC)
@@ -1188,13 +1198,13 @@ class NDHeatmapExplorerOpt:
             )
             self.slider_axes.append(slider_ax)
 
-            slider_max = max(1.0, self.skew_thr_max_pct)
+            slider_max = self._skew_thr_slider_max()
             slider = Slider(
                 slider_ax,
                 "",
                 0,
                 slider_max,
-                valinit=self.skew_thr_pct,
+                valinit=self._skew_thr_to_slider_value(self.skew_thr_pct),
                 valstep=1,
             )
             slider.valtext.set_visible(False)
@@ -1212,7 +1222,7 @@ class NDHeatmapExplorerOpt:
             self.slider_value_texts.append(val_text)
 
             def update_skew_thr(val):
-                self.skew_thr_pct = float(val)
+                self.skew_thr_pct = self._skew_slider_value_to_thr(float(val))
                 if self.skew_thr_value_text is not None:
                     self.skew_thr_value_text.set_text(self._format_skew_thr_value())
                 self._refresh_heatmaps()
@@ -1320,8 +1330,9 @@ class NDHeatmapExplorerOpt:
         if metrics is None:
             return "missing"
 
-        if metric in {"apy_masked", "apy_masked_imbalance"}:
-            apy_net = _to_float(metrics.get("apy_net"))
+        if metric in MASKED_METRICS:
+            source_key = MASKED_METRIC_SOURCES[metric]
+            apy_net = _to_float(metrics.get(source_key))
             max_rel = _max_mask_price_diff(metrics)
             if (
                 not math.isfinite(apy_net)
@@ -1348,8 +1359,8 @@ class NDHeatmapExplorerOpt:
         return self._format_metric_value(raw)
 
     def _metric_array_display_value(self, metric: str, idx_tuple: Tuple[int, ...]) -> str:
-        if metric in {"apy_masked", "apy_masked_imbalance"}:
-            apy = self.metric_arrays.get("apy_net")
+        if metric in MASKED_METRICS:
+            apy = self.metric_arrays.get(MASKED_METRIC_SOURCES[metric])
             max_rel = self.metric_arrays.get(MASK_MAX_PRICE_METRIC)
             if max_rel is None or not np.isfinite(max_rel).any():
                 max_rel = self.metric_arrays.get(MASK_MAX_PRICE_FALLBACK_METRIC)
@@ -1406,6 +1417,31 @@ class NDHeatmapExplorerOpt:
     def _format_skew_thr_value(self) -> str:
         return "off" if self.skew_thr_pct <= 0.0 else f"{int(self.skew_thr_pct)}"
 
+    def _skew_thr_slider_max(self) -> float:
+        return max(1.0, math.ceil(self.skew_thr_max_pct) - math.floor(self.skew_thr_min_pct) + 1.0)
+
+    def _skew_thr_to_slider_value(self, pct: float) -> float:
+        if pct <= 0.0:
+            return 0.0
+        return max(1.0, round(pct - math.floor(self.skew_thr_min_pct) + 1.0))
+
+    def _skew_slider_value_to_thr(self, val: float) -> float:
+        if val <= 0.0:
+            return 0.0
+        return math.floor(self.skew_thr_min_pct) + float(val) - 1.0
+
+    def _compute_skew_thr_min_pct(self) -> float:
+        arr = self.metric_arrays.get(MASK_SKEW_METRIC)
+        if arr is None:
+            return 50.0
+        finite = arr[np.isfinite(arr)]
+        if finite.size == 0:
+            return 50.0
+        min_percent = float(np.nanmin(finite))
+        if not math.isfinite(min_percent) or min_percent <= 0.0:
+            return 50.0
+        return max(0.0, math.floor(min_percent))
+
     def _compute_skew_thr_max_pct(self) -> float:
         arr = self.metric_arrays.get(MASK_SKEW_METRIC)
         if arr is None:
@@ -1416,7 +1452,7 @@ class NDHeatmapExplorerOpt:
         max_percent = float(np.nanmax(finite))
         if not math.isfinite(max_percent) or max_percent <= 0.0:
             return max(100.0, self.skew_thr_pct)
-        return max_percent
+        return math.ceil(max_percent)
 
     def _compute_max_price_thr_max_bps(self) -> float:
         arr = self.metric_arrays.get(MASK_MAX_PRICE_METRIC)
@@ -1594,13 +1630,13 @@ class NDHeatmapExplorerOpt:
             )
             self.slider_axes.append(slider_ax)
 
-            slider_max = max(1.0, self.skew_thr_max_pct)
+            slider_max = self._skew_thr_slider_max()
             slider = Slider(
                 slider_ax,
                 "",
                 0,
                 slider_max,
-                valinit=self.skew_thr_pct,
+                valinit=self._skew_thr_to_slider_value(self.skew_thr_pct),
                 valstep=1,
             )
             slider.valtext.set_visible(False)
@@ -1618,7 +1654,7 @@ class NDHeatmapExplorerOpt:
             self.slider_value_texts.append(val_text)
 
             def update_skew_thr(val):
-                self.skew_thr_pct = float(val)
+                self.skew_thr_pct = self._skew_slider_value_to_thr(float(val))
                 if self.skew_thr_value_text is not None:
                     self.skew_thr_value_text.set_text(self._format_skew_thr_value())
                 self._refresh_heatmaps()

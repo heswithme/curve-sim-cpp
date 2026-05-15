@@ -82,6 +82,9 @@ EventLoopResult<T> run_event_loop(
         return std::pow(1.0L + donation_apy, elapsed_s / SEC_PER_YEAR);
     };
     auto sample_apy_net_gm = [&](uint64_t ts) {
+        if (!apy_net_gm.should_sample(ts)) {
+            return;
+        }
         const long double donation_growth = donation_growth_since_start(ts);
         if (!(donation_growth > 0.0L)) {
             return;
@@ -140,7 +143,15 @@ EventLoopResult<T> run_event_loop(
         }
     };
 
+    uint64_t last_tw_sample_ts = 0;
+    bool have_tw_sample = false;
     auto sample_pre_trade = [&](uint64_t ts, T cex_price) {
+        if (have_tw_sample && ts < last_tw_sample_ts + TimeWeightedMetrics<T>::PRICE_DIFF_BUCKET_S) {
+            return;
+        }
+        last_tw_sample_ts = ts;
+        have_tw_sample = true;
+
         tw.sample_price_error(ts, pool.cached_price_scale, cex_price);
 
         const T x0p = pool.balances[0];

@@ -3,7 +3,7 @@
 Interactive N-dimensional heatmap explorer.
 
 - Loads aggregated arb_run JSON with x1..xN grid dimensions.
-- Plots a grid of 2D heatmaps (one per metric), mirroring plot_heatmap.py layout.
+- Plots a grid of 2D heatmaps (one per metric) from N-D run data.
 - Separate controls window with dropdowns for X/Y axis selection and sliders
   for remaining dimensions.
 

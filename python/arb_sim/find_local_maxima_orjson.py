@@ -36,6 +36,10 @@ except Exception as exc:  # pragma: no cover - runtime guard
 
 HERE = Path(__file__).resolve().parent
 RUN_DIR = HERE / "run_data"
+MASKED_METRIC_SOURCES = {
+    "apy_masked": "apy_net",
+    "apy_gm_masked": "apy_net_gm",
+}
 
 
 def _latest_arb_run() -> Path:
@@ -177,12 +181,13 @@ def _build_metric_grid(
         pdiff = env.get(price_metric_key)
         if pdiff is not None:
             pdiff_bps[tuple(idx)] = pdiff * 10000.0
-        if metric_key == "apy_masked":
-            apy_net = env.get("apy_net")
+        if metric_key in MASKED_METRIC_SOURCES:
+            source_key = MASKED_METRIC_SOURCES[metric_key]
+            apy_net = env.get(source_key)
             rel = env.get(price_metric_key)
             if apy_net is None or rel is None:
                 raise KeyError(
-                    f"Metric 'apy_masked' requires apy_net and {price_metric_key}"
+                    f"Metric '{metric_key}' requires {source_key} and {price_metric_key}"
                 )
             thr = price_thr_bps / 10000.0
             metric[tuple(idx)] = apy_net if rel <= thr else np.nan
@@ -215,11 +220,12 @@ def _build_metric_grid_npz(
         raise KeyError(f"Metric '{price_metric_key}' not found in NPZ run") from exc
     pdiff_bps = pdiff_raw * 10000.0
 
-    if metric_key == "apy_masked":
+    if metric_key in MASKED_METRIC_SOURCES:
+        source_key = MASKED_METRIC_SOURCES[metric_key]
         try:
-            metric = load("apy_net")
+            metric = load(source_key)
         except KeyError as exc:
-            raise KeyError("Metric 'apy_masked' requires apy_net") from exc
+            raise KeyError(f"Metric '{metric_key}' requires {source_key}") from exc
         metric = np.where(pdiff_raw <= price_thr_bps / 10000.0, metric, np.nan)
     else:
         try:

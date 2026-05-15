@@ -41,7 +41,7 @@ uv --project python run python python/arb_sim/generate_pools_nd.py
 uv --project python run python python/arb_sim/arb_sim.py --real double --dustswapfreq 600 -n 14
 
 # 3. Plot results
-uv --project python run python python/arb_sim/plot_heatmap.py --metrics apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5
+uv --project python run python python/arb_sim/plot_heatmap_nd_opt.py --metrics apy,apy_net,vp,tvl_growth,total_notional_coin0,n_rebalances,trades,donations,tw_avg_pool_fee,avg_rel_price_diff,avg_imbalance,tw_real_slippage_5pct --ncol 5 --arb python/arb_sim/run_data/arb_run_1
 ```
 
 **With CoWSwap replay (add `--cow`):**
