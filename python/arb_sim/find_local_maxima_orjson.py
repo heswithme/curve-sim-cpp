@@ -40,6 +40,7 @@ MASKED_METRIC_SOURCES = {
     "apy_masked": "apy_net",
     "apy_gm_masked": "apy_net_gm",
 }
+SKEW_METRIC = "max_7d_skew"
 
 
 def _latest_arb_run() -> Path:
@@ -162,6 +163,7 @@ def _build_metric_grid(
     metric_key: str,
     price_thr_bps: float,
     price_metric_key: str,
+    skew_thr_pct: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
     arrays = [np.asarray(v, dtype=float) for v in grid_values]
     shape = [len(a) for a in arrays]
@@ -188,9 +190,13 @@ def _build_metric_grid(
             if apy_net is None or rel is None:
                 raise KeyError(
                     f"Metric '{metric_key}' requires {source_key} and {price_metric_key}"
-                )
+            )
             thr = price_thr_bps / 10000.0
-            metric[tuple(idx)] = apy_net if rel <= thr else np.nan
+            keep = rel <= thr
+            if keep and skew_thr_pct > 0.0:
+                skew = env.get(SKEW_METRIC)
+                keep = skew is not None and skew <= skew_thr_pct / 100.0
+            metric[tuple(idx)] = apy_net if keep else np.nan
         else:
             if metric_key not in env:
                 raise KeyError(f"Metric '{metric_key}' not found in run data")
@@ -199,12 +205,40 @@ def _build_metric_grid(
     return metric, pdiff_bps
 
 
+def _build_aux_grid(
+    runs: Iterable[Dict[str, Any]],
+    names: List[str],
+    x_keys: List[str],
+    grid_values: List[List[float]],
+    metric_key: str,
+) -> np.ndarray:
+    arrays = [np.asarray(v, dtype=float) for v in grid_values]
+    shape = [len(a) for a in arrays]
+    metric = np.full(shape, np.nan, dtype=float)
+
+    for run in runs:
+        if run.get("success") is False:
+            continue
+        if not isinstance(run.get("result"), dict):
+            continue
+        coord_vals = _run_coord_values(run, x_keys, names)
+        idx = []
+        for i, arr in enumerate(arrays):
+            idx.append(_index_for_value(arr, coord_vals[i]))
+        env = _build_env(run)
+        val = env.get(metric_key)
+        if val is not None:
+            metric[tuple(idx)] = val
+    return metric
+
+
 def _build_metric_grid_npz(
     npz_run: NpzRun,
     metadata: Dict[str, Any],
     metric_key: str,
     price_thr_bps: float,
     price_metric_key: str,
+    skew_thr_pct: float,
 ) -> Tuple[List[str], List[List[float]], List[str], np.ndarray, np.ndarray]:
     names, grid_values, x_keys = ordered_grid(metadata)
     if not names:
@@ -227,6 +261,12 @@ def _build_metric_grid_npz(
         except KeyError as exc:
             raise KeyError(f"Metric '{metric_key}' requires {source_key}") from exc
         metric = np.where(pdiff_raw <= price_thr_bps / 10000.0, metric, np.nan)
+        if skew_thr_pct > 0.0:
+            try:
+                skew = load(SKEW_METRIC)
+            except KeyError as exc:
+                raise KeyError(f"Metric '{metric_key}' requires {SKEW_METRIC}") from exc
+            metric = np.where(skew <= skew_thr_pct / 100.0, metric, np.nan)
     else:
         try:
             metric = load(metric_key)
@@ -302,6 +342,15 @@ def _pdiff_text(pdiff_grid: np.ndarray, coord: Tuple[int, ...], label: str) -> s
     return f" {label}={pdiff:.2f}"
 
 
+def _skew_text(skew_grid: np.ndarray | None, coord: Tuple[int, ...]) -> str:
+    if skew_grid is None:
+        return ""
+    skew = float(skew_grid[coord])
+    if not np.isfinite(skew):
+        return ""
+    return f" max_7d_skew={skew * 100.0:.2f}%"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON or NPZ directory")
@@ -311,6 +360,18 @@ def main() -> None:
         type=float,
         default=100.0,
         help="Max price-diff metric in bps for apy_masked",
+    )
+    parser.add_argument(
+        "--pdif7d",
+        type=float,
+        default=None,
+        help="Alias for --price-metric max_7d_rel_price_diff with threshold in bps.",
+    )
+    parser.add_argument(
+        "--imb7d",
+        type=float,
+        default=0.0,
+        help="Max max_7d_skew in percent for masked metrics; 0 disables.",
     )
     parser.add_argument(
         "--price-metric",
@@ -360,6 +421,9 @@ def main() -> None:
         help="Prefix local maxima with rank",
     )
     args = parser.parse_args()
+    if args.pdif7d is not None:
+        args.price_metric = "max_7d_rel_price_diff"
+        args.pricethr = args.pdif7d
 
     arb_path = args.arb or _latest_arb_run()
     print(f"Loading {arb_path}")
@@ -373,7 +437,12 @@ def main() -> None:
             args.metric,
             args.pricethr,
             args.price_metric,
+            args.imb7d,
         )
+        try:
+            skew_grid = npz_run.load_array(SKEW_METRIC).astype(float, copy=False).reshape(metric.shape)
+        except KeyError:
+            skew_grid = None
     else:
         runs = data.get("runs", [])
         if not runs:
@@ -392,7 +461,9 @@ def main() -> None:
             args.metric,
             args.pricethr,
             args.price_metric,
+            args.imb7d,
         )
+        skew_grid = _build_aux_grid(runs, names, x_keys, grid_values, SKEW_METRIC)
     pdiff_label = _pdiff_label(args.price_metric)
     finite_metric = np.where(np.isfinite(metric), metric, np.nan)
     if not np.isfinite(finite_metric).any():
@@ -404,7 +475,8 @@ def main() -> None:
         min_val = float(metric[min_idx])
         min_coord = _coord_dict(min_idx, names, grid_values)
         pdiff = _pdiff_text(pdiff_bps, min_idx, pdiff_label)
-        print(f"global_min {args.metric}={min_val:.6f}{pdiff} coords={min_coord}")
+        skew = _skew_text(skew_grid, min_idx)
+        print(f"global_min {args.metric}={min_val:.6f}{pdiff}{skew} coords={min_coord}")
 
         if args.local:
             coords = _local_maxima(search_metric, args.connectivity)
@@ -415,19 +487,21 @@ def main() -> None:
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
                 pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
+                skew = _skew_text(skew_grid, coord)
                 if args.enumerate:
                     print(
-                        f"local_min #{rank} {args.metric}={val:.6f}{pdiff} coords={coord_dict}"
+                        f"local_min #{rank} {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_min {args.metric}={val:.6f}{pdiff} coords={coord_dict}")
+                    print(f"local_min {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}")
     else:
         metric = np.where(np.isfinite(metric), metric, -np.inf)
         max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
         max_val = float(metric[max_idx])
         max_coord = _coord_dict(max_idx, names, grid_values)
         pdiff = _pdiff_text(pdiff_bps, max_idx, pdiff_label)
-        print(f"global_max {args.metric}={max_val:.6f}{pdiff} coords={max_coord}")
+        skew = _skew_text(skew_grid, max_idx)
+        print(f"global_max {args.metric}={max_val:.6f}{pdiff}{skew} coords={max_coord}")
 
         if args.local:
             coords = _local_maxima(metric, args.connectivity)
@@ -438,12 +512,13 @@ def main() -> None:
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
                 pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
+                skew = _skew_text(skew_grid, coord)
                 if args.enumerate:
                     print(
-                        f"local_max #{rank} {args.metric}={val:.6f}{pdiff} coords={coord_dict}"
+                        f"local_max #{rank} {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_max {args.metric}={val:.6f}{pdiff} coords={coord_dict}")
+                    print(f"local_max {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}")
 
 
 if __name__ == "__main__":

@@ -46,28 +46,26 @@ EXPAND_POOLS = False
 
 INIT_LIQ = 1_000_000  # coin0 notional
 ARB_FEE_BPS = 2
-FEE_EQUALIZE = False
+FEE_EQUALIZE = True
 
 BASE_DONATION_APY = 0.0
 BASE_DONATION_FREQUENCY = 3600
 BASE_DONATION_DURATION = 7 * 86400
 BASE_DONATION_COINS_RATIO = 0.5
 
-N_GRID = 12
+N_GRID = 64
 GRID: dict[str, Any] = {
-    "A": [int(a * A_MULTIPLIER) for a in np.linspace(1, 20, N_GRID)],
-    "mid_fee": [
-        int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(10, 100, N_GRID)
-    ],
-    "out_fee": [
-        int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(101, 200, N_GRID)
-    ],
-    "fee_gamma": [
-        int(round(a * WAD)) for a in np.logspace(np.log10(1e-4), np.log10(1e-1), N_GRID)
-    ],  # more fg
-    "donation_apy": np.linspace(0.0, 0.1, N_GRID),
+    "A": [int(a * A_MULTIPLIER) for a in np.linspace(1, 20, 20)],
+    "mid_fee": [int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(50, 250, 20)],
+    # "out_fee": [
+    #     int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(101, 200, N_GRID)
+    # ],
+    # "fee_gamma": [
+    #     int(round(a * WAD)) for a in np.logspace(np.log10(1e-4), np.log10(1e-1), 4)
+    # ],  # more fg
+    "donation_apy": np.linspace(0.0, 0.05, N_GRID),
     "reserved_profit_fraction": [
-        int(round(a * FEE_SCALE)) for a in np.linspace(0.2, 0.5, N_GRID)
+        int(round(a * FEE_SCALE)) for a in np.linspace(0.1, 0.5, N_GRID)
     ],
     # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
