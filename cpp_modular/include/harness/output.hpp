@@ -33,6 +33,7 @@ struct ApyMetricValues {
     double apy_net{-1.0};
     double apy_xcp{-1.0};
     double apy_xcp_net{-1.0};
+    double apy_net_gm{-1.0};
 };
 
 // Convert pool result's final state to JSON object
@@ -103,6 +104,7 @@ ApyMetricValues compute_apy_values(const PoolResult<T>& r) {
     const double xcp_end = static_cast<double>((r.xcp_profit + T(1)) / T(2));
     apy.apy_xcp = (xcp_end > 0.0) ? std::pow(xcp_end, exponent) - 1.0 : -1.0;
     apy.apy_xcp_net = net_apy_from_growth(xcp_end);
+    apy.apy_net_gm = r.apy_net_gm;
 
     return apy;
 }
@@ -115,6 +117,7 @@ json::object compute_apy_metrics(const PoolResult<T>& r) {
     apy["apy_net"] = values.apy_net;
     apy["apy_xcp"] = values.apy_xcp;
     apy["apy_xcp_net"] = values.apy_xcp_net;
+    apy["apy_net_gm"] = values.apy_net_gm;
     return apy;
 }
 
@@ -186,6 +189,7 @@ inline void append_price_follow_metrics(
     summary["min_price_scale"] = tw_summary.min_price_scale;
     summary["max_price_scale"] = tw_summary.max_price_scale;
     summary["avg_imbalance"] = tw_summary.avg_imbalance;
+    summary["max_7d_skew"] = tw_summary.max_7d_skew;
 }
 
 template <typename T>
@@ -432,6 +436,7 @@ bool write_results_npz_dir(
         {"min_price_scale", {}},
         {"max_price_scale", {}},
         {"avg_imbalance", {}},
+        {"max_7d_skew", {}},
         {"duration_s", {}},
         {"tvl_coin0_start", {}},
         {"tvl_coin0_end", {}},
@@ -459,6 +464,7 @@ bool write_results_npz_dir(
         {"totalSupply", {}},
         {"donation_shares", {}},
         {"donation_unlocked", {}},
+        {"apy_net_gm", {}},
     };
     std::vector<U64Column> ucols = {
         {"pool_index", {}},
@@ -531,33 +537,35 @@ bool write_results_npz_dir(
         d(23, tw.min_price_scale);
         d(24, tw.max_price_scale);
         d(25, tw.avg_imbalance);
-        d(26, r.duration_s());
-        d(27, static_cast<double>(r.tvl_start));
-        d(28, static_cast<double>(tvl_end));
-        d(29, static_cast<double>(tvl_end / r.tvl_start));
-        d(30, apy.apy);
-        d(31, apy.apy_net);
-        d(32, apy.apy_xcp);
-        d(33, apy.apy_xcp_net);
-        d(34, static_cast<double>(r.virtual_price));
-        d(35, static_cast<double>(r.vp_boosted));
-        d(36, static_cast<double>(r.virtual_price - T(1)));
-        d(37, to_wei_double(r.balances[0]));
-        d(38, to_wei_double(r.balances[1]));
-        d(39, to_wei_double(r.admin_balances[0]));
-        d(40, to_wei_double(r.admin_balances[1]));
-        d(41, to_wei_double(r.balances[0]));
-        d(42, to_wei_double(r.balances[1] * r.price_scale));
-        d(43, to_wei_double(r.D));
-        d(44, to_wei_double(r.virtual_price));
-        d(45, to_wei_double(r.xcp_profit));
-        d(46, to_wei_double(r.lp_xcp_profit));
-        d(47, to_wei_double(r.price_scale));
-        d(48, to_wei_double(r.price_oracle));
-        d(49, to_wei_double(r.last_prices));
-        d(50, to_wei_double(r.totalSupply));
-        d(51, to_wei_double(r.donation_shares));
-        d(52, to_wei_double(r.donation_unlocked));
+        d(26, tw.max_7d_skew);
+        d(27, r.duration_s());
+        d(28, static_cast<double>(r.tvl_start));
+        d(29, static_cast<double>(tvl_end));
+        d(30, static_cast<double>(tvl_end / r.tvl_start));
+        d(31, apy.apy);
+        d(32, apy.apy_net);
+        d(33, apy.apy_xcp);
+        d(34, apy.apy_xcp_net);
+        d(35, static_cast<double>(r.virtual_price));
+        d(36, static_cast<double>(r.vp_boosted));
+        d(37, static_cast<double>(r.virtual_price - T(1)));
+        d(38, to_wei_double(r.balances[0]));
+        d(39, to_wei_double(r.balances[1]));
+        d(40, to_wei_double(r.admin_balances[0]));
+        d(41, to_wei_double(r.admin_balances[1]));
+        d(42, to_wei_double(r.balances[0]));
+        d(43, to_wei_double(r.balances[1] * r.price_scale));
+        d(44, to_wei_double(r.D));
+        d(45, to_wei_double(r.virtual_price));
+        d(46, to_wei_double(r.xcp_profit));
+        d(47, to_wei_double(r.lp_xcp_profit));
+        d(48, to_wei_double(r.price_scale));
+        d(49, to_wei_double(r.price_oracle));
+        d(50, to_wei_double(r.last_prices));
+        d(51, to_wei_double(r.totalSupply));
+        d(52, to_wei_double(r.donation_shares));
+        d(53, to_wei_double(r.donation_unlocked));
+        d(54, apy.apy_net_gm);
 
         u(0, static_cast<uint64_t>(r.pool_index));
         u(1, static_cast<uint64_t>(n_events));

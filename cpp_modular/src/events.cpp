@@ -98,8 +98,11 @@ std::vector<Event> gen_events(const std::vector<Candle>& cs) {
         const double path2 = std::abs(c.open - c.high) + std::abs(c.low  - c.close);
         const bool first_low = path1 < path2;
 
-        evs.push_back(Event{c.ts,      first_low ? c.low  : c.high, c.volume / 2.0, static_cast<uint32_t>(idx)});
-        evs.push_back(Event{c.ts + 10, first_low ? c.high : c.low,  c.volume / 2.0, static_cast<uint32_t>(idx)});
+        const uint64_t ts0 = c.ts >= 5 ? c.ts - 5 : 0;
+        const uint64_t ts1 = c.ts + 5;
+
+        evs.push_back(Event{ts0, first_low ? c.low  : c.high, c.volume / 2.0, static_cast<uint32_t>(idx)});
+        evs.push_back(Event{ts1, first_low ? c.high : c.low,  c.volume / 2.0, static_cast<uint32_t>(idx)});
     }
 
     std::sort(evs.begin(), evs.end(), [](const Event& a, const Event& b) {

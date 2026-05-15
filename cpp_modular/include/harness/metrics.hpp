@@ -2,8 +2,10 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <vector>
 
 #include "harness/actions.hpp"
@@ -75,11 +77,79 @@ struct TimeWeightedSummary {
     double max_rel_price_diff{-1.0};
     double max_7d_rel_price_diff{-1.0};
     double avg_imbalance{-1.0};
+    double max_7d_skew{-1.0};
     double tw_avg_pool_fee{-1.0};
     double min_price_scale{-1.0};
     double max_price_scale{-1.0};
     double min_pool_fee{-1.0};
     double max_pool_fee{-1.0};
+};
+
+// Geometric mean of annualized rolling 60d net APY samples.
+// Negative or zero-return windows are floored, matching the legacy APR_geo_mean
+// behavior where severe drawdowns collapse the geometric mean toward zero.
+struct RollingGeoApy60d {
+    static constexpr uint64_t WINDOW_S = 60ULL * 24ULL * 60ULL * 60ULL;
+    static constexpr uint64_t SAMPLE_S = 60ULL * 60ULL;
+    static constexpr long double SEC_PER_YEAR = 365.0L * 24.0L * 60.0L * 60.0L;
+    static constexpr long double FLOOR_APY = 1e-20L;
+
+    struct Sample {
+        uint64_t ts{0};
+        long double net_vp{0.0L};
+    };
+
+    std::deque<Sample> samples;
+    uint64_t last_sample_ts{0};
+    bool have_sample{false};
+    long double sum_log_apy{0.0L};
+    size_t n_windows{0};
+
+    void sample(uint64_t ts, long double net_vp) {
+        if (!std::isfinite(net_vp) || !(net_vp > 0.0L)) {
+            return;
+        }
+        if (have_sample && ts < last_sample_ts + SAMPLE_S) {
+            return;
+        }
+
+        samples.push_back(Sample{ts, net_vp});
+        last_sample_ts = ts;
+        have_sample = true;
+
+        const uint64_t cutoff = ts > WINDOW_S ? ts - WINDOW_S : 0;
+        while (samples.size() > 1 && samples[1].ts <= cutoff) {
+            samples.pop_front();
+        }
+
+        if (samples.empty() || ts < samples.front().ts + WINDOW_S) {
+            return;
+        }
+
+        const long double dt = static_cast<long double>(ts - samples.front().ts);
+        if (!(dt > 0.0L) || !(samples.front().net_vp > 0.0L)) {
+            return;
+        }
+
+        const long double window_growth = net_vp / samples.front().net_vp;
+        long double annualized_apy = FLOOR_APY;
+        if (std::isfinite(window_growth) && window_growth > 0.0L) {
+            annualized_apy = std::pow(window_growth, SEC_PER_YEAR / dt) - 1.0L;
+            if (!std::isfinite(annualized_apy) || annualized_apy < FLOOR_APY) {
+                annualized_apy = FLOOR_APY;
+            }
+        }
+
+        sum_log_apy += std::log(annualized_apy);
+        n_windows += 1;
+    }
+
+    double value() const {
+        if (n_windows == 0) {
+            return -1.0;
+        }
+        return static_cast<double>(std::exp(sum_log_apy / static_cast<long double>(n_windows)));
+    }
 };
 
 // Time-weighted metrics for tracking pool state over time
@@ -110,11 +180,21 @@ struct TimeWeightedMetrics {
     bool have_7d_rel_abs{false};
 
     // Time-weighted imbalance: 4*x0'*x1'/(x0'+x1')^2, with x1' = balance1 * p_cex
+    // Skew is max(x0', x1')/(x0'+x1'), using the same valuation inputs.
     long double sum_imbalance_dt{0.0L};
     long double imbalance_dt{0.0L};
     T last_imbalance{0};
+    T last_skew{0};
+    uint64_t first_ts_imbalance{0};
     uint64_t last_ts_imbalance{0};
     bool have_imbalance{false};
+    std::array<long double, PRICE_DIFF_BUCKETS> skew_bucket_sum_dt{};
+    std::array<long double, PRICE_DIFF_BUCKETS> skew_bucket_dt{};
+    std::array<uint64_t, PRICE_DIFF_BUCKETS> skew_bucket_id{};
+    std::array<bool, PRICE_DIFF_BUCKETS> skew_bucket_live{};
+    uint64_t last_7d_skew_eval_bucket{0};
+    long double max_7d_skew{0.0L};
+    bool have_7d_skew{false};
     
     // Time-weighted pool fee (fraction) across time
     long double tw_fee_sum_dt{0.0L};
@@ -137,6 +217,9 @@ struct TimeWeightedMetrics {
             : -1.0;
         summary.avg_imbalance = imbalance_dt > 0.0L
             ? static_cast<double>(sum_imbalance_dt / imbalance_dt)
+            : -1.0;
+        summary.max_7d_skew = have_7d_skew
+            ? static_cast<double>(max_7d_skew)
             : -1.0;
         summary.tw_avg_pool_fee = tw_fee_dt > 0.0L
             ? static_cast<double>(tw_fee_sum_dt / tw_fee_dt)
@@ -241,21 +324,86 @@ struct TimeWeightedMetrics {
     }
 
     void sample_imbalance(uint64_t ts, T x0p, T x1p) {
-        T cur = T(0);
+        if (!have_imbalance) {
+            first_ts_imbalance = ts;
+        }
+
+        T cur_imbalance = T(0);
+        T cur_skew = T(0);
         const T denom = x0p + x1p;
         if (denom > T(0)) {
-            cur = (T(4) * x0p * x1p) / (denom * denom);
+            cur_imbalance = (T(4) * x0p * x1p) / (denom * denom);
+            const T dominant = x0p > x1p ? x0p : x1p;
+            cur_skew = dominant / denom;
         }
 
         if (have_imbalance && ts > last_ts_imbalance) {
             const long double dt = static_cast<long double>(ts - last_ts_imbalance);
             sum_imbalance_dt += static_cast<long double>(last_imbalance) * dt;
             imbalance_dt += dt;
+            sample_7d_skew(last_ts_imbalance, ts, static_cast<long double>(last_skew));
         }
 
-        last_imbalance = cur;
+        last_imbalance = cur_imbalance;
+        last_skew = cur_skew;
         last_ts_imbalance = ts;
         have_imbalance = true;
+    }
+
+    void sample_7d_skew(uint64_t start_ts, uint64_t end_ts, long double skew) {
+        while (start_ts < end_ts) {
+            const uint64_t bucket_id = start_ts / PRICE_DIFF_BUCKET_S;
+            const uint64_t bucket_end = (bucket_id + 1) * PRICE_DIFF_BUCKET_S;
+            const uint64_t segment_end = end_ts < bucket_end ? end_ts : bucket_end;
+            const size_t idx = static_cast<size_t>(bucket_id % PRICE_DIFF_BUCKETS);
+
+            if (!skew_bucket_live[idx] || skew_bucket_id[idx] != bucket_id) {
+                skew_bucket_live[idx] = true;
+                skew_bucket_id[idx] = bucket_id;
+                skew_bucket_sum_dt[idx] = 0.0L;
+                skew_bucket_dt[idx] = 0.0L;
+            }
+
+            const long double dt = static_cast<long double>(segment_end - start_ts);
+            skew_bucket_sum_dt[idx] += skew * dt;
+            skew_bucket_dt[idx] += dt;
+            start_ts = segment_end;
+        }
+
+        const uint64_t eval_bucket = end_ts / PRICE_DIFF_BUCKET_S;
+        if (have_7d_skew && eval_bucket == last_7d_skew_eval_bucket) {
+            return;
+        }
+        last_7d_skew_eval_bucket = eval_bucket;
+        if (end_ts < first_ts_imbalance + PRICE_DIFF_WINDOW_S) {
+            return;
+        }
+
+        const uint64_t cutoff = end_ts > PRICE_DIFF_WINDOW_S
+            ? end_ts - PRICE_DIFF_WINDOW_S
+            : 0;
+        long double window_sum_dt = 0.0L;
+        long double window_dt = 0.0L;
+        for (size_t i = 0; i < PRICE_DIFF_BUCKETS; ++i) {
+            if (!skew_bucket_live[i]) {
+                continue;
+            }
+            const uint64_t bucket_start = skew_bucket_id[i] * PRICE_DIFF_BUCKET_S;
+            const uint64_t bucket_end = bucket_start + PRICE_DIFF_BUCKET_S;
+            if (bucket_end <= cutoff || bucket_start >= end_ts) {
+                continue;
+            }
+            window_sum_dt += skew_bucket_sum_dt[i];
+            window_dt += skew_bucket_dt[i];
+        }
+
+        if (window_dt > 0.0L) {
+            const long double avg = window_sum_dt / window_dt;
+            if (!have_7d_skew || avg > max_7d_skew) {
+                max_7d_skew = avg;
+                have_7d_skew = true;
+            }
+        }
     }
     
     void sample_fee(uint64_t ts, T fee_frac) {
@@ -355,6 +503,9 @@ struct EventLoopResult {
     
     // Donation APY (for net calculations)
     T donation_apy{0};
+
+    // Rolling path-quality APY metric
+    double apy_net_gm{-1.0};
     
     double duration_s() const {
         return (t_end > t_start) ? static_cast<double>(t_end - t_start) : 0.0;

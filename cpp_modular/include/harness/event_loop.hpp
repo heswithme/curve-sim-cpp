@@ -2,6 +2,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -59,6 +60,36 @@ EventLoopResult<T> run_event_loop(
     // Record initial state
     result.tvl_start = pool.balances[0] + pool.balances[1] * pool.cached_price_scale;
     result.donation_apy = dcfg.apy;
+
+    RollingGeoApy60d apy_net_gm;
+    auto donation_growth_since_start = [&](uint64_t ts) -> long double {
+        constexpr long double SEC_PER_YEAR = 365.0L * 24.0L * 60.0L * 60.0L;
+        const long double elapsed_s = ts > result.t_start
+            ? static_cast<long double>(ts - result.t_start)
+            : 0.0L;
+        const long double donation_apy = static_cast<long double>(dcfg.apy);
+        if (!(donation_apy > 0.0L) || !(elapsed_s > 0.0L)) {
+            return 1.0L;
+        }
+        const long double freq_s = static_cast<long double>(dcfg.freq_s);
+        if (freq_s > 0.0L) {
+            const long double period_rate = donation_apy * freq_s / SEC_PER_YEAR;
+            if (period_rate <= -1.0L) {
+                return -1.0L;
+            }
+            return std::pow(1.0L + period_rate, elapsed_s / freq_s);
+        }
+        return std::pow(1.0L + donation_apy, elapsed_s / SEC_PER_YEAR);
+    };
+    auto sample_apy_net_gm = [&](uint64_t ts) {
+        const long double donation_growth = donation_growth_since_start(ts);
+        if (!(donation_growth > 0.0L)) {
+            return;
+        }
+        const long double net_vp = static_cast<long double>(pool.get_virtual_price()) / donation_growth;
+        apy_net_gm.sample(ts, net_vp);
+    };
+    sample_apy_net_gm(result.t_start);
 
     // Probe sizes for slippage: 1%, 5%, 10% of initial TVL (coin0 terms)
     std::array<T, SlippageProbes<T>::N_SIZES> probe_sizes_coin0{};
@@ -290,6 +321,7 @@ EventLoopResult<T> run_event_loop(
         apply_donation(ev.ts);
 
         if (!(cex_price > T(0))) {
+            sample_apy_net_gm(ev.ts);
             continue;
         }
 
@@ -318,11 +350,14 @@ EventLoopResult<T> run_event_loop(
                 m.n_rebalances
             );
         }
+
+        sample_apy_net_gm(ev.ts);
     }
 
     // Move logged data into result
     result.actions = action_logger.take_actions();
     result.detailed_entries = detailed_logger.take_entries();
+    result.apy_net_gm = apy_net_gm.value();
 
     return result;
 }

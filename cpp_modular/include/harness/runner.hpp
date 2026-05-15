@@ -51,6 +51,7 @@ struct PoolResult {
     T tvl_start{0};
     T donation_apy{0};
     T donation_frequency{0};
+    double apy_net_gm{-1.0};
 
     // Final pool state
     std::array<T, 2> balances{T(0), T(0)};
@@ -238,6 +239,7 @@ PoolResult<T> run_single_pool(
         result.tvl_start = loop_result.tvl_start;
         result.donation_apy = loop_result.donation_apy;
         result.donation_frequency = pool_init.donation_frequency;
+        result.apy_net_gm = loop_result.apy_net_gm;
 
         // Copy actions if recorded
         if (cfg.save_actions) {

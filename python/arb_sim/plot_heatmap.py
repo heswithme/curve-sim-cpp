@@ -396,6 +396,8 @@ def main() -> int:
             or "geom_mean" in mlow
             or "rel_price_diff" in mlow
             or "pool_fee" in mlow
+            or "imbalance" in mlow
+            or "skew" in mlow
         )
         return scale_1e18, scale_percent
 

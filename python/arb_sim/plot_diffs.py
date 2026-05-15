@@ -356,7 +356,14 @@ def main() -> int:
 
     # Build first grid to define axes
     def metric_scale_percent(m: str) -> bool:
-        return m.lower() in {"vpminusone", "apy"}
+        mlow = m.lower()
+        return (
+            mlow in {"vpminusone", "apy"}
+            or "apy" in mlow
+            or "rel_price_diff" in mlow
+            or "imbalance" in mlow
+            or "skew" in mlow
+        )
 
     first_m = metrics[0]
     s_perc = metric_scale_percent(first_m)

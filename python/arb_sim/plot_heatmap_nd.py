@@ -219,6 +219,8 @@ def _metric_scale_flags(m: str) -> Tuple[bool, bool]:
         or "rel_price_diff" in mlow
         or "tw_avg_pool_fee" in mlow
         or "pool_fee" in mlow
+        or "imbalance" in mlow
+        or "skew" in mlow
     )
     return scale_1e18, scale_percent
 

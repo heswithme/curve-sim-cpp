@@ -3,6 +3,8 @@ import sys
 from types import SimpleNamespace
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ARB_SIM_ROOT = ROOT / "python" / "arb_sim"
@@ -131,6 +133,54 @@ def test_extract_nd_arrays_reads_cluster_flat_dotted_policy_axis() -> None:
     }
     assert metric_arrays["score"].shape == (2, 2)
     assert metric_arrays["score"][1, 1] == 20020.0
+
+
+def test_apy_masked_uses_optional_7d_skew_filter() -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "A", "values": [1.0, 2.0]},
+                "x2": {"name": "mid_fee", "values": [10.0]},
+            }
+        },
+        "runs": [
+            {
+                "x1_val": 1.0,
+                "x2_val": 10.0,
+                "result": {
+                    "apy_net": 0.05,
+                    "max_7d_rel_price_diff": 0.01,
+                    "max_7d_skew": 0.75,
+                },
+            },
+            {
+                "x1_val": 2.0,
+                "x2_val": 10.0,
+                "result": {
+                    "apy_net": 0.06,
+                    "max_7d_rel_price_diff": 0.01,
+                    "max_7d_skew": 0.85,
+                },
+            },
+        ],
+    }
+
+    _, _, unfiltered, *_ = _extract_nd_arrays(
+        data,
+        ["apy_masked"],
+        max_price_thr_bps=2000.0,
+        skew_thr_pct=0.0,
+    )
+    _, _, filtered, *_ = _extract_nd_arrays(
+        data,
+        ["apy_masked"],
+        max_price_thr_bps=2000.0,
+        skew_thr_pct=80.0,
+    )
+
+    assert unfiltered["apy_masked"][:, 0].tolist() == [5.0, 6.0]
+    assert filtered["apy_masked"][0, 0] == 5.0
+    assert np.isnan(filtered["apy_masked"][1, 0])
 
 
 def test_explorer_reads_inspect_flags_from_cluster_harness_args() -> None:

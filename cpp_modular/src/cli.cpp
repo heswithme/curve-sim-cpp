@@ -132,7 +132,6 @@ CliArgs parse_cli(int argc, char* argv[]) {
         args.error_msg = "--candle-filter must be >= 0";
         return args;
     }
-
     args.valid = true;
     return args;
 }
