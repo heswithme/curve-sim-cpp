@@ -298,6 +298,65 @@ def _local_maxima(metric: np.ndarray, connectivity: str) -> List[Tuple[int, ...]
     return coords
 
 
+def _neighborhood_footprint(ndim: int, connectivity: str, radius: int) -> np.ndarray:
+    if radius < 1:
+        raise ValueError("--neighbor-radius must be >= 1")
+    shape = (2 * radius + 1,) * ndim
+    foot = np.zeros(shape, dtype=bool)
+    for offset in np.ndindex(shape):
+        delta = tuple(i - radius for i in offset)
+        if connectivity == "axis":
+            include = sum(1 for d in delta if d != 0) <= 1
+        else:
+            include = True
+        if include:
+            foot[offset] = True
+    return foot
+
+
+def _neighbor_score_grid(
+    metric: np.ndarray,
+    *,
+    connectivity: str,
+    radius: int,
+    min_neighbors: int,
+    rank_neighbor_avg: bool,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    valid = np.isfinite(metric)
+    foot = _neighborhood_footprint(metric.ndim, connectivity, radius)
+    center = (radius,) * metric.ndim
+    foot_without_center = foot.copy()
+    foot_without_center[center] = False
+
+    neighbor_count = ndi.convolve(
+        valid.astype(np.int16),
+        foot_without_center.astype(np.int16),
+        mode="constant",
+        cval=0,
+    )
+    keep = valid & (neighbor_count >= min_neighbors)
+
+    if not rank_neighbor_avg:
+        return np.where(keep, metric, np.nan), keep, None
+
+    value_sum = ndi.convolve(
+        np.where(valid, metric, 0.0),
+        foot.astype(float),
+        mode="constant",
+        cval=0.0,
+    )
+    value_count = ndi.convolve(
+        valid.astype(float),
+        foot.astype(float),
+        mode="constant",
+        cval=0.0,
+    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        avg = value_sum / value_count
+    avg = np.where(keep & (value_count > 0), avg, np.nan)
+    return avg, keep, avg
+
+
 def _coord_dict(
     coord: Tuple[int, ...],
     names: List[str],
@@ -420,6 +479,23 @@ def main() -> None:
         action="store_true",
         help="Prefix local maxima with rank",
     )
+    parser.add_argument(
+        "--rank-neighbor-avg",
+        action="store_true",
+        help="Rank/search by finite neighborhood average instead of the raw metric.",
+    )
+    parser.add_argument(
+        "--neighbor-radius",
+        type=int,
+        default=1,
+        help="Radius for --rank-neighbor-avg and --min-neighbors.",
+    )
+    parser.add_argument(
+        "--min-neighbors",
+        type=int,
+        default=0,
+        help="Require at least N finite neighboring cells after filters; excludes the center.",
+    )
     args = parser.parse_args()
     if args.pdif7d is not None:
         args.price_metric = "max_7d_rel_price_diff"
@@ -468,19 +544,42 @@ def main() -> None:
     finite_metric = np.where(np.isfinite(metric), metric, np.nan)
     if not np.isfinite(finite_metric).any():
         raise SystemExit("No finite metric values found")
+    if args.neighbor_radius < 1:
+        raise SystemExit("--neighbor-radius must be >= 1")
+    if args.min_neighbors < 0:
+        raise SystemExit("--min-neighbors must be >= 0")
+
+    score, _neighbor_keep, neighbor_avg = _neighbor_score_grid(
+        finite_metric,
+        connectivity=args.connectivity,
+        radius=args.neighbor_radius,
+        min_neighbors=args.min_neighbors,
+        rank_neighbor_avg=args.rank_neighbor_avg,
+    )
+    if not np.isfinite(score).any():
+        raise SystemExit("No finite metric values remain after neighbor filters")
+
+    def score_text(coord: Tuple[int, ...]) -> str:
+        if neighbor_avg is None:
+            return ""
+        val = float(neighbor_avg[coord])
+        if not np.isfinite(val):
+            return ""
+        return f" neighbor_avg={val:.6f}"
 
     if args.min:
-        search_metric = np.where(np.isfinite(metric), -metric, -np.inf)
+        search_metric = np.where(np.isfinite(score), -score, -np.inf)
         min_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
         min_val = float(metric[min_idx])
         min_coord = _coord_dict(min_idx, names, grid_values)
         pdiff = _pdiff_text(pdiff_bps, min_idx, pdiff_label)
         skew = _skew_text(skew_grid, min_idx)
-        print(f"global_min {args.metric}={min_val:.6f}{pdiff}{skew} coords={min_coord}")
+        score_suffix = score_text(min_idx)
+        print(f"global_min {args.metric}={min_val:.6f}{score_suffix}{pdiff}{skew} coords={min_coord}")
 
         if args.local:
             coords = _local_maxima(search_metric, args.connectivity)
-            coords_sorted = sorted(coords, key=lambda c: metric[c])
+            coords_sorted = sorted(coords, key=lambda c: score[c])
             print(f"local_minima_count {len(coords_sorted)}")
             limit = len(coords_sorted) if args.top <= 0 else args.top
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
@@ -488,24 +587,26 @@ def main() -> None:
                 coord_dict = _coord_dict(coord, names, grid_values)
                 pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
                 skew = _skew_text(skew_grid, coord)
+                score_suffix = score_text(coord)
                 if args.enumerate:
                     print(
-                        f"local_min #{rank} {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}"
+                        f"local_min #{rank} {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_min {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}")
+                    print(f"local_min {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}")
     else:
-        metric = np.where(np.isfinite(metric), metric, -np.inf)
-        max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
+        search_metric = np.where(np.isfinite(score), score, -np.inf)
+        max_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
         max_val = float(metric[max_idx])
         max_coord = _coord_dict(max_idx, names, grid_values)
         pdiff = _pdiff_text(pdiff_bps, max_idx, pdiff_label)
         skew = _skew_text(skew_grid, max_idx)
-        print(f"global_max {args.metric}={max_val:.6f}{pdiff}{skew} coords={max_coord}")
+        score_suffix = score_text(max_idx)
+        print(f"global_max {args.metric}={max_val:.6f}{score_suffix}{pdiff}{skew} coords={max_coord}")
 
         if args.local:
-            coords = _local_maxima(metric, args.connectivity)
-            coords_sorted = sorted(coords, key=lambda c: metric[c], reverse=True)
+            coords = _local_maxima(search_metric, args.connectivity)
+            coords_sorted = sorted(coords, key=lambda c: score[c], reverse=True)
             print(f"local_maxima_count {len(coords_sorted)}")
             limit = len(coords_sorted) if args.top <= 0 else args.top
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
@@ -513,12 +614,13 @@ def main() -> None:
                 coord_dict = _coord_dict(coord, names, grid_values)
                 pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
                 skew = _skew_text(skew_grid, coord)
+                score_suffix = score_text(coord)
                 if args.enumerate:
                     print(
-                        f"local_max #{rank} {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}"
+                        f"local_max #{rank} {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_max {args.metric}={val:.6f}{pdiff}{skew} coords={coord_dict}")
+                    print(f"local_max {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}")
 
 
 if __name__ == "__main__":

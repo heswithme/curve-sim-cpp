@@ -119,7 +119,7 @@ INSPECT_YB_FEE = 0.01
 def _real_arg(value: Any) -> str:
     raw = str(value or INSPECT_REAL).replace("_", " ").strip().lower()
     compact = raw.replace(" ", "")
-    if compact in {"longdouble", "long"}:
+    if compact in {"longdouble", "long", "ld"} or "harnessld" in compact:
         return "longdouble"
     if compact in {"float", "f"}:
         return "float"
@@ -769,7 +769,10 @@ class NDHeatmapExplorerOpt:
             self.config_real = _real_arg(meta.get("real"))
             if isinstance(harness_args, dict):
                 self.config_real = _real_arg(
-                    meta.get("real") or harness_args.get("real") or self.config_real
+                    meta.get("real")
+                    or harness_args.get("real")
+                    or harness_args.get("harness_binary")
+                    or self.config_real
                 )
                 if harness_args.get("dustswapfreq") is not None:
                     self.config_dustswapfreq = int(harness_args["dustswapfreq"])
@@ -1951,7 +1954,7 @@ class NDHeatmapExplorerOpt:
                 "run",
                 "arb_sim/arb_sim.py",
                 "--real",
-                INSPECT_REAL,
+                self.config_real,
                 "--dustswapfreq",
                 str(self.config_dustswapfreq),
                 "-n",

@@ -40,19 +40,52 @@ def run_ssh(blade: str, command: str, timeout: int = 60) -> subprocess.Completed
 
 
 def rsync_to_cluster(
-    local_path: Path, remote_path: str, blade: str, timeout: int = 600
+    local_path: Path,
+    remote_path: str,
+    blade: str,
+    timeout: int = 600,
+    quiet: bool = False,
 ) -> None:
     """Copy file to shared NFS via rsync with compression."""
     ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
     cmd = [
         "rsync",
-        "-avz",  # archive, verbose, compress
-        "--progress",
+        "-az" if quiet else "-avz",  # archive, compress; verbose for large files
         "-e",
         ssh_opts,
         str(local_path),
         f"{SSH_USER}@{blade}:{remote_path}",
     ]
+    if not quiet:
+        cmd.insert(2, "--progress")
+    subprocess.run(cmd, check=True, timeout=timeout)
+
+
+def rsync_many_to_cluster(
+    local_paths: List[Path],
+    remote_dir: str,
+    blade: str,
+    timeout: int = 600,
+    quiet: bool = False,
+) -> None:
+    """Copy multiple files to a shared NFS directory via one rsync process."""
+    if not local_paths:
+        return
+    ssh_opts = f"ssh -i {SSH_KEY} " + " ".join(SSH_OPTIONS)
+    cmd = [
+        "rsync",
+        "-az" if quiet else "-avz",
+    ]
+    if not quiet:
+        cmd.append("--progress")
+    cmd.extend(
+        [
+            "-e",
+            ssh_opts,
+            *[str(path) for path in local_paths],
+            f"{SSH_USER}@{blade}:{remote_dir.rstrip('/')}/",
+        ]
+    )
     subprocess.run(cmd, check=True, timeout=timeout)
 
 
@@ -167,6 +200,7 @@ def distribute(
     output_prefix: str = "cluster_sweep",
     assignment: str = "block-cyclic",
     chunk_size: int = 2048,
+    verbose_assignment: bool = False,
 ) -> dict:
     """
     Upload job data to shared NFS.
@@ -250,11 +284,13 @@ def distribute(
     else:
         ranges_by_blade = compute_block_cyclic_ranges(n_pools, len(blades), chunk_size)
     blade_assignments = {}
+    range_files: List[Path] = []
 
     for blade_name, blade_ranges in zip(blades, ranges_by_blade):
         n_blade_pools = ranges_pool_count(blade_ranges)
         if n_blade_pools == 0:
-            print(f"  {blade_name}: 0 pools (skipped)")
+            if verbose_assignment:
+                print(f"  {blade_name}: 0 pools (skipped)")
             continue
 
         pool_start = min(start for start, _end in blade_ranges)
@@ -267,20 +303,46 @@ def distribute(
         }
 
         if assignment == "block-cyclic":
-            range_file = local_job_dir / f"{blade_name}_ranges.txt"
-            write_range_file(range_file, blade_ranges)
             remote_range_file = f"{REMOTE_JOBS}/{job_id}_{blade_name}_ranges.txt"
-            rsync_to_cluster(range_file, remote_range_file, blade, timeout=60)
+            range_file = local_job_dir / f"{job_id}_{blade_name}_ranges.txt"
+            write_range_file(range_file, blade_ranges)
+            range_files.append(range_file)
             blade_assignments[blade_name]["pool_ranges_file"] = str(range_file)
             blade_assignments[blade_name]["pool_ranges_remote"] = remote_range_file
+            if verbose_assignment:
+                print(
+                    f"  {blade_name}: {len(blade_ranges)} chunks, "
+                    f"{n_blade_pools} pools (span {pool_start}-{pool_end})"
+                )
+        else:
+            if verbose_assignment:
+                print(
+                    f"  {blade_name}: pools {pool_start}-{pool_end} "
+                    f"({n_blade_pools} pools)"
+                )
+
+    if assignment == "block-cyclic" and range_files:
+        rsync_many_to_cluster(
+            range_files, str(REMOTE_JOBS), blade, timeout=60, quiet=True
+        )
+        print(f"Uploaded {len(range_files)} range files.")
+
+    if blade_assignments:
+        pool_counts = [int(info["n_pools"]) for info in blade_assignments.values()]
+        total_chunks = sum(
+            len(info.get("ranges", [])) for info in blade_assignments.values()
+        )
+        if assignment == "block-cyclic":
             print(
-                f"  {blade_name}: {len(blade_ranges)} chunks, "
-                f"{n_blade_pools} pools (span {pool_start}-{pool_end})"
+                "Assignment: "
+                f"{len(blade_assignments)} blades, {total_chunks} chunks, "
+                f"per blade {min(pool_counts)}-{max(pool_counts)} pools"
             )
         else:
             print(
-                f"  {blade_name}: pools {pool_start}-{pool_end} "
-                f"({n_blade_pools} pools)"
+                "Assignment: "
+                f"{len(blade_assignments)} blades, "
+                f"per blade {min(pool_counts)}-{max(pool_counts)} pools"
             )
 
     # Build manifest
@@ -347,6 +409,11 @@ def main():
         default="block-cyclic",
     )
     parser.add_argument("--chunk-size", type=int, default=2048)
+    parser.add_argument(
+        "--verbose-assignment",
+        action="store_true",
+        help="Print per-blade pool assignment details",
+    )
     parser.add_argument("--job-id", type=str)
     args = parser.parse_args()
 
@@ -363,6 +430,7 @@ def main():
         output_prefix=args.output_prefix,
         assignment=args.assignment,
         chunk_size=args.chunk_size,
+        verbose_assignment=args.verbose_assignment,
     )
     print(f"\nNext: python run.py --manifest {manifest['local_job_dir']}/manifest.json")
 

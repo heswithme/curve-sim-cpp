@@ -119,6 +119,7 @@ def sweep(
     stream_blade: Optional[str] = None,
     assignment: str = "block-cyclic",
     chunk_size: int = 2048,
+    verbose_assignment: bool = False,
 ) -> Optional[Path]:
     """
     Run complete sweep pipeline.
@@ -173,6 +174,7 @@ def sweep(
         output_prefix=output_prefix,
         assignment=assignment,
         chunk_size=chunk_size,
+        verbose_assignment=verbose_assignment,
     )
 
     if not manifest.get("blades"):
@@ -287,6 +289,11 @@ def main():
         default="block-cyclic",
     )
     parser.add_argument("--chunk-size", type=int, default=2048)
+    parser.add_argument(
+        "--verbose-assignment",
+        action="store_true",
+        help="Print per-blade pool assignment details during distribution",
+    )
 
     # Workflow control
     parser.add_argument("--skip-build", action="store_true")
@@ -338,6 +345,7 @@ def main():
         stream_blade=args.stream_blade,
         assignment=args.assignment,
         chunk_size=args.chunk_size,
+        verbose_assignment=args.verbose_assignment,
     )
 
     sys.exit(0 if result else 1)

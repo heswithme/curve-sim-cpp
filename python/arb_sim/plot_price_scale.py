@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plot price_scale vs candle midpoint (open+close)/2 from detailed-output.json
+Plot price_scale vs CEX price from detailed-output.json
 """
 
 import argparse
@@ -21,7 +21,7 @@ import numpy as np
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Plot price_scale vs CEX midpoint")
+    parser = argparse.ArgumentParser(description="Plot price_scale vs CEX price")
     parser.add_argument("filepath", type=Path, help="Path to detailed-output.json")
     parser.add_argument("--no-save", action="store_true", help="Don't save PNG file")
     parser.add_argument("--out", type=Path, default=None, help="Output PNG path")
@@ -62,19 +62,19 @@ def main():
     # Top plot: prices
     ax1.plot(
         dates,
-        midpoints,
-        label="CEX midpoint (open+close)/2",
+        p_cex,
+        label="CEX price",
         alpha=0.7,
         linewidth=1,
     )
     ax1.plot(dates, price_scale, label="price_scale", alpha=0.7, linewidth=1)
     ax1.set_ylabel("Price")
     ax1.legend(loc="upper left")
-    ax1.set_title(f"Price Scale vs CEX Midpoint\n{filepath.name}")
+    ax1.set_title(f"Price Scale vs CEX Price\n{filepath.name}")
     ax1.grid(True, alpha=0.3)
 
     # Bottom plot: relative difference (left axis) and pool balance (right axis)
-    rel_diff = (price_scale / midpoints - 1) * 100
+    rel_diff = (price_scale / p_cex - 1) * 100
     ax2.plot(
         dates, rel_diff, linewidth=0.5, color="red", alpha=0.7, label="Price deviation"
     )
