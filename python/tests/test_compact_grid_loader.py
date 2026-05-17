@@ -90,6 +90,9 @@ def _expanded_config(axes: dict[str, list[Any]], *, fee_equalize: bool = False) 
                     _set_grid_value(pool, name, value)
             if fee_equalize and any(name in {"mid_fee", "out_fee"} for name, _ in axis_items):
                 pool["out_fee"] = pool["mid_fee"]
+            elif any(name in {"mid_fee", "out_fee"} for name, _ in axis_items):
+                if int(pool["out_fee"]) < int(pool["mid_fee"]):
+                    pool["out_fee"] = pool["mid_fee"]
             pools.append(
                 {
                     "tag": "__".join(

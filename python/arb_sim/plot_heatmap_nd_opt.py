@@ -1846,6 +1846,9 @@ class NDHeatmapExplorerOpt:
             touches_fee = touches_fee or name in {"mid_fee", "out_fee"}
         if self.fee_equalize and touches_fee and "mid_fee" in pool:
             pool["out_fee"] = pool["mid_fee"]
+        elif touches_fee and "mid_fee" in pool and "out_fee" in pool:
+            if float(pool["out_fee"]) < float(pool["mid_fee"]):
+                pool["out_fee"] = pool["mid_fee"]
         return {
             "tag": "inspect",
             "pool": _stringify_pool(pool),

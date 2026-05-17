@@ -261,19 +261,13 @@ def distribute(
         rsync_to_cluster(candles_file, remote_candles, blade)
         print(f"  Done.")
 
-    # Upload single pools file
+    # Upload single pools file. Pool configs are small, and same-size compact
+    # grids can encode different axes; never trust size-only freshness here.
     remote_pools = f"{REMOTE_JOBS}/pools.json"
     local_pools_size = pools_file.stat().st_size
-    remote_pools_size = get_remote_file_size(blade, remote_pools)
-
-    if remote_pools_size == local_pools_size:
-        print(
-            f"Pools already uploaded: {pools_file.name} ({fmt_size(local_pools_size)})"
-        )
-    else:
-        print(f"Uploading pools: {pools_file.name} ({fmt_size(local_pools_size)})...")
-        rsync_to_cluster(pools_file, remote_pools, blade)
-        print(f"  Done.")
+    print(f"Uploading pools: {pools_file.name} ({fmt_size(local_pools_size)})...")
+    rsync_to_cluster(pools_file, remote_pools, blade)
+    print(f"  Done.")
 
     # Compute pool ranges per blade
     if assignment == "contiguous":

@@ -325,6 +325,7 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
     )
     monkeypatch.setattr(cluster_distribute, "get_remote_file_size", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(cluster_distribute, "rsync_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cluster_distribute, "rsync_many_to_cluster", lambda *_args, **_kwargs: None)
 
     manifest = cluster_distribute.distribute(
         pools_file=pools,
@@ -347,6 +348,49 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
     assert manifest["chunk_size"] == 2048
     assert manifest["blades"]["blade-test"]["ranges"] == [[0, 1]]
     assert "pool_ranges_remote" in manifest["blades"]["blade-test"]
+
+
+def test_distribute_always_uploads_pools_even_when_remote_size_matches(
+    monkeypatch, tmp_path: Path
+) -> None:
+    candles = tmp_path / "candles.json"
+    candles.write_text("[]")
+    pools = tmp_path / "pools.json"
+    pools.write_text(
+        json.dumps(
+            {
+                "meta": {"datafile": str(candles), "start_time": "1709638320"},
+                "pools": [{"pool": {}, "costs": {}}],
+            }
+        )
+    )
+    uploads: list[str] = []
+
+    monkeypatch.setattr(cluster_distribute, "__file__", str(tmp_path / "distribute.py"))
+    monkeypatch.setattr(
+        cluster_distribute,
+        "run_ssh",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["ssh"], 0, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(
+        cluster_distribute,
+        "get_remote_file_size",
+        lambda *_args, **_kwargs: pools.stat().st_size,
+    )
+    monkeypatch.setattr(
+        cluster_distribute,
+        "rsync_to_cluster",
+        lambda local, *_args, **_kwargs: uploads.append(Path(local).name),
+    )
+    monkeypatch.setattr(cluster_distribute, "rsync_many_to_cluster", lambda *_args, **_kwargs: None)
+
+    cluster_distribute.distribute(
+        pools_file=pools,
+        blades=["blade-test"],
+        job_id="unit",
+    )
+
+    assert "pools.json" in uploads
 
 
 def test_load_pools_counts_compact_grid(tmp_path: Path) -> None:

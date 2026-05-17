@@ -111,6 +111,25 @@ def test_expanded_grid_supports_dotted_pool_and_cost_axes() -> None:
     assert pools[1]["costs"]["arb_fee_bps"] == 2.0
 
 
+def test_expanded_grid_raises_out_fee_to_mid_fee_floor() -> None:
+    grid = {
+        "mid_fee": [150_000_000],
+        "out_fee": [101_000_000],
+    }
+
+    pools, _, pool_count = build_grid(
+        base_pool=_base_pool(),
+        base_costs={"arb_fee_bps": 10.0},
+        grid=grid,
+        fee_equalize=False,
+        expand_pools=True,
+    )
+
+    assert pool_count == 1
+    assert pools[0]["pool"]["mid_fee"] == "150000000"
+    assert pools[0]["pool"]["out_fee"] == "150000000"
+
+
 def test_base_pool_uses_near_zero_adjustment_step_min(tmp_path: Path) -> None:
     candles = tmp_path / "candles.json"
     candles.write_text("[[1700000000, 100.0, 100.0, 100.0, 100.0]]")
@@ -122,6 +141,7 @@ def test_base_pool_uses_near_zero_adjustment_step_min(tmp_path: Path) -> None:
         init_liq=1000.0,
         donation_apy=0.10,
         donation_frequency=604800,
+        donation_duration=604800,
         donation_coins_ratio=0.5,
     )
 

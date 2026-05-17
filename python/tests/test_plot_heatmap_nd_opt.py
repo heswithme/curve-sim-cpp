@@ -277,6 +277,50 @@ def test_heatmap_plain_left_click_does_not_run_inspect(monkeypatch) -> None:
     assert called == {"metrics": 1, "inspect": 0}
 
 
+def test_inspect_pool_raises_out_fee_to_mid_fee_floor() -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "mid_fee", "values": [150_000_000.0]},
+                "x2": {"name": "out_fee", "values": [101_000_000.0]},
+            },
+            "base_pool": {
+                "A": "50000",
+                "mid_fee": "4000000",
+                "out_fee": "30000000",
+            },
+            "base_costs": {"arb_fee_bps": 2},
+            "fee_equalize": False,
+        },
+        "runs": [
+            {
+                "x1_val": 150_000_000.0,
+                "x2_val": 101_000_000.0,
+                "result": {"score": 1.0},
+            }
+        ],
+    }
+    explorer = NDHeatmapExplorerOpt(
+        data,
+        ["score"],
+        ncol=1,
+        cmap="viridis",
+        max_ticks=8,
+        clamp=False,
+        price_thr_bps=1.0,
+        max_price_thr_bps=1.0,
+    )
+
+    config = explorer._build_inspect_pool_config(
+        {"mid_fee": 150_000_000.0, "out_fee": 101_000_000.0},
+        (0, 0),
+    )
+
+    assert config is not None
+    assert config["pool"]["mid_fee"] == "150000000.0"
+    assert config["pool"]["out_fee"] == "150000000.0"
+
+
 def test_heatmap_shift_left_runs_inspect_with_yb_right_click_without_yb(monkeypatch) -> None:
     data = {
         "metadata": {
@@ -399,6 +443,7 @@ def test_shift_inspect_uses_full_npz_and_right_inspect_uses_sparse_json(
             candles_file=None,
             inspect_output_path=out_path,
             config_dustswapfreq=3600,
+            config_real="double",
             start_time=None,
             config_start_time=None,
             config_disable_slippage_probes=False,

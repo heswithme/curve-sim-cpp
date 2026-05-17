@@ -52,30 +52,59 @@ BASE_DONATION_FREQUENCY = 3600
 BASE_DONATION_DURATION = 7 * 86400
 BASE_DONATION_COINS_RATIO = 0.5
 # Grids sequence:
-# 1. A-mf-rpf, 64**3, fee_equalize=True. Find best A & rpf. Donation
-# 2. fix some center-region A & rpf, unset fee_equalize!, do mf-of-fg 48**3 + 3x3 for a-rpf
+# 1. A-mf-don, 64**3, fee_equalize=True. Find best A & rpf. Donation. May be twice (1a): broad + zoom
+# 2. fix some center-region A & don, unset fee_equalize!, do mf-of-fg 48**3 + 3x3 for a-rpf
 # 3. with mf-of-fg fixed, scan A-rpf-donation
+#
+# GRID 1:
+# Search good A & donation candidate, fixed fee surface, rpf collapsed into donations for now
+N_GRID = 96
+FEE_EQUALIZE = True
+GRID: dict[str, Any] = {
+    "A": [int(a * A_MULTIPLIER) for a in np.linspace(2, 8, N_GRID)],  # [5, 6, 7]],
+    "mid_fee": [
+        int(round(a / 10_000 * FEE_SCALE))
+        for a in np.linspace(50, 250, N_GRID)  #
+    ],
+    "donation_apy": np.linspace(0.0, 0.06, 20),  # [0.02, 0.04, 0.08],  #
+}
+# GRID 2:
+# With fixed A&donation, define fee surface. A and donation will be rescanned later, but this scan fixes fees
 N_GRID = 64
 FEE_EQUALIZE = False
 GRID: dict[str, Any] = {
-    "A": [int(a * A_MULTIPLIER) for a in np.linspace(2, 8, N_GRID // 2)],  # [5, 6, 7]],
     "mid_fee": [
         int(round(a / 10_000 * FEE_SCALE))
-        for a in [90]  # np.linspace(20, 100, N_GRID)  #
+        for a in np.linspace(20, 150, N_GRID)  #
     ],
     "out_fee": [
-        int(round(a / 10_000 * FEE_SCALE))
-        for a in [150]  # np.linspace(101, 300, N_GRID)
+        int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(101, 250, N_GRID)
     ],
     "fee_gamma": [
-        int(round(a * WAD))
-        for a in [0.0015]  # np.logspace(np.log10(1e-5), np.log10(1e-1), N_GRID)
+        int(round(a * WAD)) for a in np.logspace(np.log10(1e-5), np.log10(1e-1), N_GRID)
     ],
-    "donation_apy": np.linspace(0.0, 0.05, N_GRID),  # [0.02, 0.04, 0.08],  #
-    "donation_duration": [7 * 86400],
+    "donation_apy": [0.038],  #
+    "A": [int(a * A_MULTIPLIER) for a in [5]],
+}
+# GRID 3: fees fixed now, can play A-don-rpf
+N_GRID = 64
+FEE_EQUALIZE = False
+GRID: dict[str, Any] = {
+    "A": [int(a * A_MULTIPLIER) for a in np.linspace(3, 7, N_GRID)],
+    "donation_apy": np.linspace(0.0, 0.06, N_GRID),
     "reserved_profit_fraction": [
         int(round(a * FEE_SCALE)) for a in np.linspace(0.2, 0.75, N_GRID)
     ],
+    "mid_fee": [
+        int(round(a / 10_000 * FEE_SCALE))
+        for a in [85]  #
+    ],
+    "out_fee": [
+        int(round(a / 10_000 * FEE_SCALE)) for a in [150]
+    ],
+    "fee_gamma": [
+        int(round(a * WAD)) for a in [0.001]
+    ]
     # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
 
@@ -278,7 +307,7 @@ def build_grid(
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid
-            pool["out_fee"] = mid if fee_equalize else out
+            pool["out_fee"] = mid if fee_equalize else max(mid, out)
 
         pools.append(
             {

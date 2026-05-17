@@ -54,6 +54,14 @@ std::string json_value_to_tag(const boost::json::value& v) {
     return boost::json::serialize(v);
 }
 
+long double json_value_to_number(const boost::json::value& v) {
+    if (v.is_int64()) return static_cast<long double>(v.as_int64());
+    if (v.is_uint64()) return static_cast<long double>(v.as_uint64());
+    if (v.is_double()) return static_cast<long double>(v.as_double());
+    if (v.is_string()) return std::stold(std::string(v.as_string().c_str()));
+    throw std::runtime_error("expected numeric JSON value");
+}
+
 void set_dotted_json_value(
     boost::json::object& obj,
     const std::string& dotted_name,
@@ -194,6 +202,12 @@ boost::json::object make_compact_grid_entry(
 
     if (fee_equalize && touches_fee) {
         if (auto* mid = pool.if_contains("mid_fee")) {
+            pool["out_fee"] = *mid;
+        }
+    } else if (touches_fee) {
+        auto* mid = pool.if_contains("mid_fee");
+        auto* out = pool.if_contains("out_fee");
+        if (mid && out && json_value_to_number(*out) < json_value_to_number(*mid)) {
             pool["out_fee"] = *mid;
         }
     }
