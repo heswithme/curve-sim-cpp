@@ -15,6 +15,13 @@ def test_parse_start_time_accepts_json_numeric_timestamp() -> None:
     assert arb_sim.parse_start_time(1_758_672_000) == 1_758_672_000
 
 
+def test_pool_u256_real_selects_uint_pool_target() -> None:
+    runner = arb_sim.ArbHarnessRunner(ROOT, real="pool-u256")
+
+    assert runner.target == "arb_harness_pool_u256"
+    assert runner.exe_path.name == "arb_harness_pool_u256"
+
+
 def test_runner_forwards_quiet_harness_flag(monkeypatch, tmp_path: Path) -> None:
     commands: list[list[str]] = []
 

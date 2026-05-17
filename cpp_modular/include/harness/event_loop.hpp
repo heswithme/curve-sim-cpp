@@ -94,7 +94,6 @@ EventLoopResult<T> run_event_loop(
     };
     sample_apy_net_gm(result.t_start);
 
-    // Probe sizes for slippage: 1%, 5%, 10% of initial TVL (coin0 terms)
     std::array<T, SlippageProbes<T>::N_SIZES> probe_sizes_coin0{};
     if (enable_slippage_probes) {
         for (size_t k = 0; k < SlippageProbes<T>::N_SIZES; ++k) {
@@ -114,32 +113,21 @@ EventLoopResult<T> run_event_loop(
     const T cex_fee_discount = T(1) - fee_cex;
     const T cex_fee_markup = T(1) + fee_cex;
 
-    // Helper to sample slippage probes
     auto sample_slippage_probes = [&](uint64_t ts, T p_cex) {
-        if (!enable_slippage_probes || !(p_cex > T(0))) return;
+        if (!enable_slippage_probes || !(p_cex > T(0))) {
+            return;
+        }
         for (size_t k = 0; k < SlippageProbes<T>::N_SIZES; ++k) {
             sp.accumulate_previous(k, ts);
 
             const T S = probe_sizes_coin0[k];
-            // 0 -> 1
-            {
-                auto pr = pools::twocrypto_fx::simulate_exchange_once(pool, 0, 1, S);
-                const T dy1 = pr.first;  // coin1 after fee
-                const T ideal1 = S / p_cex;
-                T s01 = T(0);
-                if (ideal1 > T(0)) {
-                    s01 = T(1) - (dy1 / ideal1);
-                }
-                // 1 -> 0
-                const T dx1 = S / p_cex;
-                auto pr10 = pools::twocrypto_fx::simulate_exchange_once(pool, 1, 0, dx1);
-                const T dy0 = pr10.first;  // coin0 after fee
-                T s10 = T(0);
-                if (S > T(0)) {
-                    s10 = T(1) - (dy0 / S);
-                }
-                sp.sample(k, ts, s01, s10);
-            }
+            auto pr = pools::twocrypto_fx::simulate_exchange_once(pool, 0, 1, S);
+            const T ideal1 = S / p_cex;
+            const T s01 = ideal1 > T(0) ? T(1) - (pr.first / ideal1) : T(0);
+
+            auto pr10 = pools::twocrypto_fx::simulate_exchange_once(pool, 1, 0, S / p_cex);
+            const T s10 = S > T(0) ? T(1) - (pr10.first / S) : T(0);
+            sp.sample(k, ts, s01, s10);
         }
     };
 
@@ -233,11 +221,14 @@ EventLoopResult<T> run_event_loop(
             const T dy_after_fee = res[0];
             const T fee_tokens = res[1];
             const T ps_after = pool.cached_price_scale;
+            const T actual_profit = (dec.i == 0)
+                ? (dy_after_fee * cex_price * cex_fee_discount - dec.dx - costs.gas_coin0)
+                : (dy_after_fee - dec.dx * cex_price * cex_fee_markup - costs.gas_coin0);
 
             m.trades += 1;
             m.notional += dec.notional_coin0;
             m.lp_fee_coin0 += (dec.j == 1 ? fee_tokens * cex_price : fee_tokens);
-            m.arb_pnl_coin0 += dec.profit;
+            m.arb_pnl_coin0 += actual_profit;
 
             const T gross_dy_tokens = dy_after_fee + fee_tokens;
             if (gross_dy_tokens > T(0) && dec.notional_coin0 > T(0)) {
@@ -250,13 +241,11 @@ EventLoopResult<T> run_event_loop(
                 m.n_rebalances += 1;
             }
 
-            if (enable_slippage_probes) {
-                sample_slippage_probes(ev.ts, cex_price);
-            }
+            sample_slippage_probes(ev.ts, cex_price);
 
             if (log_actions) {
                 action_logger.log_exchange(ev.ts, dec.i, dec.j, dec.dx, dy_after_fee, fee_tokens,
-                                           dec.profit, cex_price, p_pool_before,
+                                           actual_profit, cex_price, p_pool_before,
                                            oracle_before, ps_before, last_ts_before, lp_before,
                                            xcp_profit_before, vp_before, pool, tw);
             }
@@ -312,9 +301,7 @@ EventLoopResult<T> run_event_loop(
             return false;
         }
 
-        if (enable_slippage_probes) {
-            sample_slippage_probes(ts, cex_price);
-        }
+        sample_slippage_probes(ts, cex_price);
         if (log_actions) {
             action_logger.log_tick(ts, cex_price, ps_before, oracle_before,
                                    xcp_profit_before, vp_before, pool);
@@ -371,26 +358,6 @@ EventLoopResult<T> run_event_loop(
     result.apy_net_gm = apy_net_gm.value();
 
     return result;
-}
-
-// Backward-compatible overload returning just Metrics<T>
-template <typename T, typename Pool>
-Metrics<T> run_event_loop_simple(
-    Pool& pool,
-    const std::vector<Event>& events,
-    const trading::Costs<T>& costs,
-    DonationCfg<T>& dcfg,
-    IdleTickCfg<T>& icfg,
-    UserSwapCfg<T>& ucfg,
-    T min_swap_frac = T(1e-6),
-    T max_swap_frac = T(1.0),
-    size_t max_events = 0,
-    bool enable_slippage_probes = true
-) {
-    auto result = run_event_loop(pool, events, costs, dcfg, icfg, ucfg,
-                                  min_swap_frac, max_swap_frac, max_events,
-                                  enable_slippage_probes);
-    return result.metrics;
 }
 
 } // namespace harness

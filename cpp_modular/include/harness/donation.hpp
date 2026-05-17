@@ -22,7 +22,7 @@ struct DonationCfg {
     T        ratio1{T(0.5)};      // fraction of donation in coin1
     T        base_tvl{0};         // initial TVL to base donations on (no compounding)
     bool     use_base_tvl{false};  // false = compound on current TVL
-    
+
     // Initialize from pool config parameters and lock in base TVL
     template <typename Pool>
     void init(T donation_apy, T donation_frequency, T donation_coins_ratio, uint64_t start_ts, const Pool& pool) {
@@ -76,11 +76,11 @@ DonationResult<T> make_donation_ex(
 
     const uint64_t ts_due = cfg.next_ts;
     const T ps_before = pool.cached_price_scale;
-    
+
     try {
         (void)pool.add_liquidity({amt0, amt1}, T(0), /*donation=*/true);
         const T ps_after = pool.cached_price_scale;
-        
+
         if (differs_rel(ps_after, ps_before)) {
             m.n_rebalances += 1;
         }
@@ -88,12 +88,12 @@ DonationResult<T> make_donation_ex(
         m.donation_amounts_total[0] += amt0;
         m.donation_amounts_total[1] += amt1;
         m.donation_coin0_total += coin0_equiv(amt0, amt1, ps_before);
-        
+
         result.success = true;
         result.ts_due = ts_due;
         result.amounts = {amt0, amt1};
         result.price_scale = ps_before;
-        
+
     } catch (...) {
         // Ignore failed donation (e.g., donation cap exceeded)
     }

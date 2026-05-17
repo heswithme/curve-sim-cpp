@@ -4,11 +4,10 @@
 //   arb_harness    - double (default)
 //   arb_harness_f  - float
 //   arb_harness_ld - long double
+//   arb_harness_pool_u256 - long double harness with uint256 pool
 
 #include <iostream>
-#include <iomanip>
-#include <limits>
-#include <utility>
+#include <chrono>
 #include <vector>
 
 #include "harness/cli.hpp"
@@ -17,118 +16,34 @@
 #include "harness/detailed_output.hpp"
 #include "events/loader.hpp"
 #include "pools/config.hpp"
-#include "pools/twocrypto_fx/twocrypto.hpp"
-#include "pools/twocrypto_fx/helpers.hpp"
 #include "trading/costs.hpp"
-#include "trading/arbitrageur.hpp"
 
-// Compile-time numeric type selection (floating-only)
+// Compile-time numeric type selection.
 #if defined(ARB_MODE_F)
 using RealT = float;
+using PoolT = float;
 static constexpr const char* TYPE_NAME = "float";
 #elif defined(ARB_MODE_LD)
 using RealT = long double;
+using PoolT = long double;
 static constexpr const char* TYPE_NAME = "long double";
+#elif defined(ARB_POOL_MODE_U256)
+using RealT = long double;
+using PoolT = arb::pools::twocrypto_fx::uint256;
+static constexpr const char* TYPE_NAME = "pool_u256";
 #else
 using RealT = double;
+using PoolT = double;
 static constexpr const char* TYPE_NAME = "double";
 #endif
-
-// Helper to print a value
-template <typename T>
-void print_value(const char* name, const T& val) {
-    std::cout << "  " << name << " = " << std::setprecision(12) << val << "\n";
-}
-
-// Pool test (floating types)
-template <typename T>
-void test_pool(T cex_price = T(-1)) {
-    using Pool = arb::pools::twocrypto_fx::TwoCryptoPool<T>;
-    using Traits = arb::pools::twocrypto_fx::PoolTraits<T>;
-
-    std::array<T, 2> precisions = {Traits::ONE(), Traits::ONE()};
-
-    T A = T(10000.0);
-    T gamma = T(1e-5);
-    T mid_fee = T(0.0001);
-    T out_fee = T(0.0006);
-    T fee_gamma = T(0.00023);
-    T adjustment_step_min = T(0.000001);
-    T adjustment_step_max = T(0.0001);
-    T ma_time = T(600.0);
-    T initial_price = T(1.08);
-
-    Pool pool(
-        precisions,
-        A, gamma,
-        mid_fee, out_fee, fee_gamma,
-        adjustment_step_min, adjustment_step_max, ma_time,
-        initial_price
-    );
-
-    pool.set_block_timestamp(1700000000);
-
-    std::cout << "Pool created with initial_price:\n";
-    print_value("cached_price_scale", pool.cached_price_scale);
-    print_value("cached_price_oracle", pool.cached_price_oracle);
-
-    T amount0 = T(10000.0);
-    T amount1 = T(10000.0 / 1.08);
-    std::array<T, 2> amounts = {amount0, amount1};
-    T min_mint = Traits::ZERO();
-
-    T lp_tokens = pool.add_liquidity(amounts, min_mint);
-
-    std::cout << "\nAfter add_liquidity:\n";
-    print_value("LP tokens minted", lp_tokens);
-    print_value("totalSupply", pool.totalSupply);
-    print_value("D", pool.D);
-    print_value("balances[0]", pool.balances[0]);
-    print_value("balances[1]", pool.balances[1]);
-    print_value("virtual_price", pool.get_virtual_price());
-
-    // Simulate a small exchange (no state change)
-    T dx = T(100.0);
-    auto sim = arb::pools::twocrypto_fx::simulate_exchange_once(pool, /*i=*/0, /*j=*/1, dx);
-    std::cout << "\nSimulated exchange (0 -> 1):\n";
-    print_value("dx", dx);
-    print_value("dy_after_fee", sim.first);
-    print_value("fee_tokens", sim.second);
-
-    // Arbitrage decision
-    if (cex_price > T(0)) {
-        arb::trading::Costs<T> costs{};
-        const T fee_cex = costs.arb_fee_bps / T(10000);
-        auto dec = arb::trading::decide_trade(
-            pool, cex_price, costs,
-            std::numeric_limits<T>::infinity(),
-            T(0.001), T(0.1),
-            T(1) - fee_cex, T(1) + fee_cex
-        );
-        std::cout << "\nArb decision:\n";
-        std::cout << "  do_trade = " << dec.do_trade << "\n";
-        print_value("  dx", dec.dx);
-        print_value("  profit_coin0", dec.profit);
-        print_value("  fee_tokens", dec.fee_tokens);
-    }
-
-    if (pool.D > Traits::ZERO()) {
-        std::cout << "\nPool test: PASSED (D > 0)\n";
-    } else {
-        std::cout << "\nPool test: FAILED (D <= 0)\n";
-    }
-}
 
 int main(int argc, char* argv[]) {
     // Parse CLI arguments
     auto args = arb::harness::parse_cli(argc, argv);
     
     if (!args.valid) {
-        // For now, if not enough args, run pool test
         if (argc < 2) {
             std::cout << "arb_harness_mod: " << TYPE_NAME << "\n";
-            std::cout << "\n--- Pool Test ---\n";
-            test_pool<RealT>();
             arb::harness::print_usage(argv[0]);
             return 0;
         }
@@ -167,15 +82,15 @@ int main(int argc, char* argv[]) {
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
 
         // Load pool configs from JSON (optionally subset by contiguous or range-file assignment).
-        std::vector<std::pair<arb::pools::PoolInit<RealT>, arb::trading::Costs<RealT>>> pool_configs;
+        std::vector<std::pair<arb::pools::PoolInit<PoolT, RealT>, arb::trading::Costs<RealT>>> pool_configs;
         if (!args.pool_ranges_path.empty()) {
             auto ranges = arb::pools::load_pool_ranges_file(args.pool_ranges_path);
-            pool_configs = arb::pools::load_pool_configs_for_ranges<RealT>(
+            pool_configs = arb::pools::load_pool_configs_for_ranges<PoolT, RealT>(
                 args.pools_path,
                 ranges
             );
         } else {
-            pool_configs = arb::pools::load_pool_configs<RealT>(
+            pool_configs = arb::pools::load_pool_configs<PoolT, RealT>(
                 args.pools_path, args.pool_start, args.pool_end);
         }
         if (pool_configs.empty()) {

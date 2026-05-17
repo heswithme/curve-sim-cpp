@@ -161,8 +161,8 @@ def build_base_pool(
     init_liq: float,
     donation_apy: float,
     donation_frequency: int,
-    donation_duration: int,
-    donation_coins_ratio: float,
+    donation_duration: int = BASE_DONATION_DURATION,
+    donation_coins_ratio: float = 0.5,
 ) -> dict[str, Any]:
     requested_start_ts = _parse_start_time(start_time)
     if requested_start_ts is None and last_years is not None:

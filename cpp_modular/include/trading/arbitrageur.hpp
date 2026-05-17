@@ -35,7 +35,7 @@ Decision<T> decide_trade(
     if (!(cex_price > T(0))) return d;
 
     const auto xp_now = fx::pool_xp_current(pool);
-    const T p_now = fx::MathOps<T>::get_p(xp_now, pool.D, {pool.A, pool.gamma}) * pool.cached_price_scale;
+    const T p_now = pool.get_p();
     const T fee_pool = pool.fee(xp_now);
 
     const T one_minus_fee = std::max(T(1) - fee_pool, T(1e-12));
@@ -87,12 +87,16 @@ Decision<T> decide_trade(
     };
 
     auto evaluate_candidate = [&](T dx) -> Candidate {
+        if (!(dx > T(0))) {
+            return Candidate{dx, T(0), -std::numeric_limits<T>::infinity(), T(0)};
+        }
         auto sim = fx::simulate_exchange_once(pool, static_cast<size_t>(sel_i), static_cast<size_t>(sel_j), dx);
         const T dy_after_fee = sim.first;
+        const T fee_tokens = sim.second;
         T profit = (sel_i == 0)
             ? (dy_after_fee * cex_price * cex_fee_discount - dx - costs.gas_coin0)
             : (dy_after_fee - dx * cex_price * cex_fee_markup - costs.gas_coin0);
-        return Candidate{dx, dy_after_fee, profit, sim.second};
+        return Candidate{dx, dy_after_fee, profit, fee_tokens};
     };
 
     // Profit-maximize within sizing bounds.

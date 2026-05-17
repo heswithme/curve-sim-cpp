@@ -119,6 +119,8 @@ INSPECT_YB_FEE = 0.01
 def _real_arg(value: Any) -> str:
     raw = str(value or INSPECT_REAL).replace("_", " ").strip().lower()
     compact = raw.replace(" ", "")
+    if compact in {"pool-u256", "poolu256", "u256", "uint256"} or "poolu256" in compact:
+        return "pool-u256"
     if compact in {"longdouble", "long", "ld"} or "harnessld" in compact:
         return "longdouble"
     if compact in {"float", "f"}:
@@ -1954,7 +1956,7 @@ class NDHeatmapExplorerOpt:
                 "run",
                 "arb_sim/arb_sim.py",
                 "--real",
-                self.config_real,
+                getattr(self, "config_real", INSPECT_REAL),
                 "--dustswapfreq",
                 str(self.config_dustswapfreq),
                 "-n",

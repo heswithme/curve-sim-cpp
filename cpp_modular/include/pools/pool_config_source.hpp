@@ -62,8 +62,8 @@ private:
 // - [ {...}, {...} ]
 // - { "meta": { "base_pool": {...}, "base_costs": {...}, "grid": {...} } }
 // Optional: start_idx/end_idx for loading a subset (0-based, end exclusive).
-template <typename T>
-std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>>
+template <typename PoolT, typename HarnessT = PoolT>
+std::vector<std::pair<PoolInit<PoolT, HarnessT>, arb::trading::Costs<HarnessT>>>
 load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx = SIZE_MAX) {
     PoolConfigDocument doc(path);
     if (start_idx >= doc.size()) {
@@ -71,13 +71,13 @@ load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx 
     }
     const size_t actual_end = std::min(end_idx, doc.size());
 
-    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
+    std::vector<std::pair<PoolInit<PoolT, HarnessT>, arb::trading::Costs<HarnessT>>> result;
     result.reserve(actual_end - start_idx);
 
     for (size_t i = start_idx; i < actual_end; ++i) {
         auto entry = doc.entry_at(i);
-        PoolInit<T> pool_init{};
-        arb::trading::Costs<T> costs{};
+        PoolInit<PoolT, HarnessT> pool_init{};
+        arb::trading::Costs<HarnessT> costs{};
         parse_pool_entry(entry, pool_init, costs);
         pool_init.global_index = i;
         result.emplace_back(std::move(pool_init), std::move(costs));
@@ -86,8 +86,8 @@ load_pool_configs(const std::string& path, size_t start_idx = 0, size_t end_idx 
     return result;
 }
 
-template <typename T>
-std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>>
+template <typename PoolT, typename HarnessT = PoolT>
+std::vector<std::pair<PoolInit<PoolT, HarnessT>, arb::trading::Costs<HarnessT>>>
 load_pool_configs_for_ranges(const std::string& path, const std::vector<PoolRange>& ranges) {
     PoolConfigDocument doc(path);
 
@@ -106,14 +106,14 @@ load_pool_configs_for_ranges(const std::string& path, const std::vector<PoolRang
         total += n;
     }
 
-    std::vector<std::pair<PoolInit<T>, arb::trading::Costs<T>>> result;
+    std::vector<std::pair<PoolInit<PoolT, HarnessT>, arb::trading::Costs<HarnessT>>> result;
     result.reserve(total);
 
     for (const auto& range : ranges) {
         for (size_t i = range.start; i < range.end; ++i) {
             auto entry = doc.entry_at(i);
-            PoolInit<T> pool_init{};
-            arb::trading::Costs<T> costs{};
+            PoolInit<PoolT, HarnessT> pool_init{};
+            arb::trading::Costs<HarnessT> costs{};
             parse_pool_entry(entry, pool_init, costs);
             pool_init.global_index = i;
             result.emplace_back(std::move(pool_init), std::move(costs));

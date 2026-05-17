@@ -48,6 +48,12 @@ target_compile_definitions(arb_harness_ld PRIVATE ARB_MODE_LD)
 target_link_libraries(arb_harness_ld Boost::json Threads::Threads)
 arb_target_defaults(arb_harness_ld)
 
+# --- arb_harness_pool_u256 (long double harness, uint256 pool) ---
+add_executable(arb_harness_pool_u256 ${COMMON_SOURCES})
+target_compile_definitions(arb_harness_pool_u256 PRIVATE ARB_POOL_MODE_U256)
+target_link_libraries(arb_harness_pool_u256 Boost::json Threads::Threads)
+arb_target_defaults(arb_harness_pool_u256)
+
 # --- arb_eval_server (persistent single-template evaluator) ---
 add_executable(arb_eval_server
     src/eval_server.cpp

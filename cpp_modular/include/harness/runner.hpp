@@ -19,7 +19,9 @@
 #include "harness/donation.hpp"
 #include "harness/idle_tick.hpp"
 #include "harness/user_swap.hpp"
+#include "harness/u256_pool_adapter.hpp"
 #include "harness/event_loop.hpp"
+#include "harness/pool_value.hpp"
 #include "pools/config.hpp"
 #include "pools/twocrypto_fx/twocrypto.hpp"
 #include "trading/costs.hpp"
@@ -28,8 +30,18 @@
 namespace arb {
 namespace harness {
 
-// Result from running a single pool - includes all metrics
+template <typename Pool, typename Duration>
+void set_pool_donation_duration(Pool& pool, const Duration& duration) {
+    pool.donation_duration = duration;
+}
+
 template <typename T>
+void set_pool_donation_duration(U256PoolAdapter<T>& pool, const typename U256PoolAdapter<T>::RawT& duration) {
+    pool.set_donation_duration(duration);
+}
+
+// Result from running a single pool - includes all metrics
+template <typename T, typename PoolT = T>
 struct PoolResult {
     std::string tag;
     size_t pool_index{0};
@@ -119,18 +131,19 @@ struct RunConfig {
 };
 
 // Run a single pool configuration and return results
-template <typename T>
-PoolResult<T> run_single_pool(
-    const pools::PoolInit<T>& pool_init,
+template <typename T, typename PoolT = T>
+PoolResult<T, PoolT> run_single_pool(
+    const pools::PoolInit<PoolT, T>& pool_init,
     const trading::Costs<T>& costs,
     const std::vector<Event>& events,
     const RunConfig<T>& cfg,
     const std::vector<trading::CowswapTrade>* cowswap_trades = nullptr,
     const std::vector<Candle>* candles = nullptr
 ) {
-    using Pool = pools::twocrypto_fx::TwoCryptoPool<T>;
+    using Pool = typename HarnessPoolFor<PoolT, T>::type;
+    using Traits = pools::twocrypto_fx::PoolTraits<PoolT>;
 
-    PoolResult<T> result;
+    PoolResult<T, PoolT> result;
     result.tag = pool_init.tag;
     result.pool_index = pool_init.global_index;
     result.echo_pool = pool_init.echo_pool;
@@ -140,12 +153,12 @@ PoolResult<T> run_single_pool(
 
     try {
         // Determine initial price
-        T initial_price = pool_init.initial_price;
-        if (initial_price <= T(0) && !events.empty()) {
-            initial_price = static_cast<T>(events.front().p_cex);
+        PoolT initial_price = pool_init.initial_price;
+        if (initial_price <= PoolT(0) && !events.empty()) {
+            initial_price = h_price_to_pool<PoolT>(static_cast<T>(events.front().p_cex));
         }
-        if (initial_price <= T(0)) {
-            initial_price = T(1);  // fallback
+        if (initial_price <= PoolT(0)) {
+            initial_price = h_price_to_pool<PoolT>(T(1));  // fallback
         }
 
         // Create pool
@@ -165,7 +178,7 @@ PoolResult<T> run_single_pool(
             pool_init.policy_kind,
             pool_init.policy_config
         );
-        pool.donation_duration = pool_init.donation_duration;
+        set_pool_donation_duration(pool, pool_init.donation_duration);
 
         // Set initial timestamp
         uint64_t init_ts = cfg.start_ts ? cfg.start_ts : pool_init.start_ts;
@@ -178,13 +191,13 @@ PoolResult<T> run_single_pool(
         pool.set_block_timestamp(init_ts);
 
         // Add initial liquidity
-        T liq0 = pool_init.initial_liq[0];
-        T liq1 = pool_init.initial_liq[1];
-        if (liq0 <= T(0) || liq1 <= T(0)) {
-            liq0 = T(1000000.0);
-            liq1 = liq0 / initial_price;
+        PoolT liq0 = pool_init.initial_liq[0];
+        PoolT liq1 = pool_init.initial_liq[1];
+        if (liq0 <= PoolT(0) || liq1 <= PoolT(0)) {
+            liq0 = h_amount_to_pool<PoolT>(T(1000000.0));
+            liq1 = h_amount_to_pool<PoolT>(T(1000000.0) / pool_price_to_h<T>(initial_price));
         }
-        pool.add_liquidity({liq0, liq1}, T(0));
+        pool.add_liquidity({liq0, liq1}, Traits::ZERO());
 
         // Initialize donation config (also locks in base TVL for no-compounding)
         DonationCfg<T> dcfg{};
@@ -301,9 +314,9 @@ inline std::string format_duration(double seconds) {
 }
 
 // Run multiple pools in parallel using a thread pool
-template <typename T>
-std::vector<PoolResult<T>> run_pools_parallel(
-    const std::vector<std::pair<pools::PoolInit<T>, trading::Costs<T>>>& pool_configs,
+template <typename T, typename PoolT = T>
+std::vector<PoolResult<T, PoolT>> run_pools_parallel(
+    const std::vector<std::pair<pools::PoolInit<PoolT, T>, trading::Costs<T>>>& pool_configs,
     const std::vector<Event>& events,
     const RunConfig<T>& cfg,
     size_t n_threads = 0,
@@ -316,7 +329,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
     }
 
     const size_t n_pools = pool_configs.size();
-    std::vector<PoolResult<T>> results(n_pools);
+    std::vector<PoolResult<T, PoolT>> results(n_pools);
 
     if (n_pools == 0) {
         return results;
@@ -331,6 +344,9 @@ std::vector<PoolResult<T>> run_pools_parallel(
     std::vector<trading::CowswapTrade> cowswap_trades;
     const std::vector<trading::CowswapTrade>* cs_ptr = nullptr;
     if (!cfg.cowswap_path.empty()) {
+        if constexpr (is_uint_pool_v<PoolT>) {
+            throw std::runtime_error("cowswap is not supported by arb_harness_pool_u256 yet");
+        }
         cowswap_trades = trading::load_cowswap_csv(cfg.cowswap_path);
         if (!cowswap_trades.empty()) {
             cs_ptr = &cowswap_trades;
@@ -349,7 +365,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
     if (n_pools == 1 || n_threads == 1) {
         for (size_t i = 0; i < n_pools; ++i) {
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
+            results[i] = run_single_pool<T, PoolT>(pool_init, costs, events, cfg, cs_ptr, candles);
 
             size_t done = i + 1;
             const size_t percent = progress_percent(done);
@@ -381,7 +397,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
             if (i >= n_pools) break;
 
             const auto& [pool_init, costs] = pool_configs[i];
-            results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
+            results[i] = run_single_pool<T, PoolT>(pool_init, costs, events, cfg, cs_ptr, candles);
 
             if (verbose) {
                 size_t done = completed.fetch_add(1) + 1;

@@ -84,6 +84,7 @@ struct PoolTraits<long double> {
 template <typename T>
 class TwoCryptoPool {
 public:
+    using value_type = T;
     using Ops = MathOps<T>;
     using Traits = PoolTraits<T>;
     static constexpr int N_COINS = 2;

@@ -56,6 +56,8 @@ class ArbHarnessRunner:
             self.target = "arb_harness_f"
         elif real in ("longdouble", "long_double", "ld", "long"):
             self.target = "arb_harness_ld"
+        elif real in ("pool-u256", "pool_u256", "u256", "uint256"):
+            self.target = "arb_harness_pool_u256"
         else:
             self.target = "arb_harness"
         self.exe_path = self.build_dir / self.target
@@ -249,7 +251,7 @@ def main() -> int:
         "--real",
         type=str,
         default="double",
-        choices=["float", "double", "longdouble"],
+        choices=["float", "double", "longdouble", "pool-u256", "pool_u256", "u256", "uint256"],
         help="Numeric precision for C++ harness",
     )
     parser.add_argument(

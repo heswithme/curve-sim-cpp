@@ -325,6 +325,7 @@ def test_distribute_writes_fast_run_flags_to_manifest(monkeypatch, tmp_path: Pat
     )
     monkeypatch.setattr(cluster_distribute, "get_remote_file_size", lambda *_args, **_kwargs: 0)
     monkeypatch.setattr(cluster_distribute, "rsync_to_cluster", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cluster_distribute, "rsync_many_to_cluster", lambda *_args, **_kwargs: None)
 
     manifest = cluster_distribute.distribute(
         pools_file=pools,

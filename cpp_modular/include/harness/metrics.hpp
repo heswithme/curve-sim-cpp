@@ -48,28 +48,6 @@ struct Metrics {
         return fee_w > T(0) ? fee_wsum / fee_w : T(-1);
     }
     
-    // Accumulate another metrics instance
-    void accumulate(const Metrics& other) {
-        trades += other.trades;
-        notional += other.notional;
-        lp_fee_coin0 += other.lp_fee_coin0;
-        arb_pnl_coin0 += other.arb_pnl_coin0;
-        n_rebalances += other.n_rebalances;
-        arb_edge_candidates += other.arb_edge_candidates;
-        arb_invalid_size_rejections += other.arb_invalid_size_rejections;
-        arb_nonpositive_profit_rejections += other.arb_nonpositive_profit_rejections;
-        arb_guarded_loss_coin0 += other.arb_guarded_loss_coin0;
-        donations += other.donations;
-        donation_coin0_total += other.donation_coin0_total;
-        donation_amounts_total[0] += other.donation_amounts_total[0];
-        donation_amounts_total[1] += other.donation_amounts_total[1];
-        cowswap_trades += other.cowswap_trades;
-        cowswap_skipped += other.cowswap_skipped;
-        cowswap_notional_coin0 += other.cowswap_notional_coin0;
-        cowswap_lp_fee_coin0 += other.cowswap_lp_fee_coin0;
-        fee_wsum += other.fee_wsum;
-        fee_w += other.fee_w;
-    }
 };
 
 struct TimeWeightedSummary {
@@ -156,6 +134,75 @@ struct RollingGeoApy60d {
     }
 };
 
+template <uint64_t WindowS, uint64_t BucketS, size_t Buckets>
+struct RollingMaxWindow {
+    std::array<long double, Buckets> bucket_sum_dt{};
+    std::array<long double, Buckets> bucket_dt{};
+    std::array<uint64_t, Buckets> bucket_id{};
+    std::array<bool, Buckets> bucket_live{};
+    uint64_t last_eval_bucket{0};
+    long double max_avg{0.0L};
+    bool have_max{false};
+
+    void sample(uint64_t start_ts, uint64_t end_ts, uint64_t first_ts, long double value) {
+        while (start_ts < end_ts) {
+            const uint64_t id = start_ts / BucketS;
+            const uint64_t bucket_end = (id + 1) * BucketS;
+            const uint64_t segment_end = end_ts < bucket_end ? end_ts : bucket_end;
+            const size_t idx = static_cast<size_t>(id % Buckets);
+
+            if (!bucket_live[idx] || bucket_id[idx] != id) {
+                bucket_live[idx] = true;
+                bucket_id[idx] = id;
+                bucket_sum_dt[idx] = 0.0L;
+                bucket_dt[idx] = 0.0L;
+            }
+
+            const long double dt = static_cast<long double>(segment_end - start_ts);
+            bucket_sum_dt[idx] += value * dt;
+            bucket_dt[idx] += dt;
+            start_ts = segment_end;
+        }
+
+        const uint64_t eval_bucket = end_ts / BucketS;
+        if (have_max && eval_bucket == last_eval_bucket) {
+            return;
+        }
+        last_eval_bucket = eval_bucket;
+        if (end_ts < first_ts + WindowS) {
+            return;
+        }
+
+        const uint64_t cutoff = end_ts > WindowS ? end_ts - WindowS : 0;
+        long double window_sum_dt = 0.0L;
+        long double window_dt = 0.0L;
+        for (size_t i = 0; i < Buckets; ++i) {
+            if (!bucket_live[i]) {
+                continue;
+            }
+            const uint64_t bucket_start = bucket_id[i] * BucketS;
+            const uint64_t bucket_end = bucket_start + BucketS;
+            if (bucket_end <= cutoff || bucket_start >= end_ts) {
+                continue;
+            }
+            window_sum_dt += bucket_sum_dt[i];
+            window_dt += bucket_dt[i];
+        }
+
+        if (window_dt > 0.0L) {
+            const long double avg = window_sum_dt / window_dt;
+            if (!have_max || avg > max_avg) {
+                max_avg = avg;
+                have_max = true;
+            }
+        }
+    }
+
+    double value_or(double fallback) const {
+        return have_max ? static_cast<double>(max_avg) : fallback;
+    }
+};
+
 // Time-weighted metrics for tracking pool state over time
 template <typename T>
 struct TimeWeightedMetrics {
@@ -175,13 +222,7 @@ struct TimeWeightedMetrics {
     T min_price_scale{0};
     T max_price_scale{0};
     bool have_price_scale{false};
-    std::array<long double, PRICE_DIFF_BUCKETS> rel_bucket_sum_dt{};
-    std::array<long double, PRICE_DIFF_BUCKETS> rel_bucket_dt{};
-    std::array<uint64_t, PRICE_DIFF_BUCKETS> rel_bucket_id{};
-    std::array<bool, PRICE_DIFF_BUCKETS> rel_bucket_live{};
-    uint64_t last_7d_eval_bucket{0};
-    long double max_7d_rel_abs{0.0L};
-    bool have_7d_rel_abs{false};
+    RollingMaxWindow<PRICE_DIFF_WINDOW_S, PRICE_DIFF_BUCKET_S, PRICE_DIFF_BUCKETS> rel_7d_max{};
 
     // Time-weighted imbalance: 4*x0'*x1'/(x0'+x1')^2, with x1' = balance1 * p_cex
     // Skew is max(x0', x1')/(x0'+x1'), using the same valuation inputs.
@@ -192,13 +233,7 @@ struct TimeWeightedMetrics {
     uint64_t first_ts_imbalance{0};
     uint64_t last_ts_imbalance{0};
     bool have_imbalance{false};
-    std::array<long double, PRICE_DIFF_BUCKETS> skew_bucket_sum_dt{};
-    std::array<long double, PRICE_DIFF_BUCKETS> skew_bucket_dt{};
-    std::array<uint64_t, PRICE_DIFF_BUCKETS> skew_bucket_id{};
-    std::array<bool, PRICE_DIFF_BUCKETS> skew_bucket_live{};
-    uint64_t last_7d_skew_eval_bucket{0};
-    long double max_7d_skew{0.0L};
-    bool have_7d_skew{false};
+    RollingMaxWindow<PRICE_DIFF_WINDOW_S, PRICE_DIFF_BUCKET_S, PRICE_DIFF_BUCKETS> skew_7d_max{};
     
     // Time-weighted pool fee (fraction) across time
     long double tw_fee_sum_dt{0.0L};
@@ -216,15 +251,11 @@ struct TimeWeightedMetrics {
             ? static_cast<double>(sum_abs_rel_dt / sum_dt)
             : -1.0;
         summary.max_rel_price_diff = static_cast<double>(max_rel_abs);
-        summary.max_7d_rel_price_diff = have_7d_rel_abs
-            ? static_cast<double>(max_7d_rel_abs)
-            : -1.0;
+        summary.max_7d_rel_price_diff = rel_7d_max.value_or(-1.0);
         summary.avg_imbalance = imbalance_dt > 0.0L
             ? static_cast<double>(sum_imbalance_dt / imbalance_dt)
             : -1.0;
-        summary.max_7d_skew = have_7d_skew
-            ? static_cast<double>(max_7d_skew)
-            : -1.0;
+        summary.max_7d_skew = skew_7d_max.value_or(-1.0);
         summary.tw_avg_pool_fee = tw_fee_dt > 0.0L
             ? static_cast<double>(tw_fee_sum_dt / tw_fee_dt)
             : -1.0;
@@ -272,59 +303,7 @@ struct TimeWeightedMetrics {
     }
 
     void sample_7d_price_error(uint64_t start_ts, uint64_t end_ts, long double rel_abs) {
-        while (start_ts < end_ts) {
-            const uint64_t bucket_id = start_ts / PRICE_DIFF_BUCKET_S;
-            const uint64_t bucket_end = (bucket_id + 1) * PRICE_DIFF_BUCKET_S;
-            const uint64_t segment_end = end_ts < bucket_end ? end_ts : bucket_end;
-            const size_t idx = static_cast<size_t>(bucket_id % PRICE_DIFF_BUCKETS);
-
-            if (!rel_bucket_live[idx] || rel_bucket_id[idx] != bucket_id) {
-                rel_bucket_live[idx] = true;
-                rel_bucket_id[idx] = bucket_id;
-                rel_bucket_sum_dt[idx] = 0.0L;
-                rel_bucket_dt[idx] = 0.0L;
-            }
-
-            const long double dt = static_cast<long double>(segment_end - start_ts);
-            rel_bucket_sum_dt[idx] += rel_abs * dt;
-            rel_bucket_dt[idx] += dt;
-            start_ts = segment_end;
-        }
-
-        const uint64_t eval_bucket = end_ts / PRICE_DIFF_BUCKET_S;
-        if (have_7d_rel_abs && eval_bucket == last_7d_eval_bucket) {
-            return;
-        }
-        last_7d_eval_bucket = eval_bucket;
-        if (end_ts < first_ts_err + PRICE_DIFF_WINDOW_S) {
-            return;
-        }
-
-        const uint64_t cutoff = end_ts > PRICE_DIFF_WINDOW_S
-            ? end_ts - PRICE_DIFF_WINDOW_S
-            : 0;
-        long double window_sum_dt = 0.0L;
-        long double window_dt = 0.0L;
-        for (size_t i = 0; i < PRICE_DIFF_BUCKETS; ++i) {
-            if (!rel_bucket_live[i]) {
-                continue;
-            }
-            const uint64_t bucket_start = rel_bucket_id[i] * PRICE_DIFF_BUCKET_S;
-            const uint64_t bucket_end = bucket_start + PRICE_DIFF_BUCKET_S;
-            if (bucket_end <= cutoff || bucket_start >= end_ts) {
-                continue;
-            }
-            window_sum_dt += rel_bucket_sum_dt[i];
-            window_dt += rel_bucket_dt[i];
-        }
-
-        if (window_dt > 0.0L) {
-            const long double avg = window_sum_dt / window_dt;
-            if (!have_7d_rel_abs || avg > max_7d_rel_abs) {
-                max_7d_rel_abs = avg;
-                have_7d_rel_abs = true;
-            }
-        }
+        rel_7d_max.sample(start_ts, end_ts, first_ts_err, rel_abs);
     }
 
     void sample_imbalance(uint64_t ts, T x0p, T x1p) {
@@ -355,59 +334,7 @@ struct TimeWeightedMetrics {
     }
 
     void sample_7d_skew(uint64_t start_ts, uint64_t end_ts, long double skew) {
-        while (start_ts < end_ts) {
-            const uint64_t bucket_id = start_ts / PRICE_DIFF_BUCKET_S;
-            const uint64_t bucket_end = (bucket_id + 1) * PRICE_DIFF_BUCKET_S;
-            const uint64_t segment_end = end_ts < bucket_end ? end_ts : bucket_end;
-            const size_t idx = static_cast<size_t>(bucket_id % PRICE_DIFF_BUCKETS);
-
-            if (!skew_bucket_live[idx] || skew_bucket_id[idx] != bucket_id) {
-                skew_bucket_live[idx] = true;
-                skew_bucket_id[idx] = bucket_id;
-                skew_bucket_sum_dt[idx] = 0.0L;
-                skew_bucket_dt[idx] = 0.0L;
-            }
-
-            const long double dt = static_cast<long double>(segment_end - start_ts);
-            skew_bucket_sum_dt[idx] += skew * dt;
-            skew_bucket_dt[idx] += dt;
-            start_ts = segment_end;
-        }
-
-        const uint64_t eval_bucket = end_ts / PRICE_DIFF_BUCKET_S;
-        if (have_7d_skew && eval_bucket == last_7d_skew_eval_bucket) {
-            return;
-        }
-        last_7d_skew_eval_bucket = eval_bucket;
-        if (end_ts < first_ts_imbalance + PRICE_DIFF_WINDOW_S) {
-            return;
-        }
-
-        const uint64_t cutoff = end_ts > PRICE_DIFF_WINDOW_S
-            ? end_ts - PRICE_DIFF_WINDOW_S
-            : 0;
-        long double window_sum_dt = 0.0L;
-        long double window_dt = 0.0L;
-        for (size_t i = 0; i < PRICE_DIFF_BUCKETS; ++i) {
-            if (!skew_bucket_live[i]) {
-                continue;
-            }
-            const uint64_t bucket_start = skew_bucket_id[i] * PRICE_DIFF_BUCKET_S;
-            const uint64_t bucket_end = bucket_start + PRICE_DIFF_BUCKET_S;
-            if (bucket_end <= cutoff || bucket_start >= end_ts) {
-                continue;
-            }
-            window_sum_dt += skew_bucket_sum_dt[i];
-            window_dt += skew_bucket_dt[i];
-        }
-
-        if (window_dt > 0.0L) {
-            const long double avg = window_sum_dt / window_dt;
-            if (!have_7d_skew || avg > max_7d_skew) {
-                max_7d_skew = avg;
-                have_7d_skew = true;
-            }
-        }
+        skew_7d_max.sample(start_ts, end_ts, first_ts_imbalance, skew);
     }
     
     void sample_fee(uint64_t ts, T fee_frac) {
