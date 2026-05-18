@@ -111,10 +111,15 @@ def sweep(
     skip_build: bool = False,
     candles_file: Optional[Path] = None,
     threads: int = CORES_PER_BLADE,
-    dustswap_freq: int = 600,
+    dustswap_freq: int = 3600,
     candle_filter: Optional[float] = None,
+    disable_slippage_probes: bool = False,
+    quiet_harness: bool = False,
     output_prefix: str = "cluster_sweep",
     stream_blade: Optional[str] = None,
+    assignment: str = "block-cyclic",
+    chunk_size: int = 2048,
+    verbose_assignment: bool = False,
 ) -> Optional[Path]:
     """
     Run complete sweep pipeline.
@@ -132,6 +137,7 @@ def sweep(
         f"  Blades:  {len(blades)} ({', '.join(blades[:3])}{'...' if len(blades) > 3 else ''})"
     )
     print(f"  Threads: {threads} per blade")
+    print(f"  Assignment: {assignment} (chunk_size={chunk_size})")
     print(f"{'=' * 70}\n")
 
     # Step 0: Check connectivity
@@ -163,7 +169,12 @@ def sweep(
         threads_per_blade=threads,
         dustswap_freq=dustswap_freq,
         candle_filter=candle_filter,
+        disable_slippage_probes=disable_slippage_probes,
+        quiet_harness=quiet_harness,
         output_prefix=output_prefix,
+        assignment=assignment,
+        chunk_size=chunk_size,
+        verbose_assignment=verbose_assignment,
     )
 
     if not manifest.get("blades"):
@@ -184,7 +195,7 @@ def sweep(
     # Step 4: Collect
     print("\n[4/4] Collecting results...")
     LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}.json"
+    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}_{job_id}"
 
     merged = collect(manifest_path, output_file)
     if not merged:
@@ -193,7 +204,9 @@ def sweep(
 
     # Summary
     elapsed = time.time() - start
-    n_runs = len(merged.get("runs", []))
+    n_runs = len(merged.get("runs", [])) or int(
+        merged.get("summary", {}).get("total_runs", 0)
+    )
 
     print(f"\n{'=' * 70}")
     print(f"  SWEEP COMPLETE")
@@ -225,7 +238,7 @@ def resume(
         cfg = manifest.get("config", {})
         output_prefix = cfg.get("output_prefix", "cluster_sweep")
         LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+        output_file = LOCAL_RESULTS_DIR / f"{output_prefix}"
 
         merged = collect(manifest_path, output_file)
         return output_file if merged else None
@@ -238,7 +251,7 @@ def resume(
     cfg = manifest.get("config", {})
     output_prefix = cfg.get("output_prefix", "cluster_sweep")
     LOCAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}.json"
+    output_file = LOCAL_RESULTS_DIR / f"{output_prefix}"
     merged = collect(manifest_path, output_file)
     return output_file if merged else None
 
@@ -265,9 +278,22 @@ def main():
 
     # Harness parameters
     parser.add_argument("--threads", type=int, default=CORES_PER_BLADE)
-    parser.add_argument("--dustswap-freq", type=int, default=600)
+    parser.add_argument("--dustswap-freq", type=int, default=3600)
     parser.add_argument("--candle-filter", type=float)
+    parser.add_argument("--disable-slippage-probes", action="store_true")
+    parser.add_argument("--quiet-harness", action="store_true")
     parser.add_argument("--output-prefix", default="cluster_sweep")
+    parser.add_argument(
+        "--assignment",
+        choices=["block-cyclic", "contiguous"],
+        default="block-cyclic",
+    )
+    parser.add_argument("--chunk-size", type=int, default=2048)
+    parser.add_argument(
+        "--verbose-assignment",
+        action="store_true",
+        help="Print per-blade pool assignment details during distribution",
+    )
 
     # Workflow control
     parser.add_argument("--skip-build", action="store_true")
@@ -313,8 +339,13 @@ def main():
         threads=args.threads,
         dustswap_freq=args.dustswap_freq,
         candle_filter=args.candle_filter,
+        disable_slippage_probes=args.disable_slippage_probes,
+        quiet_harness=args.quiet_harness,
         output_prefix=args.output_prefix,
         stream_blade=args.stream_blade,
+        assignment=args.assignment,
+        chunk_size=args.chunk_size,
+        verbose_assignment=args.verbose_assignment,
     )
 
     sys.exit(0 if result else 1)

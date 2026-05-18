@@ -22,6 +22,8 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
+
 try:
     import orjson
 except Exception as exc:  # pragma: no cover - runtime guard
@@ -57,13 +59,17 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
-def _add_env(env: Dict[str, float], src: Any) -> None:
+def _add_env(env: Dict[str, float], src: Any, prefix: str = "") -> None:
     if not isinstance(src, dict):
         return
     for key, val in src.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(val, dict):
+            _add_env(env, val, name)
+            continue
         num = _to_float(val)
-        if num is not None and key not in env:
-            env[key] = num
+        if num is not None and name not in env:
+            env[name] = num
 
 
 def _build_env(run: Dict[str, Any]) -> Dict[str, float]:
@@ -122,16 +128,12 @@ def _run_coord_values(
                 values.append(num)
             return values
 
-    pool = run.get("pool")
-    if not isinstance(pool, dict):
-        params = run.get("params")
-        if isinstance(params, dict):
-            pool = params.get("pool")
+    pool = pool_for_run(run)
 
-    if isinstance(pool, dict) and names:
+    if pool and names:
         values = []
         for name in names:
-            num = _to_float(pool.get(name))
+            num = _to_float(pool_value(pool, name))
             if num is None:
                 return None
             values.append(num)
@@ -143,10 +145,16 @@ def _run_coord_values(
 def _format_coord(name: str, val: float) -> str | float:
     if name == "A":
         return f"{val / 10_000:4.2f}"
+    if "fee_bps" in name:
+        return f"{val:4.2f}"
     if name in {"mid_fee", "out_fee"}:
         return f"{int(val / 10**10 * 10_000)}"
     if name == "donation_apy":
         return f"{val:4.3f}"
+    if name in {"reserved_profit_fraction", "admin_fee"}:
+        return f"{val / 1e10:0.4f}"
+    if name.endswith("_wad"):
+        return f"{val / 1e18:0.6f}"
     if name == "fee_gamma":
         return f"{val / 1e18:0.6f}"
     return val
@@ -311,9 +319,14 @@ def main() -> None:
 
     names, x_keys = _ordered_grid(data.get("metadata", {}))
     if not names:
-        first_pool = runs[0].get("pool") or runs[0].get("params", {}).get("pool")
-        if isinstance(first_pool, dict):
-            names = sorted(first_pool.keys())
+        names, _, x_keys = infer_grid_from_runs(runs)
+    if not names:
+        first_pool = pool_for_run(runs[0])
+        if first_pool:
+            names = [
+                name for name, value in first_pool.items()
+                if _to_float(value) is not None
+            ]
 
     entries = []
     for run in runs:

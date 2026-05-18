@@ -8,6 +8,12 @@ import os
 import sys
 from typing import Dict, List, Any, Tuple
 import boa
+from boa import interpret
+
+if cache_dir := os.getenv("BOA_CACHE_DIR"):
+    interpret.set_cache_dir(cache_dir)
+elif os.getenv("BOA_DISABLE_CACHE") == "1":
+    interpret.disable_cache()
 
 
 class VyperPoolRunner:
@@ -31,7 +37,6 @@ class VyperPoolRunner:
         views_path = os.path.join(
             self.contracts_path, "contracts/main/TwocryptoView.vy"
         )
-        pool_path = os.path.join(self.contracts_path, "contracts/main/Twocrypto.vy")
         factory_path = os.path.join(
             self.contracts_path, "contracts/main/TwocryptoFactory.vy"
         )
@@ -46,8 +51,20 @@ class VyperPoolRunner:
         self.views_contract = boa.load(views_path)
         print(f"  ✓ Views contract: {self.views_contract.address}")
 
-        # Deploy pool implementation as blueprint
-        pool_contract = boa.load_partial(pool_path)
+        # Deploy pool implementation as blueprint with immutable periphery embedded.
+        pool_path = os.path.join(self.contracts_path, "contracts/main/Twocrypto.vy")
+        pool_code = open(pool_path, "r").read()
+        pool_code = pool_code.replace(
+            "MATH = Math(empty(address))",
+            f"MATH = Math({self.math_contract.address})",
+            1,
+        )
+        pool_code = pool_code.replace(
+            "VIEW = Views(empty(address))",
+            f"VIEW = Views({self.views_contract.address})",
+            1,
+        )
+        pool_contract = boa.loads_partial(pool_code)
         self.amm_implementation = pool_contract.deploy_as_blueprint()
         print("  ✓ Pool implementation deployed")
 
@@ -85,7 +102,49 @@ class VyperPoolRunner:
 
         return token0, token1
 
-    def deploy_pool(self, params: Dict[str, str], token0: Any, token1: Any) -> Any:
+    def _policy_kind(self, params: Dict[str, Any]) -> str:
+        policy = params.get("policy", {"kind": "none"})
+        if isinstance(policy, str):
+            return policy
+        if isinstance(policy, dict):
+            return str(policy.get("kind", "none"))
+        return "none"
+
+    def _deploy_policy(self, kind: str, pool: Any) -> Any:
+        if kind in ("", "none"):
+            return None
+        if kind == "twocrypto_policy":
+            policy_path = os.path.join(
+                self.contracts_path, "contracts/main/TwocryptoPolicy.vy"
+            )
+            return boa.load(policy_path, pool.address)
+        if kind == "zero_stub":
+            policy_path = os.path.join(
+                self.contracts_path, "tests/mocks/ZeroStubPolicy.vy"
+            )
+            return boa.load(policy_path)
+        if kind in ("oracle_x2", "price_oracle_x2", "oracle_x2_sequential_fee"):
+            policy_path = os.path.join(
+                self.contracts_path, "tests/mocks/OracleX2SequentialFeePolicy.vy"
+            )
+            return boa.load(policy_path, pool.address)
+        raise ValueError(f"unsupported policy kind: {kind}")
+
+    def configure_pool(self, pool: Any, params: Dict[str, Any]) -> None:
+        reserved_profit_fraction = int(params.get("reserved_profit_fraction", 5 * 10**9))
+        admin_fee = int(params.get("admin_fee", 5 * 10**9))
+        policy_kind = self._policy_kind(params)
+        policy = self._deploy_policy(policy_kind, pool)
+        zero = "0x0000000000000000000000000000000000000000"
+
+        with boa.env.prank(self.owner):
+            pool.set_fee_parameters(reserved_profit_fraction, admin_fee)
+            if policy is not None:
+                pool.set_policy_contract(policy)
+            elif policy_kind in ("", "none"):
+                pool.set_policy_contract(zero)
+
+    def deploy_pool(self, params: Dict[str, Any], token0: Any, token1: Any) -> Any:
         """Deploy a pool with given parameters."""
         # Deploy pool through factory
         pool_address = self.factory.deploy_pool(
@@ -98,8 +157,8 @@ class VyperPoolRunner:
             int(params["mid_fee"]),  # mid_fee
             int(params["out_fee"]),  # out_fee
             int(params["fee_gamma"]),  # fee_gamma
-            int(params["allowed_extra_profit"]),  # allowed_extra_profit
-            int(params["adjustment_step"]),  # adjustment_step
+            int(params["adjustment_step_min"]),  # adjustment_step_min
+            int(params["adjustment_step_max"]),  # adjustment_step_max
             int(params["ma_time"]),  # ma_exp_time
             int(params["initial_price"]),  # initial_price
         )
@@ -108,10 +167,7 @@ class VyperPoolRunner:
         pool_path = os.path.join(self.contracts_path, "contracts/main/Twocrypto.vy")
         pool = boa.load_partial(pool_path).at(pool_address)
 
-        # Set periphery using the owner we saved during initialization
-        with boa.env.prank(self.owner):
-            pool.set_periphery(self.views_contract.address, self.math_contract.address)
-
+        self.configure_pool(pool, params)
         return pool
 
     def add_initial_liquidity(
@@ -119,7 +175,7 @@ class VyperPoolRunner:
     ) -> None:
         """Add initial liquidity to pool."""
         token0, token1 = tokens
-        user = boa.env.generate_address()
+        user = boa.env.eoa
 
         # Mint tokens
         token0.mint(user, int(amounts[0]))
@@ -158,14 +214,38 @@ class VyperPoolRunner:
 
         # Compute unlocked donation shares directly via internal function
         # This mirrors _donation_shares(True) exactly
-        donation_shares_unlocked = pool.internal._donation_shares()
+        timestamp = boa.env.timestamp
+        if donation_shares == 0:
+            donation_shares_unlocked = 0
+        else:
+            elapsed = timestamp - last_donation_release_ts
+            donation_shares_unlocked = min(
+                donation_shares,
+                donation_shares * elapsed // donation_duration,
+            )
+            protection_factor = 0
+            if donation_protection_expiry_ts > timestamp:
+                protection_factor = min(
+                    (donation_protection_expiry_ts - timestamp)
+                    * 10**18
+                    // donation_protection_period,
+                    10**18,
+                )
+            donation_shares_unlocked = (
+                donation_shares_unlocked * (10**18 - protection_factor) // 10**18
+            )
 
         return {
             "balances": [str(b) for b in balances],
+            "admin_balances": [
+                str(pool.admin_balances(0)),
+                str(pool.admin_balances(1)),
+            ],
             "xp": [str(xp[0]), str(xp[1])],
             "D": str(pool.D()),
             "virtual_price": str(pool.virtual_price()),
             "xcp_profit": str(pool.xcp_profit()),
+            "lp_xcp_profit": str(pool.lp_xcp_profit()),
             "price_scale": str(price_scale),
             "price_oracle": str(cached_price_oracle),
             "last_prices": str(pool.last_prices()),
@@ -182,7 +262,7 @@ class VyperPoolRunner:
     ) -> List[Dict[str, Any]]:
         """Execute action sequence on Vyper pool and collect snapshots."""
         token0, token1 = tokens
-        user = boa.env.generate_address()
+        user = boa.env.eoa
         snapshots = []
         total_actions = len(actions)
         if total_actions:
@@ -241,6 +321,14 @@ class VyperPoolRunner:
                         boa.env.timestamp = boa.env.timestamp + secs
                     elif "timestamp" in action:
                         boa.env.timestamp = int(action["timestamp"])
+                elif action["type"] == "remove_liquidity":
+                    min_amounts = action.get("min_amounts", [0, 0])
+                    with boa.env.prank(user):
+                        pool.remove_liquidity(
+                            int(action["amount"]),
+                            [int(min_amounts[0]), int(min_amounts[1])],
+                            user,
+                        )
 
             except Exception as e:
                 success = False
@@ -334,6 +422,7 @@ class VyperPoolRunner:
                 results.append(
                     {
                         "pool_config": pool_config["name"],
+                        "sequence": sequence["name"],
                         "result": {
                             "success": all(
                                 s.get("action_success", True) for s in snapshots[1:]
@@ -348,6 +437,7 @@ class VyperPoolRunner:
                 results.append(
                     {
                         "pool_config": pool_config["name"],
+                        "sequence": sequence["name"],
                         "result": {
                             "success": all(
                                 s.get("action_success", True) for s in snapshots[1:]

@@ -9,6 +9,7 @@ Examples:
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --arb arb_sim/run_data/arb_run_1.json
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_mask_5 --local --top 10 --enumerate
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_masked --pricethr 100 --local
+  uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric apy_masked --pricethr 100 --max-rel-pdiff --local
   uv run --with orjson python arb_sim/find_local_maxima_orjson.py --metric tw_real_slippage_5pct --min --local
 """
 
@@ -18,6 +19,9 @@ import argparse
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
+
+from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
+from arb_run_npz import NpzRun, load_json_or_npz, ordered_grid
 
 import numpy as np
 from scipy import ndimage as ndi
@@ -32,25 +36,39 @@ except Exception as exc:  # pragma: no cover - runtime guard
 
 HERE = Path(__file__).resolve().parent
 RUN_DIR = HERE / "run_data"
+MASKED_METRIC_SOURCES = {
+    "apy_masked": "apy_net",
+    "apy_gm_masked": "apy_net_gm",
+}
+SKEW_METRIC = "max_7d_skew"
 
 
 def _latest_arb_run() -> Path:
-    files = list(RUN_DIR.glob("arb_run_*.json"))
+    files = [
+        p
+        for p in RUN_DIR.glob("arb_run_*")
+        if p.is_dir() or p.suffix == ".json"
+    ]
     if not files:
-        raise SystemExit(f"No arb_run_*.json found under {RUN_DIR}")
+        raise SystemExit(f"No arb_run_* result found under {RUN_DIR}")
     files.sort(key=lambda p: os.path.getmtime(p))
     return files[-1]
 
 
 def _load(path: Path) -> Dict[str, Any]:
-    return orjson.loads(path.read_bytes())
+    return load_json_or_npz(path)
 
 
 def _ordered_grid(
     metadata: Dict[str, Any],
 ) -> Tuple[List[str], List[List[float]], List[str]]:
     grid = metadata.get("grid", {})
-    keys = sorted(grid.keys(), key=lambda k: int(k[1:]))
+    if not isinstance(grid, dict):
+        return [], [], []
+    keys = sorted(
+        (k for k in grid.keys() if isinstance(k, str) and k[1:].isdigit()),
+        key=lambda k: int(k[1:]),
+    )
     names = [grid[k]["name"] for k in keys]
     values = [grid[k]["values"] for k in keys]
     return names, values, keys
@@ -67,13 +85,17 @@ def _to_float(value: Any) -> float | None:
     return None
 
 
-def _add_env(env: Dict[str, float], src: Any) -> None:
+def _add_env(env: Dict[str, float], src: Any, prefix: str = "") -> None:
     if not isinstance(src, dict):
         return
     for key, val in src.items():
+        name = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(val, dict):
+            _add_env(env, val, name)
+            continue
         num = _to_float(val)
-        if num is not None and key not in env:
-            env[key] = num
+        if num is not None and name not in env:
+            env[name] = num
 
 
 def _build_env(run: Dict[str, Any]) -> Dict[str, float]:
@@ -110,7 +132,7 @@ def _run_coord_values(
     names: List[str],
 ) -> List[float]:
     x_val_keys = [f"{k}_val" for k in x_keys]
-    if all(k in run for k in x_val_keys):
+    if x_keys and all(k in run for k in x_val_keys):
         values: List[float] = []
         for k in x_val_keys:
             num = _to_float(run.get(k))
@@ -119,16 +141,12 @@ def _run_coord_values(
             values.append(num)
         return values
 
-    pool = run.get("pool")
-    if not isinstance(pool, dict):
-        params = run.get("params")
-        if isinstance(params, dict):
-            pool = params.get("pool")
+    pool = pool_for_run(run)
 
-    if isinstance(pool, dict):
+    if pool:
         values = []
         for name in names:
-            num = _to_float(pool.get(name))
+            num = _to_float(pool_value(pool, name))
             if num is None:
                 raise ValueError(f"Non-numeric pool value for {name}")
             values.append(num)
@@ -144,6 +162,55 @@ def _build_metric_grid(
     grid_values: List[List[float]],
     metric_key: str,
     price_thr_bps: float,
+    price_metric_key: str,
+    skew_thr_pct: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    arrays = [np.asarray(v, dtype=float) for v in grid_values]
+    shape = [len(a) for a in arrays]
+    metric = np.full(shape, np.nan, dtype=float)
+    pdiff_bps = np.full(shape, np.nan, dtype=float)
+
+    for run in runs:
+        if run.get("success") is False:
+            continue
+        if not isinstance(run.get("result"), dict):
+            continue
+        coord_vals = _run_coord_values(run, x_keys, names)
+        idx = []
+        for i, arr in enumerate(arrays):
+            idx.append(_index_for_value(arr, coord_vals[i]))
+        env = _build_env(run)
+        pdiff = env.get(price_metric_key)
+        if pdiff is not None:
+            pdiff_bps[tuple(idx)] = pdiff * 10000.0
+        if metric_key in MASKED_METRIC_SOURCES:
+            source_key = MASKED_METRIC_SOURCES[metric_key]
+            apy_net = env.get(source_key)
+            rel = env.get(price_metric_key)
+            if apy_net is None or rel is None:
+                raise KeyError(
+                    f"Metric '{metric_key}' requires {source_key} and {price_metric_key}"
+            )
+            thr = price_thr_bps / 10000.0
+            keep = rel <= thr
+            if keep and skew_thr_pct > 0.0:
+                skew = env.get(SKEW_METRIC)
+                keep = skew is not None and skew <= skew_thr_pct / 100.0
+            metric[tuple(idx)] = apy_net if keep else np.nan
+        else:
+            if metric_key not in env:
+                raise KeyError(f"Metric '{metric_key}' not found in run data")
+            metric[tuple(idx)] = env[metric_key]
+
+    return metric, pdiff_bps
+
+
+def _build_aux_grid(
+    runs: Iterable[Dict[str, Any]],
+    names: List[str],
+    x_keys: List[str],
+    grid_values: List[List[float]],
+    metric_key: str,
 ) -> np.ndarray:
     arrays = [np.asarray(v, dtype=float) for v in grid_values]
     shape = [len(a) for a in arrays]
@@ -159,21 +226,61 @@ def _build_metric_grid(
         for i, arr in enumerate(arrays):
             idx.append(_index_for_value(arr, coord_vals[i]))
         env = _build_env(run)
-        if metric_key == "apy_masked":
-            apy_net = env.get("apy_net")
-            avg_rel = env.get("avg_rel_price_diff")
-            if apy_net is None or avg_rel is None:
-                raise KeyError(
-                    "Metric 'apy_masked' requires apy_net and avg_rel_price_diff"
-                )
-            thr = price_thr_bps / 10000.0
-            metric[tuple(idx)] = apy_net if avg_rel <= thr else np.nan
-        else:
-            if metric_key not in env:
-                raise KeyError(f"Metric '{metric_key}' not found in run data")
-            metric[tuple(idx)] = env[metric_key]
-
+        val = env.get(metric_key)
+        if val is not None:
+            metric[tuple(idx)] = val
     return metric
+
+
+def _build_metric_grid_npz(
+    npz_run: NpzRun,
+    metadata: Dict[str, Any],
+    metric_key: str,
+    price_thr_bps: float,
+    price_metric_key: str,
+    skew_thr_pct: float,
+) -> Tuple[List[str], List[List[float]], List[str], np.ndarray, np.ndarray]:
+    names, grid_values, x_keys = ordered_grid(metadata)
+    if not names:
+        raise SystemExit("NPZ arb run requires metadata.grid")
+    shape = tuple(len(v) for v in grid_values)
+
+    def load(name: str) -> np.ndarray:
+        return npz_run.load_array(name).astype(float, copy=False).reshape(shape)
+
+    try:
+        pdiff_raw = load(price_metric_key)
+    except KeyError as exc:
+        raise KeyError(f"Metric '{price_metric_key}' not found in NPZ run") from exc
+    pdiff_bps = pdiff_raw * 10000.0
+
+    if metric_key in MASKED_METRIC_SOURCES:
+        source_key = MASKED_METRIC_SOURCES[metric_key]
+        try:
+            metric = load(source_key)
+        except KeyError as exc:
+            raise KeyError(f"Metric '{metric_key}' requires {source_key}") from exc
+        metric = np.where(pdiff_raw <= price_thr_bps / 10000.0, metric, np.nan)
+        if skew_thr_pct > 0.0:
+            try:
+                skew = load(SKEW_METRIC)
+            except KeyError as exc:
+                raise KeyError(f"Metric '{metric_key}' requires {SKEW_METRIC}") from exc
+            metric = np.where(skew <= skew_thr_pct / 100.0, metric, np.nan)
+    else:
+        try:
+            metric = load(metric_key)
+        except KeyError as exc:
+            raise KeyError(f"Metric '{metric_key}' not found in NPZ run") from exc
+
+    try:
+        success = npz_run.load_array("success").astype(bool).reshape(shape)
+        metric = np.where(success, metric, np.nan)
+        pdiff_bps = np.where(success, pdiff_bps, np.nan)
+    except KeyError:
+        pass
+
+    return names, grid_values, x_keys, metric, pdiff_bps
 
 
 def _local_maxima(metric: np.ndarray, connectivity: str) -> List[Tuple[int, ...]]:
@@ -191,6 +298,65 @@ def _local_maxima(metric: np.ndarray, connectivity: str) -> List[Tuple[int, ...]
     return coords
 
 
+def _neighborhood_footprint(ndim: int, connectivity: str, radius: int) -> np.ndarray:
+    if radius < 1:
+        raise ValueError("--neighbor-radius must be >= 1")
+    shape = (2 * radius + 1,) * ndim
+    foot = np.zeros(shape, dtype=bool)
+    for offset in np.ndindex(shape):
+        delta = tuple(i - radius for i in offset)
+        if connectivity == "axis":
+            include = sum(1 for d in delta if d != 0) <= 1
+        else:
+            include = True
+        if include:
+            foot[offset] = True
+    return foot
+
+
+def _neighbor_score_grid(
+    metric: np.ndarray,
+    *,
+    connectivity: str,
+    radius: int,
+    min_neighbors: int,
+    rank_neighbor_avg: bool,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    valid = np.isfinite(metric)
+    foot = _neighborhood_footprint(metric.ndim, connectivity, radius)
+    center = (radius,) * metric.ndim
+    foot_without_center = foot.copy()
+    foot_without_center[center] = False
+
+    neighbor_count = ndi.convolve(
+        valid.astype(np.int16),
+        foot_without_center.astype(np.int16),
+        mode="constant",
+        cval=0,
+    )
+    keep = valid & (neighbor_count >= min_neighbors)
+
+    if not rank_neighbor_avg:
+        return np.where(keep, metric, np.nan), keep, None
+
+    value_sum = ndi.convolve(
+        np.where(valid, metric, 0.0),
+        foot.astype(float),
+        mode="constant",
+        cval=0.0,
+    )
+    value_count = ndi.convolve(
+        valid.astype(float),
+        foot.astype(float),
+        mode="constant",
+        cval=0.0,
+    )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        avg = value_sum / value_count
+    avg = np.where(keep & (value_count > 0), avg, np.nan)
+    return avg, keep, avg
+
+
 def _coord_dict(
     coord: Tuple[int, ...],
     names: List[str],
@@ -202,11 +368,17 @@ def _coord_dict(
         if name == "A":
             disp = val / 10_000
             formatted[name] = str(f"{disp:4.2f}")
+        elif "fee_bps" in name:
+            formatted[name] = str(f"{val:4.2f}")
         elif name in {"mid_fee", "out_fee"}:
             disp = int(val / 10**10 * 10_000)
             formatted[name] = str(f"{disp:d}")
         elif name == "donation_apy":
             formatted[name] = str(f"{val:4.3f}")
+        elif name in {"reserved_profit_fraction", "admin_fee"}:
+            formatted[name] = str(f"{val / 1e10:0.4f}")
+        elif name.endswith("_wad"):
+            formatted[name] = str(f"{val / 1e18:0.6f}")
         elif name == "fee_gamma":
             formatted[name] = str(f"{val / 1e18:0.6f}")
         else:
@@ -214,15 +386,75 @@ def _coord_dict(
     return formatted
 
 
+def _pdiff_label(price_metric_key: str) -> str:
+    if price_metric_key == "max_rel_price_diff":
+        return "max_pdiff_bps"
+    if price_metric_key == "max_7d_rel_price_diff":
+        return "max_7d_pdiff_bps"
+    return "avg_pdiff_bps"
+
+
+def _pdiff_text(pdiff_grid: np.ndarray, coord: Tuple[int, ...], label: str) -> str:
+    pdiff = float(pdiff_grid[coord])
+    if not np.isfinite(pdiff):
+        return ""
+    return f" {label}={pdiff:.2f}"
+
+
+def _skew_text(skew_grid: np.ndarray | None, coord: Tuple[int, ...]) -> str:
+    if skew_grid is None:
+        return ""
+    skew = float(skew_grid[coord])
+    if not np.isfinite(skew):
+        return ""
+    return f" max_7d_skew={skew * 100.0:.2f}%"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON")
+    parser.add_argument("--arb", type=Path, default=None, help="Path to arb_run JSON or NPZ directory")
     parser.add_argument("--metric", type=str, default="apy_mask_3", help="Metric key")
     parser.add_argument(
         "--pricethr",
         type=float,
         default=100.0,
-        help="Max avg_rel_price_diff in bps for apy_masked",
+        help="Max price-diff metric in bps for apy_masked",
+    )
+    parser.add_argument(
+        "--pdif7d",
+        type=float,
+        default=None,
+        help="Alias for --price-metric max_7d_rel_price_diff with threshold in bps.",
+    )
+    parser.add_argument(
+        "--imb7d",
+        type=float,
+        default=0.0,
+        help="Max max_7d_skew in percent for masked metrics; 0 disables.",
+    )
+    parser.add_argument(
+        "--price-metric",
+        choices=[
+            "avg_rel_price_diff",
+            "max_rel_price_diff",
+            "max_7d_rel_price_diff",
+        ],
+        default="avg_rel_price_diff",
+        help="Price-diff metric used by apy_masked",
+    )
+    parser.add_argument(
+        "--max-rel-pdiff",
+        dest="price_metric",
+        action="store_const",
+        const="max_rel_price_diff",
+        help="Alias for --price-metric max_rel_price_diff",
+    )
+    parser.add_argument(
+        "--max-7d-pdiff",
+        dest="price_metric",
+        action="store_const",
+        const="max_7d_rel_price_diff",
+        help="Alias for --price-metric max_7d_rel_price_diff",
     )
     parser.add_argument(
         "--local", action="store_true", help="Report local maxima on grid"
@@ -247,66 +479,148 @@ def main() -> None:
         action="store_true",
         help="Prefix local maxima with rank",
     )
+    parser.add_argument(
+        "--rank-neighbor-avg",
+        action="store_true",
+        help="Rank/search by finite neighborhood average instead of the raw metric.",
+    )
+    parser.add_argument(
+        "--neighbor-radius",
+        type=int,
+        default=1,
+        help="Radius for --rank-neighbor-avg and --min-neighbors.",
+    )
+    parser.add_argument(
+        "--min-neighbors",
+        type=int,
+        default=0,
+        help="Require at least N finite neighboring cells after filters; excludes the center.",
+    )
     args = parser.parse_args()
+    if args.pdif7d is not None:
+        args.price_metric = "max_7d_rel_price_diff"
+        args.pricethr = args.pdif7d
 
     arb_path = args.arb or _latest_arb_run()
     print(f"Loading {arb_path}")
     data = _load(arb_path)
 
-    runs = data.get("runs", [])
-    if not runs:
-        raise SystemExit("No runs found in JSON")
+    npz_run = data.get("_npz_run")
+    if isinstance(npz_run, NpzRun):
+        names, grid_values, x_keys, metric, pdiff_bps = _build_metric_grid_npz(
+            npz_run,
+            data.get("metadata", {}),
+            args.metric,
+            args.pricethr,
+            args.price_metric,
+            args.imb7d,
+        )
+        try:
+            skew_grid = npz_run.load_array(SKEW_METRIC).astype(float, copy=False).reshape(metric.shape)
+        except KeyError:
+            skew_grid = None
+    else:
+        runs = data.get("runs", [])
+        if not runs:
+            raise SystemExit("No runs found in JSON")
 
-    names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
-    metric = _build_metric_grid(
-        runs, names, x_keys, grid_values, args.metric, args.pricethr
-    )
+        names, grid_values, x_keys = _ordered_grid(data.get("metadata", {}))
+        if not names:
+            names, grid_values, x_keys = infer_grid_from_runs(runs)
+        if not names:
+            raise SystemExit("No grid dimensions found in metadata or params.pool")
+        metric, pdiff_bps = _build_metric_grid(
+            runs,
+            names,
+            x_keys,
+            grid_values,
+            args.metric,
+            args.pricethr,
+            args.price_metric,
+            args.imb7d,
+        )
+        skew_grid = _build_aux_grid(runs, names, x_keys, grid_values, SKEW_METRIC)
+    pdiff_label = _pdiff_label(args.price_metric)
     finite_metric = np.where(np.isfinite(metric), metric, np.nan)
     if not np.isfinite(finite_metric).any():
         raise SystemExit("No finite metric values found")
+    if args.neighbor_radius < 1:
+        raise SystemExit("--neighbor-radius must be >= 1")
+    if args.min_neighbors < 0:
+        raise SystemExit("--min-neighbors must be >= 0")
+
+    score, _neighbor_keep, neighbor_avg = _neighbor_score_grid(
+        finite_metric,
+        connectivity=args.connectivity,
+        radius=args.neighbor_radius,
+        min_neighbors=args.min_neighbors,
+        rank_neighbor_avg=args.rank_neighbor_avg,
+    )
+    if not np.isfinite(score).any():
+        raise SystemExit("No finite metric values remain after neighbor filters")
+
+    def score_text(coord: Tuple[int, ...]) -> str:
+        if neighbor_avg is None:
+            return ""
+        val = float(neighbor_avg[coord])
+        if not np.isfinite(val):
+            return ""
+        return f" neighbor_avg={val:.6f}"
 
     if args.min:
-        search_metric = np.where(np.isfinite(metric), -metric, -np.inf)
+        search_metric = np.where(np.isfinite(score), -score, -np.inf)
         min_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
         min_val = float(metric[min_idx])
         min_coord = _coord_dict(min_idx, names, grid_values)
-        print(f"global_min {args.metric}={min_val:.6f} coords={min_coord}")
+        pdiff = _pdiff_text(pdiff_bps, min_idx, pdiff_label)
+        skew = _skew_text(skew_grid, min_idx)
+        score_suffix = score_text(min_idx)
+        print(f"global_min {args.metric}={min_val:.6f}{score_suffix}{pdiff}{skew} coords={min_coord}")
 
         if args.local:
             coords = _local_maxima(search_metric, args.connectivity)
-            coords_sorted = sorted(coords, key=lambda c: metric[c])
+            coords_sorted = sorted(coords, key=lambda c: score[c])
             print(f"local_minima_count {len(coords_sorted)}")
             limit = len(coords_sorted) if args.top <= 0 else args.top
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
+                pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
+                skew = _skew_text(skew_grid, coord)
+                score_suffix = score_text(coord)
                 if args.enumerate:
                     print(
-                        f"local_min #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                        f"local_min #{rank} {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_min {args.metric}={val:.6f} coords={coord_dict}")
+                    print(f"local_min {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}")
     else:
-        metric = np.where(np.isfinite(metric), metric, -np.inf)
-        max_idx = np.unravel_index(int(np.argmax(metric)), metric.shape)
+        search_metric = np.where(np.isfinite(score), score, -np.inf)
+        max_idx = np.unravel_index(int(np.argmax(search_metric)), search_metric.shape)
         max_val = float(metric[max_idx])
         max_coord = _coord_dict(max_idx, names, grid_values)
-        print(f"global_max {args.metric}={max_val:.6f} coords={max_coord}")
+        pdiff = _pdiff_text(pdiff_bps, max_idx, pdiff_label)
+        skew = _skew_text(skew_grid, max_idx)
+        score_suffix = score_text(max_idx)
+        print(f"global_max {args.metric}={max_val:.6f}{score_suffix}{pdiff}{skew} coords={max_coord}")
 
         if args.local:
-            coords = _local_maxima(metric, args.connectivity)
-            coords_sorted = sorted(coords, key=lambda c: metric[c], reverse=True)
+            coords = _local_maxima(search_metric, args.connectivity)
+            coords_sorted = sorted(coords, key=lambda c: score[c], reverse=True)
             print(f"local_maxima_count {len(coords_sorted)}")
             limit = len(coords_sorted) if args.top <= 0 else args.top
             for rank, coord in enumerate(coords_sorted[:limit], start=1):
                 val = float(metric[coord])
                 coord_dict = _coord_dict(coord, names, grid_values)
+                pdiff = _pdiff_text(pdiff_bps, coord, pdiff_label)
+                skew = _skew_text(skew_grid, coord)
+                score_suffix = score_text(coord)
                 if args.enumerate:
                     print(
-                        f"local_max #{rank} {args.metric}={val:.6f} coords={coord_dict}"
+                        f"local_max #{rank} {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}"
                     )
                 else:
-                    print(f"local_max {args.metric}={val:.6f} coords={coord_dict}")
+                    print(f"local_max {args.metric}={val:.6f}{score_suffix}{pdiff}{skew} coords={coord_dict}")
 
 
 if __name__ == "__main__":

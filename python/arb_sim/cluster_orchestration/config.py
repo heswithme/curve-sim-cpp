@@ -144,7 +144,7 @@ class JobConfig:
 
     # Harness arguments
     threads_per_blade: int = CORES_PER_BLADE
-    dustswap_freq: int = 600
+    dustswap_freq: int = 3600
     candle_filter: Optional[float] = None
 
     # Output

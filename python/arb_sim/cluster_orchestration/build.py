@@ -42,6 +42,7 @@ set(COMMON_SOURCES
     src/main.cpp
     src/events.cpp
     src/cli.cpp
+    src/pool_config_source.cpp
 )
 
 set(COMMON_FLAGS -Wall -Wextra)

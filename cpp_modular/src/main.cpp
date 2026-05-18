@@ -8,6 +8,8 @@
 #include <iostream>
 #include <iomanip>
 #include <limits>
+#include <utility>
+#include <vector>
 
 #include "harness/cli.hpp"
 #include "harness/runner.hpp"
@@ -51,8 +53,8 @@ void test_pool(T cex_price = T(-1)) {
     T mid_fee = T(0.0001);
     T out_fee = T(0.0006);
     T fee_gamma = T(0.00023);
-    T allowed_extra_profit = T(1e-8);
-    T adjustment_step = T(0.0001);
+    T adjustment_step_min = T(0.000001);
+    T adjustment_step_max = T(0.0001);
     T ma_time = T(600.0);
     T initial_price = T(1.08);
 
@@ -60,7 +62,7 @@ void test_pool(T cex_price = T(-1)) {
         precisions,
         A, gamma,
         mid_fee, out_fee, fee_gamma,
-        allowed_extra_profit, adjustment_step, ma_time,
+        adjustment_step_min, adjustment_step_max, ma_time,
         initial_price
     );
 
@@ -96,10 +98,12 @@ void test_pool(T cex_price = T(-1)) {
     // Arbitrage decision
     if (cex_price > T(0)) {
         arb::trading::Costs<T> costs{};
+        const T fee_cex = costs.arb_fee_bps / T(10000);
         auto dec = arb::trading::decide_trade(
             pool, cex_price, costs,
             std::numeric_limits<T>::infinity(),
-            T(0.001), T(0.1)
+            T(0.001), T(0.1),
+            T(1) - fee_cex, T(1) + fee_cex
         );
         std::cout << "\nArb decision:\n";
         std::cout << "  do_trade = " << dec.do_trade << "\n";
@@ -154,23 +158,38 @@ int main(int argc, char* argv[]) {
             std::vector<arb::Candle>().swap(candles);
         }
 
-        std::cout << "loaded " << n_candles << " candles -> "
-                  << events.size() << " events from " << args.candles_path << "\n" << std::flush;
+        if (!args.quiet) {
+            std::cout << "loaded " << n_candles << " candles -> "
+                      << events.size() << " events from " << args.candles_path << "\n" << std::flush;
+        }
         
         auto t_read1 = std::chrono::high_resolution_clock::now();
         double candles_read_ms = std::chrono::duration<double, std::milli>(t_read1 - t_read0).count();
 
-        // Load pool configs from JSON (optionally subset by range)
-        auto pool_configs = arb::pools::load_pool_configs<RealT>(
-            args.pools_path, args.pool_start, args.pool_end);
+        // Load pool configs from JSON (optionally subset by contiguous or range-file assignment).
+        std::vector<std::pair<arb::pools::PoolInit<RealT>, arb::trading::Costs<RealT>>> pool_configs;
+        if (!args.pool_ranges_path.empty()) {
+            auto ranges = arb::pools::load_pool_ranges_file(args.pool_ranges_path);
+            pool_configs = arb::pools::load_pool_configs_for_ranges<RealT>(
+                args.pools_path,
+                ranges
+            );
+        } else {
+            pool_configs = arb::pools::load_pool_configs<RealT>(
+                args.pools_path, args.pool_start, args.pool_end);
+        }
         if (pool_configs.empty()) {
             throw std::runtime_error("No pool configurations found in " + args.pools_path);
         }
-        std::cout << "loaded " << pool_configs.size() << " pools";
-        if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
-            std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+        if (!args.quiet) {
+            std::cout << "loaded " << pool_configs.size() << " pools";
+            if (!args.pool_ranges_path.empty()) {
+                std::cout << " from ranges " << args.pool_ranges_path;
+            } else if (args.pool_start > 0 || args.pool_end < SIZE_MAX) {
+                std::cout << " (range " << args.pool_start << "-" << (args.pool_start + pool_configs.size()) << ")";
+            }
+            std::cout << "\n" << std::flush;
         }
-        std::cout << "\n" << std::flush;
         
         // Build run configuration from CLI args
         arb::harness::RunConfig<RealT> run_cfg{};
@@ -200,55 +219,90 @@ int main(int argc, char* argv[]) {
         auto results = arb::harness::run_pools_parallel(
             pool_configs, events, run_cfg,
             args.n_threads,
-            true,  // verbose - prints progress per pool
+            !args.quiet,
             candles_ptr
         );
         
         auto t_exec1 = std::chrono::high_resolution_clock::now();
         double exec_ms = std::chrono::duration<double, std::milli>(t_exec1 - t_exec0).count();
         
-        // Write JSON output
+        // Write output. A .json path preserves the legacy row JSON; otherwise
+        // the path is treated as an arb_npz_v1 run directory.
         if (!args.out_path.empty()) {
-            bool ok = arb::harness::write_results_json(
-                args.out_path,
-                results,
-                events.size(),
-                args.candles_path,
-                args.n_threads,
-                candles_read_ms,
-                exec_ms
-            );
+            const bool legacy_json =
+                args.out_path.size() >= 5 &&
+                args.out_path.substr(args.out_path.size() - 5) == ".json";
+            bool ok = legacy_json
+                ? arb::harness::write_results_json(
+                    args.out_path,
+                    results,
+                    n_candles,
+                    events.size(),
+                    args.candles_path,
+                    args.pools_path,
+                    TYPE_NAME,
+                    args.n_threads,
+                    run_cfg,
+                    args.max_candles,
+                    args.candle_filter_pct,
+                    args.pool_start,
+                    args.pool_end,
+                    args.quiet,
+                    candles_read_ms,
+                    exec_ms
+                )
+                : arb::harness::write_results_npz_dir(
+                    args.out_path,
+                    results,
+                    n_candles,
+                    events.size(),
+                    args.candles_path,
+                    args.pools_path,
+                    TYPE_NAME,
+                    args.n_threads,
+                    run_cfg,
+                    args.max_candles,
+                    args.candle_filter_pct,
+                    args.pool_start,
+                    args.pool_end,
+                    args.quiet,
+                    candles_read_ms,
+                    exec_ms
+                );
             if (!ok) {
                 std::cerr << "Warning: Failed to write output to " << args.out_path << "\n";
             }
         }
         
         // Write detailed log if requested (uses first pool's detailed entries)
-        // Place detailed_log.json next to the output file
+        // Place detailed-output next to the output file
         if (args.detailed_log && !results.empty()) {
-            // Compute detailed_log.json path: same directory as output, fixed name
+            // Compute detailed output path: same directory as output, fixed name
             std::string detailed_log_path;
+            const std::string detailed_log_name =
+                args.detailed_npz ? "detailed-output.npz" : "detailed-output.json";
             {
                 auto pos = args.out_path.find_last_of("/\\");
                 if (pos != std::string::npos) {
-                    detailed_log_path = args.out_path.substr(0, pos + 1) + "detailed-output.json";
+                    detailed_log_path = args.out_path.substr(0, pos + 1) + detailed_log_name;
                 } else {
-                    detailed_log_path = "detailed-output.json";
+                    detailed_log_path = detailed_log_name;
                 }
             }
             
             // Find first successful result with detailed entries
             for (const auto& res : results) {
                 if (res.success && !res.detailed_entries.empty()) {
-                    bool ok = arb::harness::write_detailed_log(
-                        detailed_log_path,
-                        res.detailed_entries
-                    );
+                    bool ok = args.detailed_npz
+                        ? arb::harness::write_detailed_npz(detailed_log_path, res.detailed_entries)
+                        : arb::harness::write_detailed_log(detailed_log_path, res.detailed_entries);
                     if (!ok) {
                         std::cerr << "Warning: Failed to write detailed log to "
                                   << detailed_log_path << "\n";
                     } else {
-                        std::cout << "Wrote detailed log (" << res.detailed_entries.size()
+                        std::cout << "Wrote detailed "
+                                  << (args.detailed_npz ? "NPZ log" : "log")
+                                  << " (" << res.detailed_entries.size()
                                   << " entries) to " << detailed_log_path << "\n";
                     }
                     break;  // Only write first pool's detailed log

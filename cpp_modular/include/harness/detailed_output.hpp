@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <fstream>
 #include <iomanip>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 #include "events/types.hpp"
+#include "harness/npz_writer.hpp"
 
 namespace arb {
 namespace harness {
@@ -25,6 +27,7 @@ struct DetailedEntry {
     T vp_boosted;         // virtual price with donation boost
     T xcp;                // raw xcp_profit value
     T total_supply;       // total LP supply
+    T donation_apy;       // annual donation rate used by the harness
     T donation_shares;    // donation shares balance
     T donation_unlocked;  // unlocked donation shares
     T last_prices;        // last spot price used for EMA
@@ -60,6 +63,7 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
             << ", \"vp_boosted\": " << e.vp_boosted
             << ", \"xcp\": " << e.xcp
             << ", \"total_supply\": " << e.total_supply
+            << ", \"donation_apy\": " << e.donation_apy
             << ", \"donation_shares\": " << e.donation_shares
             << ", \"donation_unlocked\": " << e.donation_unlocked
             << ", \"last_prices\": " << e.last_prices
@@ -79,6 +83,63 @@ bool write_detailed_log(const std::string& path, const std::vector<DetailedEntry
     out << "]\n";
     
     return out.good();
+}
+
+// Write detailed entries to NPZ as one array per field.
+// This keeps the same field names as detailed-output.json but avoids giant JSON traces.
+template <typename T>
+bool write_detailed_npz(const std::string& path, const std::vector<DetailedEntry<T>>& entries) {
+    try {
+        StoredNpzWriter writer(path);
+        std::vector<double> f64;
+        std::vector<uint64_t> u64;
+        f64.reserve(entries.size());
+        u64.reserve(entries.size());
+
+        auto add_f64 = [&](const std::string& name, auto member) {
+            f64.clear();
+            for (const auto& e : entries) {
+                f64.push_back(static_cast<double>(e.*member));
+            }
+            writer.add_f64(name, f64);
+        };
+        auto add_u64 = [&](const std::string& name, auto member) {
+            u64.clear();
+            for (const auto& e : entries) {
+                u64.push_back(static_cast<uint64_t>(e.*member));
+            }
+            writer.add_u64(name, u64);
+        };
+
+        add_u64("t", &DetailedEntry<T>::t);
+        add_f64("token0", &DetailedEntry<T>::token0);
+        add_f64("token1", &DetailedEntry<T>::token1);
+        add_f64("price_oracle", &DetailedEntry<T>::price_oracle);
+        add_f64("price_scale", &DetailedEntry<T>::price_scale);
+        add_f64("profit", &DetailedEntry<T>::profit);
+        add_f64("vp", &DetailedEntry<T>::vp);
+        add_f64("vp_boosted", &DetailedEntry<T>::vp_boosted);
+        add_f64("xcp", &DetailedEntry<T>::xcp);
+        add_f64("total_supply", &DetailedEntry<T>::total_supply);
+        add_f64("donation_apy", &DetailedEntry<T>::donation_apy);
+        add_f64("donation_shares", &DetailedEntry<T>::donation_shares);
+        add_f64("donation_unlocked", &DetailedEntry<T>::donation_unlocked);
+        add_f64("last_prices", &DetailedEntry<T>::last_prices);
+        add_u64("last_timestamp", &DetailedEntry<T>::last_timestamp);
+        add_f64("open", &DetailedEntry<T>::open);
+        add_f64("high", &DetailedEntry<T>::high);
+        add_f64("low", &DetailedEntry<T>::low);
+        add_f64("close", &DetailedEntry<T>::close);
+        add_f64("p_cex", &DetailedEntry<T>::p_cex);
+        add_f64("fee", &DetailedEntry<T>::fee);
+        add_u64("n_trades", &DetailedEntry<T>::n_trades);
+        add_u64("n_rebalances", &DetailedEntry<T>::n_rebalances);
+
+        writer.close();
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 } // namespace harness

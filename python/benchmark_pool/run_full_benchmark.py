@@ -18,6 +18,34 @@ from cpp_pool.cpp_pool_runner import run_cpp_pool as run_cpp_pool_mode
 from vyper_pool.vyper_pool_runner import run_vyper_pool
 
 
+PARITY_METRICS = [
+    "balances",
+    "admin_balances",
+    "xp",
+    "D",
+    "virtual_price",
+    "xcp_profit",
+    "lp_xcp_profit",
+    "totalSupply",
+    "price_scale",
+    "price_oracle",
+    "last_prices",
+    "donation_shares",
+    "donation_shares_unlocked",
+    "donation_protection_expiry_ts",
+    "last_donation_release_ts",
+]
+POLICY_KINDS = ("none", "twocrypto_policy", "zero_stub", "oracle_x2")
+
+
+def result_key(test: Dict[str, Any]) -> str:
+    pool = test.get("pool_config") or test.get("pool_name")
+    sequence = test.get("sequence")
+    if sequence:
+        return f"{pool}_{sequence}"
+    return str(pool)
+
+
 def run_cpp_benchmark(
     pool_configs_file: str, sequences_file: str, output_dir: str
 ) -> Dict:
@@ -36,7 +64,7 @@ def run_cpp_benchmark(
     # Extract states for each test
     cpp_states = {}
     for test in results["results"]:
-        key = f"{test['pool_config']}_{test['sequence']}"
+        key = result_key(test)
         if test["result"]["success"]:
             st = test["result"].get("states")
             cpp_states[key] = (
@@ -62,7 +90,7 @@ def run_cpp_double_benchmark(
 
     cpp_states = {}
     for test in results["results"]:
-        key = f"{test['pool_config']}_{test['sequence']}"
+        key = result_key(test)
         if test["result"]["success"]:
             # accept either states or final_state
             st = test["result"].get("states")
@@ -139,7 +167,7 @@ def run_vyper_benchmark(
     # Extract states for each test (Vyper runner may not include 'sequence')
     vyper_states = {}
     for test in results.get("results", []):
-        key = test.get("pool_config") or test.get("pool_name")
+        key = result_key(test)
         if not key:
             continue
         if test.get("result", {}).get("success"):
@@ -195,15 +223,8 @@ def compare_results(cpp_results: Dict, vyper_results: Dict = None) -> Dict:
             # Compare final snapshot
             c_final = c_states[-1] if isinstance(c_states, list) else c_states
             v_final = v_states[-1] if isinstance(v_states, list) else v_states
-            metric_list = [
-                "balances",
-                "D",
-                "virtual_price",
-                "totalSupply",
-                "price_scale",
-            ]
             any_diff = False
-            for m in metric_list:
+            for m in PARITY_METRICS:
                 if m in c_final and m in v_final:
                     if norm(c_final[m]) != norm(v_final[m]):
                         any_diff = True
@@ -235,7 +256,7 @@ def compare_final_precision(baseline: Dict, approx: Dict) -> Dict:
             continue
         b_final = b_states[-1] if isinstance(b_states, list) else b_states
         a_final = a_states[-1] if isinstance(a_states, list) else a_states
-        metrics = ["balances", "D", "virtual_price", "totalSupply", "price_scale"]
+        metrics = PARITY_METRICS
         diffs[key] = {}
         for m in metrics:
             if m in b_final and m in a_final:
@@ -267,7 +288,7 @@ def compute_precision_stats(
     Returns per-metric stats: count, max_abs, mean_abs, max_rel_pct, mean_rel_pct.
     For list metrics (e.g., balances), computes stats across all elements.
     """
-    metrics = ["balances", "D", "virtual_price", "totalSupply", "price_scale"]
+    metrics = PARITY_METRICS
     stats: Dict[str, Dict[str, float]] = {
         m: {
             "count": 0,
@@ -482,6 +503,12 @@ def main():
         default=0,
         help="Use only the first N actions from the sequence (0 = no limit)",
     )
+    parser.add_argument(
+        "--policy",
+        choices=POLICY_KINDS,
+        default=None,
+        help="Override policy kind for this benchmark run without regenerating data",
+    )
     args = parser.parse_args()
 
     # Paths
@@ -509,6 +536,9 @@ def main():
 
     with open(pool_configs_path, "r") as f:
         pools = json.load(f)["pools"]
+    if args.policy is not None:
+        for pool in pools:
+            pool["policy"] = {"kind": args.policy}
     with open(sequences_path, "r") as f:
         sequences = json.load(f)["sequences"]
     if not sequences:
@@ -534,7 +564,8 @@ def main():
         actions_used = original_count
 
     # Save a copy of inputs in the run dir
-    _write_json(os.path.join(run_dir, "inputs_pools.json"), {"pools": pools})
+    pool_configs_for_run = os.path.join(run_dir, "inputs_pools.json")
+    _write_json(pool_configs_for_run, {"pools": pools})
     # Always save the full/original sequence for reproducibility
     _write_json(
         os.path.join(run_dir, "inputs_sequences_full.json"), {"sequences": [sequence]}
@@ -548,6 +579,8 @@ def main():
         )
 
     print(f"Testing {len(pools)} pools")
+    if args.policy is not None:
+        print(f"Policy override: {args.policy}")
     if actions_used:
         if actions_used != original_count:
             print(
@@ -576,16 +609,16 @@ def main():
             os.environ["SAVE_LAST_ONLY"] = "1"
 
         # Run each side once over all pools
-        cpp_info = run_cpp_benchmark(pool_configs_path, sequences_for_run, run_dir)
+        cpp_info = run_cpp_benchmark(pool_configs_for_run, sequences_for_run, run_dir)
         cpp_time = cpp_info["time"]
 
         cppf_info = run_cpp_double_benchmark(
-            pool_configs_path, sequences_for_run, run_dir
+            pool_configs_for_run, sequences_for_run, run_dir
         )
         cppf_time = cppf_info["time"]
 
         vy_info = run_vyper_benchmark(
-            pool_configs_path, sequences_for_run, run_dir, n_py=args.n_py
+            pool_configs_for_run, sequences_for_run, run_dir, n_py=args.n_py
         )
         vy_time = vy_info["time"]
     finally:

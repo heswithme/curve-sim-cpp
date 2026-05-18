@@ -263,9 +263,12 @@ def build_pool_for_benchmark(pool_config_path: Path, *, x_key: Optional[str], y_
         "mid_fee": pool_obj.get("mid_fee"),
         "out_fee": pool_obj.get("out_fee"),
         "fee_gamma": pool_obj.get("fee_gamma"),
-        "allowed_extra_profit": pool_obj.get("allowed_extra_profit"),
-        "adjustment_step": pool_obj.get("adjustment_step"),
+        "adjustment_step_min": pool_obj.get("adjustment_step_min"),
+        "adjustment_step_max": pool_obj.get("adjustment_step_max"),
         "ma_time": pool_obj.get("ma_time"),
+        "reserved_profit_fraction": pool_obj.get("reserved_profit_fraction"),
+        "admin_fee": pool_obj.get("admin_fee"),
+        "policy": pool_obj.get("policy", {"kind": "none"}),
         "initial_price": pool_obj.get("initial_price"),
         "initial_liquidity": pool_obj.get("initial_liquidity"),
     }
@@ -335,7 +338,7 @@ def main() -> int:
     if pool_from_run:
         name = run_sel.get("params", {}).get("tag") or run_sel.get("result", {}).get("tag") or obj["sequences"][0]["name"]
         pools_obj = {"pools": [{"name": name, **{k: pool_from_run[k] for k in [
-            "A","gamma","mid_fee","out_fee","fee_gamma","allowed_extra_profit","adjustment_step","ma_time","initial_price","initial_liquidity"
+            "A","gamma","mid_fee","out_fee","fee_gamma","adjustment_step_min","adjustment_step_max","ma_time","reserved_profit_fraction","admin_fee","policy","initial_price","initial_liquidity"
         ] if k in pool_from_run}}]}
     else:
         pools_obj = build_pool_for_benchmark(pc_path, x_key=x_key, y_key=y_key, x_val=x_val, y_val=y_val, fallback_name=obj["sequences"][0]["name"])

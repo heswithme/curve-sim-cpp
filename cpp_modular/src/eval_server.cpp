@@ -63,9 +63,14 @@ void print_usage(const char* prog) {
         << "  -h, --help                 Show this help\n\n"
         << "Stdin protocol (JSONL in persistent mode):\n"
         << "  request fields:\n"
-        << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma\n"
+        << "    id (optional, echoed), mid_fee or mid_fee_bps, out_fee or out_fee_bps, fee_gamma,\n"
+        << "    adjustment_step_min, adjustment_step_max, reserved_profit_fraction, admin_fee, policy\n"
         << "  response fields:\n"
-        << "    ok, vp, apy, apy_net, avg_rel_price_diff, max_rel_price_diff, elapsed_ms\n";
+        << "    ok, vp, apy, apy_net, apy_net_gm,\n"
+        << "    avg_rel_price_diff, max_rel_price_diff,\n"
+        << "    max_7d_rel_price_diff, max_7d_skew,\n"
+        << "    min_price_scale, max_price_scale, min_pool_fee, max_pool_fee,\n"
+        << "    arb guard counters, elapsed_ms\n";
 }
 
 bool parse_size_t(const std::string& s, std::size_t& out) {
@@ -395,26 +400,47 @@ json::object evaluate_request(
     if (req.if_contains("gamma")) {
         pool.gamma = static_cast<RealT>(get_double_opt(req, "gamma", static_cast<double>(pool.gamma)));
     }
-    if (req.if_contains("lp_profit_fraction")) {
-        const double fraction = get_double_opt(
-            req,
-            "lp_profit_fraction",
-            static_cast<double>(pool.lp_profit_fraction)
-        );
-        pool.lp_profit_fraction = static_cast<RealT>(std::clamp(fraction, 0.0, 1.0));
+    if (req.if_contains("lp_profit_fraction") || req.if_contains("allowed_extra_profit") || req.if_contains("adjustment_step") ||
+        req.if_contains("fee_params") || req.if_contains("fee_model_name")) {
+        return make_error_response(req, "Legacy fee/rebalance fields are not supported");
     }
-    if (req.if_contains("allowed_extra_profit")) {
-        pool.allowed_extra_profit = static_cast<RealT>(
-            get_double_opt(req, "allowed_extra_profit", static_cast<double>(pool.allowed_extra_profit))
+    if (req.if_contains("adjustment_step_min")) {
+        pool.adjustment_step_min = static_cast<RealT>(
+            get_double_opt(req, "adjustment_step_min", static_cast<double>(pool.adjustment_step_min))
         );
     }
-    if (req.if_contains("adjustment_step")) {
-        pool.adjustment_step = static_cast<RealT>(
-            get_double_opt(req, "adjustment_step", static_cast<double>(pool.adjustment_step))
+    if (req.if_contains("adjustment_step_max")) {
+        pool.adjustment_step_max = static_cast<RealT>(
+            get_double_opt(req, "adjustment_step_max", static_cast<double>(pool.adjustment_step_max))
         );
+    }
+    if (pool.adjustment_step_min < 0.0 || pool.adjustment_step_max < 0.0 || pool.adjustment_step_min > pool.adjustment_step_max) {
+        return make_error_response(req, "adjustment_step_min/max are invalid");
     }
     if (req.if_contains("ma_time")) {
         pool.ma_time = static_cast<RealT>(get_double_opt(req, "ma_time", static_cast<double>(pool.ma_time)));
+    }
+    if (req.if_contains("reserved_profit_fraction")) {
+        pool.reserved_profit_fraction = static_cast<RealT>(std::clamp(
+            get_double_opt(req, "reserved_profit_fraction", static_cast<double>(pool.reserved_profit_fraction)),
+            0.0,
+            1.0
+        ));
+    }
+    if (req.if_contains("admin_fee")) {
+        pool.admin_fee = static_cast<RealT>(std::clamp(
+            get_double_opt(req, "admin_fee", static_cast<double>(pool.admin_fee)),
+            0.0,
+            0.9
+        ));
+    }
+    if (auto* policy = req.if_contains("policy")) {
+        try {
+            pool.policy_config = arb::pools::parse_policy_config<RealT>(*policy);
+            pool.policy_kind = pool.policy_config.kind;
+        } catch (const std::exception& e) {
+            return make_error_response(req, e.what());
+        }
     }
     if (req.if_contains("donation_apy")) {
         pool.donation_apy = static_cast<RealT>(
@@ -453,18 +479,34 @@ json::object evaluate_request(
     out["mid_fee"] = static_cast<double>(pool.mid_fee);
     out["out_fee"] = static_cast<double>(pool.out_fee);
     out["fee_gamma"] = static_cast<double>(pool.fee_gamma);
-    out["lp_profit_fraction"] = static_cast<double>(pool.lp_profit_fraction);
+    out["adjustment_step_min"] = static_cast<double>(pool.adjustment_step_min);
+    out["adjustment_step_max"] = static_cast<double>(pool.adjustment_step_max);
+    out["reserved_profit_fraction"] = static_cast<double>(pool.reserved_profit_fraction);
+    out["admin_fee"] = static_cast<double>(pool.admin_fee);
     out["mid_fee_bps"] = static_cast<double>(pool.mid_fee) * 10000.0;
     out["out_fee_bps"] = static_cast<double>(pool.out_fee) * 10000.0;
+    out["policy_fee_bps"] = static_cast<double>(pool.policy_config.fee) * 10000.0;
 
     out["vp"] = get_double_opt(summary, "vp", -1.0);
     out["apy"] = get_double_opt(summary, "apy", -1.0);
     out["apy_net"] = get_double_opt(summary, "apy_net", -1.0);
+    out["apy_net_gm"] = get_double_opt(summary, "apy_net_gm", -1.0);
     out["avg_rel_price_diff"] = get_double_opt(summary, "avg_rel_price_diff", -1.0);
     out["max_rel_price_diff"] = get_double_opt(summary, "max_rel_price_diff", -1.0);
+    out["max_7d_rel_price_diff"] = get_double_opt(summary, "max_7d_rel_price_diff", -1.0);
+    out["max_7d_skew"] = get_double_opt(summary, "max_7d_skew", -1.0);
+    out["min_price_scale"] = get_double_opt(summary, "min_price_scale", -1.0);
+    out["max_price_scale"] = get_double_opt(summary, "max_price_scale", -1.0);
+    out["tw_avg_pool_fee"] = get_double_opt(summary, "tw_avg_pool_fee", -1.0);
+    out["min_pool_fee"] = get_double_opt(summary, "min_pool_fee", -1.0);
+    out["max_pool_fee"] = get_double_opt(summary, "max_pool_fee", -1.0);
 
     out["trades"] = get_double_opt(summary, "trades", 0.0);
     out["n_rebalances"] = get_double_opt(summary, "n_rebalances", 0.0);
+    out["arb_edge_candidates"] = get_double_opt(summary, "arb_edge_candidates", 0.0);
+    out["arb_invalid_size_rejections"] = get_double_opt(summary, "arb_invalid_size_rejections", 0.0);
+    out["arb_nonpositive_profit_rejections"] = get_double_opt(summary, "arb_nonpositive_profit_rejections", 0.0);
+    out["arb_guarded_loss_coin0"] = get_double_opt(summary, "arb_guarded_loss_coin0", 0.0);
     out["elapsed_ms"] = run.elapsed_ms;
     return out;
 }

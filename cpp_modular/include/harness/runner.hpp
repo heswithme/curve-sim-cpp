@@ -32,6 +32,7 @@ namespace harness {
 template <typename T>
 struct PoolResult {
     std::string tag;
+    size_t pool_index{0};
 
     // Core trading metrics
     Metrics<T> metrics{};
@@ -50,15 +51,18 @@ struct PoolResult {
     T tvl_start{0};
     T donation_apy{0};
     T donation_frequency{0};
+    double apy_net_gm{-1.0};
 
     // Final pool state
     std::array<T, 2> balances{T(0), T(0)};
+    std::array<T, 2> admin_balances{T(0), T(0)};
     T D{0};
     T totalSupply{0};
     T price_scale{0};
     T price_oracle{0};
     T virtual_price{0};
     T xcp_profit{0};
+    T lp_xcp_profit{0};
     T vp_boosted{0};
     T donation_shares{0};
     T donation_unlocked{0};
@@ -128,6 +132,7 @@ PoolResult<T> run_single_pool(
 
     PoolResult<T> result;
     result.tag = pool_init.tag;
+    result.pool_index = pool_init.global_index;
     result.echo_pool = pool_init.echo_pool;
     result.echo_costs = pool_init.echo_costs;
 
@@ -151,12 +156,16 @@ PoolResult<T> run_single_pool(
             pool_init.mid_fee,
             pool_init.out_fee,
             pool_init.fee_gamma,
-            pool_init.allowed_extra_profit,
-            pool_init.adjustment_step,
+            pool_init.adjustment_step_min,
+            pool_init.adjustment_step_max,
             pool_init.ma_time,
             initial_price,
-            pool_init.lp_profit_fraction
+            pool_init.reserved_profit_fraction,
+            pool_init.admin_fee,
+            pool_init.policy_kind,
+            pool_init.policy_config
         );
+        pool.donation_duration = pool_init.donation_duration;
 
         // Set initial timestamp
         uint64_t init_ts = cfg.start_ts ? cfg.start_ts : pool_init.start_ts;
@@ -230,6 +239,7 @@ PoolResult<T> run_single_pool(
         result.tvl_start = loop_result.tvl_start;
         result.donation_apy = loop_result.donation_apy;
         result.donation_frequency = pool_init.donation_frequency;
+        result.apy_net_gm = loop_result.apy_net_gm;
 
         // Copy actions if recorded
         if (cfg.save_actions) {
@@ -244,12 +254,15 @@ PoolResult<T> run_single_pool(
         // Capture final pool state
         result.balances[0] = pool.balances[0];
         result.balances[1] = pool.balances[1];
+        result.admin_balances[0] = pool.admin_balances[0];
+        result.admin_balances[1] = pool.admin_balances[1];
         result.D = pool.D;
         result.totalSupply = pool.totalSupply;
         result.price_scale = pool.cached_price_scale;
         result.price_oracle = pool.cached_price_oracle;
         result.virtual_price = pool.get_virtual_price();
         result.xcp_profit = pool.xcp_profit;
+        result.lp_xcp_profit = pool.lp_xcp_profit;
         result.vp_boosted = pool.get_vp_boosted();
         result.donation_shares = pool.donation_shares;
         result.donation_unlocked = pool.donation_unlocked();
@@ -309,8 +322,10 @@ std::vector<PoolResult<T>> run_pools_parallel(
         return results;
     }
 
-    // Log every ~1% of pools, minimum every pool if < 100, max every 1000
-    const size_t log_interval = std::max(size_t(1), std::min(n_pools / 100, size_t(1000)));
+    auto progress_percent = [n_pools](size_t done) -> size_t {
+        return std::min<size_t>(100, (done * 100) / n_pools);
+    };
+    size_t last_logged_percent{0};
 
     // Load cowswap trades if path specified
     std::vector<trading::CowswapTrade> cowswap_trades;
@@ -337,7 +352,9 @@ std::vector<PoolResult<T>> run_pools_parallel(
             results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
 
             size_t done = i + 1;
-            if (verbose && (done % log_interval == 0 || done == n_pools)) {
+            const size_t percent = progress_percent(done);
+            if (verbose && (done == n_pools || percent > last_logged_percent)) {
+                last_logged_percent = percent;
                 auto now = std::chrono::high_resolution_clock::now();
                 double elapsed_s = std::chrono::duration<double>(now - t_total_start).count();
                 double avg_s = elapsed_s / done;
@@ -345,7 +362,7 @@ std::vector<PoolResult<T>> run_pools_parallel(
 
                 std::lock_guard<std::mutex> lock(io_mu);
                 std::cout << "pool " << done << "/" << n_pools
-                          << " (" << (100 * done / n_pools) << "%)"
+                          << " (" << percent << "%)"
                           << " | elapsed:" << format_duration(elapsed_s)
                           << " | eta:" << format_duration(eta_s)
                           << "\n" << std::flush;
@@ -357,30 +374,31 @@ std::vector<PoolResult<T>> run_pools_parallel(
     // Thread pool with work stealing via atomic index
     std::atomic<size_t> next_idx{0};
     std::atomic<size_t> completed{0};
-    std::atomic<size_t> last_logged{0};
 
     auto worker = [&]() {
         while (true) {
-            const size_t i = next_idx.fetch_add(1);
+            size_t i = next_idx.fetch_add(1);
             if (i >= n_pools) break;
 
             const auto& [pool_init, costs] = pool_configs[i];
             results[i] = run_single_pool(pool_init, costs, events, cfg, cs_ptr, candles);
 
-            size_t done = completed.fetch_add(1) + 1;
+            if (verbose) {
+                size_t done = completed.fetch_add(1) + 1;
 
-            // Log at intervals or when complete
-            if (verbose && (done == n_pools || done / log_interval > last_logged.load())) {
-                last_logged.store(done / log_interval);
-
+                std::lock_guard<std::mutex> lock(io_mu);
+                const size_t percent = progress_percent(done);
+                if (done != n_pools && percent <= last_logged_percent) {
+                    continue;
+                }
+                last_logged_percent = percent;
                 auto now = std::chrono::high_resolution_clock::now();
                 double elapsed_s = std::chrono::duration<double>(now - t_total_start).count();
                 double avg_s = elapsed_s / done;
                 double eta_s = avg_s * (n_pools - done);
 
-                std::lock_guard<std::mutex> lock(io_mu);
                 std::cout << "pool " << done << "/" << n_pools
-                          << " (" << (100 * done / n_pools) << "%)"
+                          << " (" << percent << "%)"
                           << " | elapsed:" << format_duration(elapsed_s)
                           << " | eta:" << format_duration(eta_s)
                           << "\n" << std::flush;

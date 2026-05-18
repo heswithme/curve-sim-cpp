@@ -13,6 +13,7 @@ set(COMMON_SOURCES
     src/main.cpp
     src/events.cpp
     src/cli.cpp
+    src/pool_config_source.cpp
 )
 
 # Compiler flags
@@ -51,6 +52,7 @@ arb_target_defaults(arb_harness_ld)
 add_executable(arb_eval_server
     src/eval_server.cpp
     src/events.cpp
+    src/pool_config_source.cpp
 )
 target_link_libraries(arb_eval_server Boost::json Threads::Threads)
 arb_target_defaults(arb_eval_server)

@@ -138,7 +138,8 @@ public:
     
     // Log current pool state for this event (respects interval)
     template <typename Pool>
-    void log_event(const Pool& pool, uint64_t ts, const Candle& candle, T p_cex, uint64_t n_trades, uint64_t n_rebalances) {
+    void log_event(const Pool& pool, uint64_t ts, const Candle& candle, T p_cex,
+                   T donation_apy, uint64_t n_trades, uint64_t n_rebalances) {
         if (!enabled_) return;
         
         // Only log every interval_ events
@@ -155,6 +156,7 @@ public:
         entry.profit = entry.vp - T(1);
         entry.xcp = pool.xcp_profit;
         entry.total_supply = pool.totalSupply;
+        entry.donation_apy = donation_apy;
         entry.donation_shares = pool.donation_shares;
         entry.donation_unlocked = pool.donation_unlocked();
         entry.last_prices = pool.last_prices;
@@ -164,8 +166,7 @@ public:
         entry.low = static_cast<T>(candle.low);
         entry.close = static_cast<T>(candle.close);
         entry.p_cex = p_cex;
-        const auto xp_now = pools::twocrypto_fx::pool_xp_current(pool);
-        entry.fee = pools::twocrypto_fx::dyn_fee(xp_now, pool.mid_fee, pool.out_fee, pool.fee_gamma);
+        entry.fee = pools::twocrypto_fx::viewer_exchange_fee_fraction(pool, p_cex);
         entry.n_trades = n_trades;
         entry.n_rebalances = n_rebalances;
         entries_.push_back(entry);

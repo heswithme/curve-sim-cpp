@@ -15,10 +15,10 @@ void print_usage(const char* prog_name) {
               << "       [--n-candles N] [--start-time TS] [--save-actions]\n"
               << "       [--min-swap F] [--max-swap F]\n"
               << "       [--threads N | -n N] [--candle-filter PCT]\n"
-              << "       [--dustswapfreq S]\n"
-              << "       [--pool-start N] [--pool-end N]\n"
+              << "       [--dustswapfreq S] [--quiet]\n"
+              << "       [--pool-start N] [--pool-end N] [--pool-ranges PATH]\n"
               << "       [--userswapfreq S] [--userswapsize F] [--userswapthresh F]\n"
-              << "       [--detailed-log] [--detailed-interval N] [--disable-slippage-probes]\n"
+              << "       [--detailed-log] [--detailed-npz] [--detailed-interval N] [--disable-slippage-probes]\n"
               << "       [--cowswap-trades PATH] [--cowswap-fee-bps BPS]\n";
 }
 
@@ -61,10 +61,14 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.candle_filter_pct = std::stod(argv[++i]);
             } else if (arg == "--dustswapfreq" && i + 1 < argc) {
                 args.dustswap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
+            } else if (arg == "--quiet") {
+                args.quiet = true;
             } else if (arg == "--pool-start" && i + 1 < argc) {
                 args.pool_start = static_cast<size_t>(std::stoll(argv[++i]));
             } else if (arg == "--pool-end" && i + 1 < argc) {
                 args.pool_end = static_cast<size_t>(std::stoll(argv[++i]));
+            } else if (arg == "--pool-ranges" && i + 1 < argc) {
+                args.pool_ranges_path = argv[++i];
             } else if (arg == "--userswapfreq" && i + 1 < argc) {
                 args.user_swap_freq_s = static_cast<uint64_t>(std::stoll(argv[++i]));
             } else if (arg == "--userswapsize" && i + 1 < argc) {
@@ -73,6 +77,9 @@ CliArgs parse_cli(int argc, char* argv[]) {
                 args.user_swap_thresh = std::stod(argv[++i]);
             } else if (arg == "--detailed-log") {
                 args.detailed_log = true;
+            } else if (arg == "--detailed-npz") {
+                args.detailed_log = true;
+                args.detailed_npz = true;
             } else if (arg == "--detailed-interval" && i + 1 < argc) {
                 args.detailed_interval = static_cast<size_t>(std::stoll(argv[++i]));
                 if (args.detailed_interval == 0) args.detailed_interval = 1;
@@ -125,7 +132,6 @@ CliArgs parse_cli(int argc, char* argv[]) {
         args.error_msg = "--candle-filter must be >= 0";
         return args;
     }
-
     args.valid = true;
     return args;
 }

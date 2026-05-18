@@ -161,7 +161,7 @@ def load_pools(max_pools: int = 0) -> tuple[list, dict, str]:
 @app.local_entrypoint()
 def main(
     max_pools: int = 0,
-    dustswapfreq: int = 600,
+    dustswapfreq: int = 3600,
     candle_filter: float = None,
     skip_upload: bool = False,
 ):
@@ -182,6 +182,9 @@ def main(
     harness_args = {
         "dustswapfreq": dustswapfreq,
     }
+    start_time = meta.get("start_time")
+    if start_time is not None:
+        harness_args["start_time"] = start_time
     if candle_filter is not None:
         harness_args["candle_filter"] = candle_filter
 

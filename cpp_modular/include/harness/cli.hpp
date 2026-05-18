@@ -23,10 +23,12 @@ struct CliArgs {
     size_t n_threads{std::thread::hardware_concurrency()};
     double candle_filter_pct{99.0};  // squeeze high/low within +/-X% of (O+C)/2
     uint64_t dustswap_freq_s{3600};  // EMA tick cadence when idle
+    bool quiet{false};               // suppress progress logs
     
     // Pool range (for distributed execution)
     size_t pool_start{0};            // 0-based inclusive
     size_t pool_end{SIZE_MAX};       // exclusive, SIZE_MAX = all
+    std::string pool_ranges_path;    // optional file of half-open ranges
     
     // User swap settings
     uint64_t user_swap_freq_s{0};    // 0 = disabled
@@ -34,7 +36,8 @@ struct CliArgs {
     double user_swap_thresh{0.05};   // max relative deviation vs CEX
     
     // Detailed logging
-    bool detailed_log{false};  // write detailed_log.json next to output
+    bool detailed_log{false};  // write detailed-output.json next to output
+    bool detailed_npz{false};  // write detailed-output.npz instead of JSON
     size_t detailed_interval{1};  // log every N-th event (1 = all)
 
     // Slippage probe sampling

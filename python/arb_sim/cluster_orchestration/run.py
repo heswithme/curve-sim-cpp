@@ -15,7 +15,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -75,6 +75,12 @@ def run_blade_job(
     threads: int,
     dustswap_freq: int,
     candle_filter: Optional[float],
+    n_pools: Optional[int] = None,
+    pool_ranges_remote: Optional[str] = None,
+    range_count: Optional[int] = None,
+    start_time: Optional[str] = None,
+    disable_slippage_probes: bool = False,
+    quiet_harness: bool = False,
     stream_output: bool = False,
     line_buffered: bool = False,
     retries: int = 3,
@@ -83,6 +89,7 @@ def run_blade_job(
     """Run harness on a single blade with retry on connection failures."""
     start = time.time()
     result = BladeResult(blade=blade, success=False)
+    result.n_pools = n_pools if n_pools is not None else max(0, pool_end - pool_start)
 
     for attempt in range(1, retries + 1):
         try:
@@ -90,8 +97,8 @@ def run_blade_job(
             run_ssh(blade, f"mkdir -p {REMOTE_RESULTS}", timeout=30)
 
             # Output file on shared NFS
-            output_file = f"{REMOTE_RESULTS}/result_{blade}.json"
-            result.remote_output = output_file
+            output_dir = f"{REMOTE_RESULTS}/result_{blade}"
+            result.remote_output = output_dir
 
             # Build harness command
             harness = f"{REMOTE_BUILD}/{HARNESS_BINARY}"
@@ -99,25 +106,40 @@ def run_blade_job(
                 harness,
                 remote_pools,
                 remote_candles,
-                output_file,
+                output_dir,
                 f"--threads",
                 str(threads),
-                f"--pool-start",
-                str(pool_start),
-                f"--pool-end",
-                str(pool_end),
                 f"--dustswapfreq",
                 str(dustswap_freq),
             ]
+            if pool_ranges_remote:
+                cmd_parts.extend(["--pool-ranges", pool_ranges_remote])
+            else:
+                cmd_parts.extend([
+                    "--pool-start",
+                    str(pool_start),
+                    "--pool-end",
+                    str(pool_end),
+                ])
             if candle_filter is not None:
                 cmd_parts.extend(["--candle-filter", str(candle_filter)])
+            if start_time is not None:
+                cmd_parts.extend(["--start-time", str(start_time)])
+            if disable_slippage_probes:
+                cmd_parts.append("--disable-slippage-probes")
+            if quiet_harness:
+                cmd_parts.append("--quiet")
 
             cmd_str = " ".join(cmd_parts)
+            if pool_ranges_remote:
+                range_label = f"{range_count or 0} ranges, {result.n_pools} pools"
+            else:
+                range_label = f"pools {pool_start}-{pool_end}"
             if attempt == 1:
-                print(f"[{blade}] Starting: pools {pool_start}-{pool_end}...")
+                print(f"[{blade}] Starting: {range_label}...")
             else:
                 print(
-                    f"[{blade}] Retry {attempt}/{retries}: pools {pool_start}-{pool_end}..."
+                    f"[{blade}] Retry {attempt}/{retries}: {range_label}..."
                 )
 
             if stream_output:
@@ -150,7 +172,9 @@ def run_blade_job(
             else:
                 # Verify output exists
                 check = run_ssh(
-                    blade, f"test -f {output_file} && wc -c < {output_file}", timeout=30
+                    blade,
+                    f"test -f {output_dir}/metrics.npz && wc -c < {output_dir}/metrics.npz",
+                    timeout=30,
                 )
                 if check.returncode == 0:
                     result.success = True
@@ -207,9 +231,15 @@ def run_parallel(
                 job_id=job_id,
                 pool_start=info["pool_start"],
                 pool_end=info["pool_end"],
+                n_pools=info.get("n_pools"),
+                pool_ranges_remote=info.get("pool_ranges_remote"),
+                range_count=len(info.get("ranges", [])),
                 threads=cfg.get("threads_per_blade", CORES_PER_BLADE),
-                dustswap_freq=cfg.get("dustswap_freq", 600),
+                dustswap_freq=cfg.get("dustswap_freq", 3600),
                 candle_filter=cfg.get("candle_filter"),
+                start_time=cfg.get("start_time"),
+                disable_slippage_probes=cfg.get("disable_slippage_probes", False),
+                quiet_harness=cfg.get("quiet_harness", False),
                 stream_output=stream_blade == blade,
                 line_buffered=False,
             )
@@ -253,11 +283,12 @@ def run(
             "success": r.success,
             "remote_output": r.remote_output,
             "elapsed_s": r.elapsed_s,
+            "n_pools": r.n_pools,
             "error": r.error,
         }
         for blade, r in results.items()
     }
-    manifest["run_completed_at"] = datetime.utcnow().isoformat()
+    manifest["run_completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # Save updated manifest
     with open(manifest_path, "w") as f:
