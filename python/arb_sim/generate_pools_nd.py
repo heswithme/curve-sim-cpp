@@ -33,7 +33,7 @@ WAD = 10**18
 
 # Point these paths at the pair being simulated. Set COWSWAP_FILE to None when
 # no organic trade replay file should be associated with the generated config.
-DATAFILE = SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026-filtered.json"
+# DATAFILE = SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026-filtered.json"
 DATAFILE = (
     SCRIPT_DIR / "trade_data" / "btcusd" / "btcusdt-2024-F2026.json"
 )
@@ -41,14 +41,14 @@ COWSWAP_FILE = None
 COWSWAP_FEE_BPS = 0.0
 
 # Use either START_TIME or LAST_YEARS. If START_TIME is set, it wins.
-START_TIME: str | None = "01-01-2024"  # Unix timestamp or DD-MM-YYYY
+START_TIME: str | None = "23-01-2024"  # Unix timestamp or DD-MM-YYYY
 LAST_YEARS: float | None = None  # 2.0
 
 OUT_PATH = RUN_DATA_DIR / "pool_config.json"
 EXPAND_POOLS = False
 
 INIT_LIQ = 1_000_000  # coin0 notional
-VOLUME_CAP = True
+VOLUME_CAP = False
 ARB_FEE_BPS = 2
 
 BASE_DONATION_APY = 0.0
@@ -132,9 +132,9 @@ GRID: dict[Any, Any] = {
 N_GRID = 100
 FEE_EQUALIZE = False
 GRID: dict[Any, Any] = {
-    "donation_apy": np.logspace(np.log10(0.009), np.log10(0.07), N_GRID),
+    "donation_apy": np.logspace(np.log10(0.002), np.log10(0.1), N_GRID),
     "reserved_profit_fraction": [
-        int(round(a * FEE_SCALE)) for a in np.logspace(np.log10(0.3), np.log10(1.0), N_GRID)
+        int(round(a * FEE_SCALE)) for a in np.logspace(np.log10(0.1), np.log10(1.0), N_GRID)
     ],
     "A": [int(round(5 * A_MULTIPLIER))],
     "mid_fee": [int(round(0.00535 * FEE_SCALE))],

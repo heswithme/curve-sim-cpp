@@ -98,7 +98,10 @@ ApyMetricValues compute_apy_values(const PoolResult<T>& r) {
     // Virtual price based APY
     const double vp_end = static_cast<double>(r.virtual_price);
     apy.apy = (vp_end > 0.0) ? std::pow(vp_end, exponent) - 1.0 : -1.0;
-    apy.apy_net = net_apy_from_growth(vp_end);
+
+    // Net APY uses the LP profit path, matching apy_net_gm and apy_masked.
+    const double lp_xcp_end = static_cast<double>(r.lp_xcp_profit);
+    apy.apy_net = net_apy_from_growth(lp_xcp_end);
 
     // xcp_profit based APY
     const double xcp_end = static_cast<double>((r.xcp_profit + T(1)) / T(2));
