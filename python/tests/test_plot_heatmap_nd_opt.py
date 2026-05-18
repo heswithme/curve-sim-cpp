@@ -21,6 +21,7 @@ from plot_heatmap_nd_opt import (  # noqa: E402
     _extract_nd_arrays,
     _format_axis_labels,
     _format_slider_value,
+    _parse_log_axes,
     _stringify_pool,
 )
 
@@ -46,6 +47,52 @@ def test_stringify_pool_preserves_nested_policy_object() -> None:
     }
 
 
+def test_parse_log_axes_accepts_commas_and_repeated_flags() -> None:
+    assert _parse_log_axes(
+        ["fee_gamma,donation_apy", "reserved_profit_fraction", " , A"]
+    ) == {"fee_gamma", "donation_apy", "reserved_profit_fraction", "A"}
+
+
+def test_controls_hide_singleton_grid_dimensions() -> None:
+    data = {
+        "metadata": {
+            "grid": {
+                "x1": {"name": "donation_apy", "values": [0.01, 0.02]},
+                "x2": {"name": "reserved_profit_fraction", "values": [3e9, 4e9]},
+                "x3": {"name": "A", "values": [50_000]},
+                "x4": {"name": "donation_frequency", "values": [3600]},
+            }
+        },
+        "runs": [
+            {
+                "x1_val": donation_apy,
+                "x2_val": rpf,
+                "x3_val": 50_000,
+                "x4_val": 3600,
+                "result": {"score": donation_apy + rpf / 1e10},
+            }
+            for donation_apy in (0.01, 0.02)
+            for rpf in (3e9, 4e9)
+        ],
+    }
+
+    explorer = NDHeatmapExplorerOpt(
+        data,
+        ["score"],
+        ncol=1,
+        cmap="viridis",
+        max_ticks=8,
+        clamp=False,
+        price_thr_bps=1.0,
+        max_price_thr_bps=1.0,
+    )
+
+    assert explorer.axis_dim_names == ["donation_apy", "reserved_profit_fraction"]
+    assert explorer._get_slider_dims() == []
+    assert [label.get_text() for label in explorer.x_radio.labels] == explorer.axis_dim_names
+    assert [label.get_text() for label in explorer.y_radio.labels] == explorer.axis_dim_names
+
+
 def test_reserved_profit_fraction_axis_displays_as_fraction() -> None:
     labels, display_name = _format_axis_labels(
         "reserved_profit_fraction",
@@ -55,6 +102,17 @@ def test_reserved_profit_fraction_axis_displays_as_fraction() -> None:
     assert labels == ["0.19", "0.50"]
     assert display_name == "reserved_profit_fraction (÷1e10)"
     assert _format_slider_value("reserved_profit_fraction", 1_900_000_000.0) == "0.1900"
+
+
+def test_reserved_profit_fraction_axis_accepts_normalized_fraction() -> None:
+    labels, display_name = _format_axis_labels(
+        "reserved_profit_fraction",
+        [0.1, 0.28, 0.4],
+    )
+
+    assert labels == ["0.1", "0.28", "0.4"]
+    assert display_name == "reserved_profit_fraction"
+    assert _format_slider_value("reserved_profit_fraction", 0.28) == "0.2800"
 
 
 def test_extract_nd_arrays_infers_raw_harness_params_pool_axes() -> None:
@@ -281,8 +339,8 @@ def test_inspect_pool_raises_out_fee_to_mid_fee_floor() -> None:
     data = {
         "metadata": {
             "grid": {
-                "x1": {"name": "mid_fee", "values": [150_000_000.0]},
-                "x2": {"name": "out_fee", "values": [101_000_000.0]},
+                "x1": {"name": "mid_fee", "values": [150_000_000.0, 160_000_000.0]},
+                "x2": {"name": "out_fee", "values": [101_000_000.0, 120_000_000.0]},
             },
             "base_pool": {
                 "A": "50000",
@@ -294,10 +352,12 @@ def test_inspect_pool_raises_out_fee_to_mid_fee_floor() -> None:
         },
         "runs": [
             {
-                "x1_val": 150_000_000.0,
-                "x2_val": 101_000_000.0,
+                "x1_val": mid_fee,
+                "x2_val": out_fee,
                 "result": {"score": 1.0},
             }
+            for mid_fee in (150_000_000.0, 160_000_000.0)
+            for out_fee in (101_000_000.0, 120_000_000.0)
         ],
     }
     explorer = NDHeatmapExplorerOpt(

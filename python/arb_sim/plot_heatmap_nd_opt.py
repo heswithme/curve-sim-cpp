@@ -42,7 +42,7 @@ else:
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons
-from matplotlib.ticker import FormatStrFormatter
+from matplotlib.ticker import FixedFormatter, FixedLocator, FormatStrFormatter, NullFormatter, NullLocator
 
 from grid_axes import infer_grid_from_runs, pool_for_run, pool_value
 from arb_run_npz import NpzRun, grid_shape, load_json_or_npz, ordered_grid
@@ -138,6 +138,15 @@ def _latest_arb_run() -> Path:
     return files[-1]
 
 
+def _parse_log_axes(raw_values: List[str]) -> set[str]:
+    return {
+        name.strip()
+        for raw in raw_values
+        for name in raw.split(",")
+        if name.strip()
+    }
+
+
 def _load(path: Path) -> Dict[str, Any]:
     return load_json_or_npz(path)
 
@@ -198,6 +207,14 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
     scale, suffix = _axis_normalization(name)
     key = (name or "").lower()
     display_name = name or ""
+
+    if key in {"reserved_profit_fraction", "admin_fee"}:
+        finite = [abs(float(v)) for v in values if math.isfinite(float(v))]
+        is_scaled = bool(finite) and max(finite) > 1.0
+        if is_scaled:
+            return [f"{(v / 1e10):.2f}" for v in values], f"{name} (÷1e10)"
+        return [f"{v:.4g}" for v in values], display_name
+
     if suffix and suffix not in display_name:
         display_name = f"{display_name}{suffix}"
 
@@ -223,13 +240,23 @@ def _format_axis_labels(name: str, values: List[float]) -> Tuple[List[str], str]
     return labels, display_name
 
 
+def _apply_fixed_ticks(axis, values: List[float], labels: List[str]) -> None:
+    if not labels:
+        labels = [""] * len(values)
+    axis.set_major_locator(FixedLocator(values))
+    axis.set_major_formatter(FixedFormatter(labels))
+    axis.set_minor_locator(NullLocator())
+    axis.set_minor_formatter(NullFormatter())
+    axis.get_offset_text().set_visible(False)
+
+
 def _format_slider_value(name: str, value: float) -> str:
     scale, _ = _axis_normalization(name)
     key = (name or "").lower()
     if "fee_bps" in key:
         return f"{value:.1f} bps"
     if key in {"reserved_profit_fraction", "admin_fee"}:
-        return f"{value / 1e10:.4f}"
+        return f"{(value / 1e10 if abs(value) > 1.0 else value):.4f}"
     if scale == 0.0 and "fee" in key and "gamma" not in key:
         return f"{(value / 1e10 * 1e4):.1f} bps"
     if name == "A" or key == "a":
@@ -704,6 +731,9 @@ class NDHeatmapExplorerOpt:
             skew_thr_pct=self.skew_thr_pct,
         )
         self.n_dims = len(self.dim_names)
+        self.axis_dim_names = [
+            name for name in self.dim_names if len(self.dim_values[name]) > 1
+        ]
 
         self.skew_thr_max_pct = (
             self._compute_skew_thr_max_pct()
@@ -726,11 +756,11 @@ class NDHeatmapExplorerOpt:
         if self.has_max_price_thr_slider:
             self.max_price_thr_bps = self.max_price_thr_max_bps
 
-        if self.n_dims < 2:
-            raise SystemExit("Need at least 2 dimensions for a heatmap")
+        if len(self.axis_dim_names) < 2:
+            raise SystemExit("Need at least 2 non-singleton dimensions for a heatmap")
 
-        self.x_name = self.dim_names[0]
-        self.y_name = self.dim_names[1]
+        self.x_name = self.axis_dim_names[0]
+        self.y_name = self.axis_dim_names[1]
 
         unknown_log_axes = sorted(self.log_axes - set(self.dim_names))
         if unknown_log_axes:
@@ -832,7 +862,7 @@ class NDHeatmapExplorerOpt:
     def _init_slider_indices(self):
         self.slider_indices = {}
         for name in self.dim_names:
-            if name not in (self.x_name, self.y_name):
+            if name not in (self.x_name, self.y_name) and len(self.dim_values[name]) > 1:
                 self.slider_indices[name] = self._default_slider_index(name)
 
     def _default_slider_index(self, name: str) -> int:
@@ -845,7 +875,7 @@ class NDHeatmapExplorerOpt:
         return [
             (i, name)
             for i, name in enumerate(self.dim_names)
-            if name not in (self.x_name, self.y_name)
+            if name not in (self.x_name, self.y_name) and len(self.dim_values[name]) > 1
         ]
 
     def _slice_raw(self, metric: str) -> np.ndarray | None:
@@ -1007,15 +1037,17 @@ class NDHeatmapExplorerOpt:
                 except Exception:
                     ax.set_aspect("equal", adjustable="box")
 
-                ax.set_xticks([xs[i] for i in xticks])
-                ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
+                _apply_fixed_ticks(ax.xaxis, [xs[i] for i in xticks], xlabels)
+                ax.tick_params(axis="x", labelrotation=45, labelsize=tick_font)
+                for label in ax.get_xticklabels():
+                    label.set_ha("right")
                 if c == 0:
-                    ax.set_yticks([ys[i] for i in yticks])
-                    ax.set_yticklabels(ylabels, fontsize=tick_font)
+                    _apply_fixed_ticks(ax.yaxis, [ys[i] for i in yticks], ylabels)
+                    ax.tick_params(axis="y", labelsize=tick_font)
                     ax.set_ylabel(ylabel, fontsize=label_font)
                 else:
-                    ax.set_yticks([ys[i] for i in yticks])
-                    ax.set_yticklabels([])
+                    _apply_fixed_ticks(ax.yaxis, [ys[i] for i in yticks], [])
+                    ax.tick_params(axis="y", labelsize=tick_font)
                 ax.set_xlabel(xlabel, fontsize=label_font)
 
                 _, title_suffix = _metric_scale_info(metric)
@@ -1043,7 +1075,7 @@ class NDHeatmapExplorerOpt:
     def _setup_controls(self):
         slider_dims = self._get_slider_dims()
         n_sliders = len(slider_dims)
-        n_dims = len(self.dim_names)
+        n_dims = len(self.axis_dim_names)
         extra_sliders = 0
         if self.has_skew_thr_slider:
             extra_sliders += 1
@@ -1088,7 +1120,7 @@ class NDHeatmapExplorerOpt:
         )
         x_ax.set_frame_on(False)
         self.x_radio = RadioButtons(
-            x_ax, self.dim_names, active=self.dim_names.index(self.x_name)
+            x_ax, self.axis_dim_names, active=self.axis_dim_names.index(self.x_name)
         )
         for label in self.x_radio.labels:
             label.set_fontsize(RADIO_FONTSIZE)
@@ -1106,7 +1138,7 @@ class NDHeatmapExplorerOpt:
         )
         y_ax.set_frame_on(False)
         self.y_radio = RadioButtons(
-            y_ax, self.dim_names, active=self.dim_names.index(self.y_name)
+            y_ax, self.axis_dim_names, active=self.axis_dim_names.index(self.y_name)
         )
         for label in self.y_radio.labels:
             label.set_fontsize(RADIO_FONTSIZE)
@@ -1483,7 +1515,7 @@ class NDHeatmapExplorerOpt:
             old_x = self.x_name
             self.x_name = label
             self.y_name = old_x
-            y_idx = self.dim_names.index(self.y_name)
+            y_idx = self.axis_dim_names.index(self.y_name)
             self.y_radio.set_active(y_idx)
             self._updating_radios = False
         else:
@@ -1503,7 +1535,7 @@ class NDHeatmapExplorerOpt:
             old_y = self.y_name
             self.y_name = label
             self.x_name = old_y
-            x_idx = self.dim_names.index(self.x_name)
+            x_idx = self.axis_dim_names.index(self.x_name)
             self.x_radio.set_active(x_idx)
             self._updating_radios = False
         else:
@@ -1532,7 +1564,7 @@ class NDHeatmapExplorerOpt:
 
         new_slider_indices = {}
         for name in self.dim_names:
-            if name not in (self.x_name, self.y_name):
+            if name not in (self.x_name, self.y_name) and len(self.dim_values[name]) > 1:
                 default_idx = self._default_slider_index(name)
                 new_slider_indices[name] = min(
                     self.slider_indices.get(name, default_idx),
@@ -1541,7 +1573,7 @@ class NDHeatmapExplorerOpt:
         self.slider_indices = new_slider_indices
 
         slider_dims = self._get_slider_dims()
-        n_dims = len(self.dim_names)
+        n_dims = len(self.axis_dim_names)
         n_sliders = len(slider_dims)
         radio_box_height = n_dims * RADIO_ITEM_HEIGHT + RADIO_BOX_PADDING
 
@@ -1779,16 +1811,18 @@ class NDHeatmapExplorerOpt:
             except Exception:
                 ax.set_aspect("equal", adjustable="box")
 
-            ax.set_xticks([xs[i] for i in xticks])
-            ax.set_xticklabels(xlabels, rotation=45, ha="right", fontsize=tick_font)
+            _apply_fixed_ticks(ax.xaxis, [xs[i] for i in xticks], xlabels)
+            ax.tick_params(axis="x", labelrotation=45, labelsize=tick_font)
+            for label in ax.get_xticklabels():
+                label.set_ha("right")
             c = idx % cols
             if c == 0:
-                ax.set_yticks([ys[i] for i in yticks])
-                ax.set_yticklabels(ylabels, fontsize=tick_font)
+                _apply_fixed_ticks(ax.yaxis, [ys[i] for i in yticks], ylabels)
+                ax.tick_params(axis="y", labelsize=tick_font)
                 ax.set_ylabel(ylabel, fontsize=label_font)
             else:
-                ax.set_yticks([ys[i] for i in yticks])
-                ax.set_yticklabels([])
+                _apply_fixed_ticks(ax.yaxis, [ys[i] for i in yticks], [])
+                ax.tick_params(axis="y", labelsize=tick_font)
             ax.set_xlabel(xlabel, fontsize=label_font)
 
             _, title_suffix = _metric_scale_info(metric)
@@ -2113,7 +2147,7 @@ def main() -> int:
         "--log-axis",
         action="append",
         default=[],
-        help="Plot the named axis on a log scale. Can be repeated, e.g. --log-axis fee_gamma.",
+        help="Plot axes on a log scale. Comma-separated values and repeated flags are accepted.",
     )
     ap.add_argument(
         "--start-time",
@@ -2137,6 +2171,7 @@ def main() -> int:
         metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
     else:
         metrics = DEFAULT_METRICS
+    log_axes = _parse_log_axes(args.log_axis)
 
     explorer = NDHeatmapExplorerOpt(
         data=data,
@@ -2148,7 +2183,7 @@ def main() -> int:
         price_thr_bps=args.skewthr,
         max_price_thr_bps=args.max_pricethr,
         skew_thr_pct=args.skewthr,
-        log_axes=set(args.log_axis),
+        log_axes=log_axes,
         start_time=args.start_time,
     )
     if args.out:

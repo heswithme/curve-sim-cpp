@@ -113,6 +113,74 @@ void apply_grid_value(
     set_dotted_json_value(pool, name, value);
 }
 
+std::vector<std::string> parse_axis_names(
+    const boost::json::object& axis_obj,
+    const std::string& key
+) {
+    auto* name_value = axis_obj.if_contains("name");
+    auto* names_value = axis_obj.if_contains("names");
+    if (name_value && names_value) {
+        throw std::runtime_error("compact grid axis " + key + " cannot have both name and names");
+    }
+    if (name_value) {
+        if (!name_value->is_string()) {
+            throw std::runtime_error("compact grid axis " + key + " name must be a string");
+        }
+        return {std::string(name_value->as_string().c_str())};
+    }
+    if (!names_value || !names_value->is_array()) {
+        throw std::runtime_error("compact grid axis " + key + " requires string name or array names");
+    }
+    std::vector<std::string> names;
+    for (const auto& item : names_value->as_array()) {
+        if (!item.is_string()) {
+            throw std::runtime_error("compact grid axis " + key + " names must contain strings");
+        }
+        names.emplace_back(item.as_string().c_str());
+    }
+    if (names.empty()) {
+        throw std::runtime_error("compact grid axis " + key + " names is empty");
+    }
+    return names;
+}
+
+void validate_axis_values(
+    const std::string& key,
+    const std::vector<std::string>& names,
+    const boost::json::array& values
+) {
+    if (values.empty()) {
+        throw std::runtime_error("compact grid axis " + key + " has no values");
+    }
+    if (names.size() == 1) {
+        return;
+    }
+    for (const auto& row : values) {
+        if (!row.is_array() || row.as_array().size() != names.size()) {
+            throw std::runtime_error(
+                "compact grid axis " + key + " tuple values must match names length"
+            );
+        }
+    }
+}
+
+void apply_axis_value(
+    boost::json::object& pool,
+    boost::json::object& costs,
+    const std::string& name,
+    const boost::json::value& value
+) {
+    if (
+        name != "policy.fee_bps" &&
+        name.rfind("costs.", 0) != 0 &&
+        name.find('.') == std::string::npos
+    ) {
+        apply_grid_value(pool, costs, name, boost::json::value(json_value_to_tag(value)));
+    } else {
+        apply_grid_value(pool, costs, name, value);
+    }
+}
+
 std::vector<GridAxis> ordered_grid_axes(const boost::json::object& meta) {
     auto* grid_value = meta.if_contains("grid");
     if (!grid_value || !grid_value->is_object()) {
@@ -128,18 +196,16 @@ std::vector<GridAxis> ordered_grid_axes(const boost::json::object& meta) {
             throw std::runtime_error("compact grid axis " + key + " must be an object");
         }
         const auto& axis_obj = kv.value().as_object();
-        auto* name_value = axis_obj.if_contains("name");
         auto* values_value = axis_obj.if_contains("values");
-        if (!name_value || !name_value->is_string() || !values_value || !values_value->is_array()) {
-            throw std::runtime_error("compact grid axis " + key + " requires string name and array values");
+        if (!values_value || !values_value->is_array()) {
+            throw std::runtime_error("compact grid axis " + key + " requires array values");
         }
+        auto names = parse_axis_names(axis_obj, key);
         const auto& values = values_value->as_array();
-        if (values.empty()) {
-            throw std::runtime_error("compact grid axis " + key + " has no values");
-        }
+        validate_axis_values(key, names, values);
         axes.push_back(GridAxis{
             static_cast<size_t>(std::stoull(key.substr(1))),
-            std::string(name_value->as_string().c_str()),
+            std::move(names),
             values
         });
     }
@@ -186,18 +252,24 @@ boost::json::object make_compact_grid_entry(
         const auto& axis = axes[i];
         const size_t coord = (index / strides[i]) % axis.values.size();
         const auto& value = axis.values.at(coord);
-        if (
-            axis.name != "policy.fee_bps" &&
-            axis.name.rfind("costs.", 0) != 0 &&
-            axis.name.find('.') == std::string::npos
-        ) {
-            apply_grid_value(pool, costs, axis.name, boost::json::value(json_value_to_tag(value)));
+        if (axis.names.size() == 1) {
+            const auto& name = axis.names.front();
+            apply_axis_value(pool, costs, name, value);
+            touches_fee = touches_fee || name == "mid_fee" || name == "out_fee";
+            if (i > 0) tag << "__";
+            tag << name << "_" << json_value_to_tag(value);
         } else {
-            apply_grid_value(pool, costs, axis.name, value);
+            const auto& row = value.as_array();
+            if (i > 0) tag << "__";
+            for (size_t j = 0; j < axis.names.size(); ++j) {
+                const auto& name = axis.names[j];
+                const auto& item = row.at(j);
+                apply_axis_value(pool, costs, name, item);
+                touches_fee = touches_fee || name == "mid_fee" || name == "out_fee";
+                if (j > 0) tag << "__";
+                tag << name << "_" << json_value_to_tag(item);
+            }
         }
-        touches_fee = touches_fee || axis.name == "mid_fee" || axis.name == "out_fee";
-        if (i > 0) tag << "__";
-        tag << axis.name << "_" << json_value_to_tag(value);
     }
 
     if (fee_equalize && touches_fee) {

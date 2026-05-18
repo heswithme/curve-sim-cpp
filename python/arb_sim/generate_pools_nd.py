@@ -14,7 +14,7 @@ import json
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from pool_helpers import _first_candle_ts, _initial_price_from_file, strify_pool
@@ -34,6 +34,9 @@ WAD = 10**18
 # Point these paths at the pair being simulated. Set COWSWAP_FILE to None when
 # no organic trade replay file should be associated with the generated config.
 DATAFILE = SCRIPT_DIR / "trade_data" / "btcusd" / "btcusd-2023-2026-filtered.json"
+DATAFILE = (
+    SCRIPT_DIR / "trade_data" / "btcusd" / "btcusdt-2024-F2026.json"
+)
 COWSWAP_FILE = None
 COWSWAP_FEE_BPS = 0.0
 
@@ -45,6 +48,7 @@ OUT_PATH = RUN_DATA_DIR / "pool_config.json"
 EXPAND_POOLS = False
 
 INIT_LIQ = 1_000_000  # coin0 notional
+VOLUME_CAP = True
 ARB_FEE_BPS = 2
 
 BASE_DONATION_APY = 0.0
@@ -57,25 +61,28 @@ BASE_DONATION_COINS_RATIO = 0.5
 # 3. with mf-of-fg fixed, scan A-rpf-donation
 #
 # GRID 1:
-# Search good A & donation candidate, fixed fee surface, rpf collapsed into donations for now
-N_GRID = 96
+# Search good A & rpf candidate, fixed fee surface, rpf collapsed with donations for now
+N_GRID = 64
 FEE_EQUALIZE = True
-GRID: dict[str, Any] = {
-    "A": [int(a * A_MULTIPLIER) for a in np.linspace(2, 8, N_GRID)],  # [5, 6, 7]],
+GRID: dict[Any, Any] = {
+    "A": [int(a * A_MULTIPLIER) for a in np.linspace(2, 14, N_GRID)],  # [5, 6, 7]],
     "mid_fee": [
         int(round(a / 10_000 * FEE_SCALE))
         for a in np.linspace(50, 250, N_GRID)  #
     ],
-    "donation_apy": np.linspace(0.0, 0.06, 20),  # [0.02, 0.04, 0.08],  #
+    "reserved_profit_fraction": [
+        int(round(a * FEE_SCALE)) for a in np.linspace(0.01, 0.7, N_GRID)
+    ],
 }
-# GRID 2:
-# With fixed A&donation, define fee surface. A and donation will be rescanned later, but this scan fixes fees
+# # GRID 2:
+# # With fixed A&rpf, define fee surface. A and rpf will be rescanned later, but this scan fixes fees
 N_GRID = 64
+# a-rpf 10-0.15, 7-0.2, 5-0.25
 FEE_EQUALIZE = False
-GRID: dict[str, Any] = {
+GRID: dict[Any, Any] = {
     "mid_fee": [
         int(round(a / 10_000 * FEE_SCALE))
-        for a in np.linspace(20, 150, N_GRID)  #
+        for a in np.linspace(30, 150, N_GRID)  #
     ],
     "out_fee": [
         int(round(a / 10_000 * FEE_SCALE)) for a in np.linspace(101, 250, N_GRID)
@@ -83,30 +90,75 @@ GRID: dict[str, Any] = {
     "fee_gamma": [
         int(round(a * WAD)) for a in np.logspace(np.log10(1e-5), np.log10(1e-1), N_GRID)
     ],
-    "donation_apy": [0.038],  #
-    "A": [int(a * A_MULTIPLIER) for a in [5]],
+    ("A", "reserved_profit_fraction"): [
+        [int(a * A_MULTIPLIER), int(round(rpf * FEE_SCALE))]
+        for a, rpf in [(5, 0.15), (7, 0.2), (10, 0.25)]
+    ],
 }
 # GRID 3: fees fixed now, can play A-don-rpf
+# # c1 80-160-0.0005
+# #c2 100-200-0.01
+# c3 60-180-0.003
+# c4 53-130-0.0052 (mich)
 N_GRID = 64
 FEE_EQUALIZE = False
-GRID: dict[str, Any] = {
+GRID: dict[Any, Any] = {
     "A": [int(a * A_MULTIPLIER) for a in np.linspace(3, 7, N_GRID)],
-    "donation_apy": np.linspace(0.0, 0.06, N_GRID),
+    "donation_apy": np.linspace(0.0, 0.05, N_GRID),
     "reserved_profit_fraction": [
-        int(round(a * FEE_SCALE)) for a in np.linspace(0.2, 0.75, N_GRID)
+        int(round(a * FEE_SCALE)) for a in np.linspace(0.1, 0.6, N_GRID)
     ],
     "mid_fee": [
         int(round(a / 10_000 * FEE_SCALE))
-        for a in [85]  #
+        for a in [53.5]  #
     ],
     "out_fee": [
-        int(round(a / 10_000 * FEE_SCALE)) for a in [150]
+        int(round(a / 10_000 * FEE_SCALE)) for a in [131]
     ],
     "fee_gamma": [
-        int(round(a * WAD)) for a in [0.001]
+        int(round(a * WAD)) for a in [0.005125]
     ]
-    # "adjustment_step_min": [int(a * 10**18) for a in np.linspace(0.000001, 0.000002, N_DENSE)],
 }
+
+# # GRID 4: legacy boost_rate/lp_profit_fraction reproduction.
+# # Legacy mapping:
+# # - boost_rate -> donation_apy
+# # - lp_profit_fraction -> reserved_profit_fraction
+# # - adjustment_step -> adjustment_step_max, with adjustment_step_min fixed near zero
+# # - ma_half_time -> ma_time = ma_half_time / ln(2)
+# # - ext_fee -> costs.arb_fee_bps
+# # D is represented by INIT_LIQ because initial_liquidity depends on the datafile
+# # start price and is built by build_base_pool.
+N_GRID = 100
+FEE_EQUALIZE = False
+GRID: dict[Any, Any] = {
+    "donation_apy": np.logspace(np.log10(0.009), np.log10(0.07), N_GRID),
+    "reserved_profit_fraction": [
+        int(round(a * FEE_SCALE)) for a in np.logspace(np.log10(0.3), np.log10(1.0), N_GRID)
+    ],
+    "A": [int(round(5 * A_MULTIPLIER))],
+    "mid_fee": [int(round(0.00535 * FEE_SCALE))],
+    "out_fee": [int(round(0.0131 * FEE_SCALE))],
+    "fee_gamma": [int(round(0.005125 * WAD))],
+    "adjustment_step_min": [int(round(1e-10 * WAD))],
+    "adjustment_step_max": [int(round(5e-3 * WAD))],
+    "donation_duration": [1],
+    "donation_frequency": [30, 60, 600, 3600]
+}
+
+# N_GRID = 16
+# FEE_EQUALIZE = False
+# GRID: dict[Any, Any] = {
+#     "donation_apy": [0],
+#     "reserved_profit_fraction": [
+#         int(round(a * FEE_SCALE)) for a in np.linspace(0.1, 0.4, N_GRID)
+#     ],
+#     "A": [int(round(a * A_MULTIPLIER)) for a in np.linspace(2, 8, N_GRID)],
+#     "mid_fee": [int(round(0.00535 * FEE_SCALE))],
+#     "out_fee": [int(round(0.0131 * FEE_SCALE))],
+#     "fee_gamma": [int(round(0.005125 * WAD))],
+# }
+
 
 # Alternative manual-FX style recipe:
 # DATAFILE = SCRIPT_DIR / "trade_data" / "<pair>" / "<candles>.json"
@@ -231,7 +283,7 @@ def build_costs(arb_fee_bps: float) -> dict[str, Any]:
     return {
         "arb_fee_bps": arb_fee_bps,
         "gas_coin0": 0.0,
-        "use_volume_cap": False,
+        "use_volume_cap": VOLUME_CAP,
         "volume_cap_mult": 1,
     }
 
@@ -262,11 +314,20 @@ def set_grid_value(
         set_dotted_value(pool, name, value)
 
 
+class GridAxis(NamedTuple):
+    names: tuple[str, ...]
+    values: list[Any]
+
+
 def json_grid_value(value: Any) -> Any:
     if isinstance(value, np.integer):
         return int(value)
     if isinstance(value, np.floating):
         return float(value)
+    if isinstance(value, np.ndarray):
+        return [json_grid_value(x) for x in value.tolist()]
+    if isinstance(value, (list, tuple)):
+        return [json_grid_value(x) for x in value]
     return value
 
 
@@ -275,35 +336,64 @@ def axis_values(values: Any) -> list[Any]:
     return [json_grid_value(x) for x in raw_values]
 
 
+def normalize_grid_axis(name: Any, values: Any) -> GridAxis:
+    if isinstance(name, tuple):
+        if not name:
+            raise ValueError("coupled grid axis must include at least one name")
+        names = tuple(str(part) for part in name)
+        vals = axis_values(values)
+        for row in vals:
+            if not isinstance(row, list) or len(row) != len(names):
+                raise ValueError(
+                    f"coupled grid axis {names} values must be lists of length {len(names)}"
+                )
+        return GridAxis(names, vals)
+    return GridAxis((str(name),), axis_values(values))
+
+
+def axis_to_meta(axis: GridAxis) -> dict[str, Any]:
+    if len(axis.names) == 1:
+        return {"name": axis.names[0], "values": axis.values}
+    return {"names": list(axis.names), "values": axis.values}
+
+
 def build_grid(
     *,
     base_pool: dict[str, Any],
     base_costs: dict[str, Any],
-    grid: dict[str, Any],
+    grid: dict[Any, Any],
     fee_equalize: bool,
     expand_pools: bool,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
-    names = list(grid.keys())
-    axes = [axis_values(v) for v in grid.values()]
+    axes = [normalize_grid_axis(name, values) for name, values in grid.items()]
     grid_meta = {
-        f"x{i}": {"name": name, "values": vals}
-        for i, (name, vals) in enumerate(zip(names, axes), 1)
+        f"x{i}": axis_to_meta(axis)
+        for i, axis in enumerate(axes, 1)
     }
-    pool_count = math.prod(len(vals) for vals in axes)
+    pool_count = math.prod(len(axis.values) for axis in axes)
 
     pools = []
     if not expand_pools:
         return pools, grid_meta, pool_count
 
-    for coords in itertools.product(*axes):
+    for coords in itertools.product(*(axis.values for axis in axes)):
         pool = copy.deepcopy(base_pool)
         costs = dict(base_costs)
         tag_parts = []
-        for name, val in zip(names, coords):
-            set_grid_value(pool, costs, name, val)
-            tag_parts.append(f"{name}_{val}")
+        touches_fee = False
+        for axis, val in zip(axes, coords):
+            if len(axis.names) == 1:
+                name = axis.names[0]
+                set_grid_value(pool, costs, name, val)
+                tag_parts.append(f"{name}_{val}")
+                touches_fee = touches_fee or name in {"mid_fee", "out_fee"}
+                continue
+            for name, item in zip(axis.names, val):
+                set_grid_value(pool, costs, name, item)
+                tag_parts.append(f"{name}_{item}")
+                touches_fee = touches_fee or name in {"mid_fee", "out_fee"}
 
-        if "mid_fee" in names or "out_fee" in names:
+        if touches_fee:
             mid = int(pool["mid_fee"])
             out = int(pool.get("out_fee", 0))
             pool["mid_fee"] = mid

@@ -19,7 +19,7 @@ namespace pools {
 
 struct GridAxis {
     size_t ordinal{0};
-    std::string name;
+    std::vector<std::string> names{};
     boost::json::array values{};
 };
 

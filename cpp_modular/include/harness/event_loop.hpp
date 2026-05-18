@@ -89,8 +89,10 @@ EventLoopResult<T> run_event_loop(
         if (!(donation_growth > 0.0L)) {
             return;
         }
-        const long double net_vp = static_cast<long double>(pool.get_virtual_price()) / donation_growth;
-        apy_net_gm.sample(ts, net_vp);
+        const T lp_profit_growth = pool.lp_xcp_profit;
+        const long double net_lp_profit_growth =
+            static_cast<long double>(lp_profit_growth) / donation_growth;
+        apy_net_gm.sample(ts, net_lp_profit_growth);
     };
     sample_apy_net_gm(result.t_start);
 

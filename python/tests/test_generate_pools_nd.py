@@ -111,6 +111,42 @@ def test_expanded_grid_supports_dotted_pool_and_cost_axes() -> None:
     assert pools[1]["costs"]["arb_fee_bps"] == 2.0
 
 
+def test_build_grid_supports_coupled_axis() -> None:
+    coupled_pairs = [
+        [int(5 * 10_000), int(round(0.15 * 10**10))],
+        [int(7 * 10_000), int(round(0.20 * 10**10))],
+        [int(10 * 10_000), int(round(0.25 * 10**10))],
+    ]
+    grid = {
+        "mid_fee": [30_000_000, 40_000_000],
+        "fee_gamma": [10**15, 2 * 10**15],
+        ("A", "reserved_profit_fraction"): coupled_pairs,
+    }
+
+    pools, grid_meta, pool_count = build_grid(
+        base_pool=_base_pool(),
+        base_costs={"arb_fee_bps": 10.0},
+        grid=grid,
+        fee_equalize=False,
+        expand_pools=True,
+    )
+
+    assert pool_count == 12
+    assert len(pools) == 12
+    assert grid_meta["x3"] == {
+        "names": ["A", "reserved_profit_fraction"],
+        "values": coupled_pairs,
+    }
+    observed_pairs = {
+        (pool["pool"]["A"], pool["pool"]["reserved_profit_fraction"])
+        for pool in pools
+    }
+    assert observed_pairs == {
+        (str(a), str(reserved_profit_fraction))
+        for a, reserved_profit_fraction in coupled_pairs
+    }
+
+
 def test_expanded_grid_raises_out_fee_to_mid_fee_floor() -> None:
     grid = {
         "mid_fee": [150_000_000],
